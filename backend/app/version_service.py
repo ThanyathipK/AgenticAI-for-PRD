@@ -324,8 +324,9 @@ async def diff_versions(
     immediately preceding version). Returns the per-section line diff plus each
     section's change kind — locked-preserved sections are marked explicitly.
 
-    Returns None when ``to_version`` does not exist or there is no base to
-    compare against (e.g. version 1 has no predecessor).
+    The first snapshot is compared with an empty document so its initially
+    created lines can be inspected. Returns None only when the target or an
+    explicitly requested base does not exist.
     """
     target = await PRDVersionRepository.get_by_version_number(project_id, to_version, session)
     if not target:
@@ -334,9 +335,11 @@ async def diff_versions(
     if base_version is None:
         prev = await PRDVersionRepository.get_previous(project_id, to_version, session)
         if not prev:
-            return None
-        base_version = prev["version_number"]
-        base_doc = prev["generated_prd"]
+            base_version = 0
+            base_doc = ""
+        else:
+            base_version = prev["version_number"]
+            base_doc = prev["generated_prd"]
     else:
         if base_version >= to_version:
             return None

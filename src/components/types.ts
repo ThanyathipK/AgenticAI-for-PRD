@@ -34,6 +34,8 @@ export interface StructuredRequirements {
 }
 
 export interface ClarificationQuestion {
+  /** Persisted question UUID when the audit result has been saved. */
+  id?: string;
   checklist_category: string;
   target_user_story_id?: string | null;
   question_text: string;

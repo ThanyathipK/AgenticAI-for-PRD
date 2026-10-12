@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState } from 'react';
-import { AlertTriangle, FileCode, LoaderCircle, Network } from 'lucide-react';
+import { AlertTriangle, Download, FileCode, ImageDown, LoaderCircle, Network } from 'lucide-react';
 import { ProjectState } from '../hooks/useProjectState';
 import { Tooltip } from './Tooltip';
 
@@ -34,15 +34,17 @@ interface MermaidDiagramProps {
   source: string;
   zoom: number;
   onError: (message: string | null) => void;
+  onRendered: (svg: string) => void;
 }
 
-function MermaidDiagram({ source, zoom, onError }: MermaidDiagramProps) {
+function MermaidDiagram({ source, zoom, onError, onRendered }: MermaidDiagramProps) {
   const reactId = useId();
   const [svg, setSvg] = useState('');
 
   useEffect(() => {
     let active = true;
     setSvg('');
+    onRendered('');
     onError(null);
 
     const render = async () => {
@@ -50,7 +52,10 @@ function MermaidDiagram({ source, zoom, onError }: MermaidDiagramProps) {
         const mermaid = await loadMermaid();
         const id = `project-flow-${reactId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
         const result = await mermaid.render(id, source);
-        if (active) setSvg(result.svg);
+        if (active) {
+          setSvg(result.svg);
+          onRendered(result.svg);
+        }
       } catch (error) {
         if (!active) return;
         onError(error instanceof Error ? error.message : 'The Mermaid source could not be rendered.');
@@ -61,7 +66,7 @@ function MermaidDiagram({ source, zoom, onError }: MermaidDiagramProps) {
     return () => {
       active = false;
     };
-  }, [onError, reactId, source]);
+  }, [onError, onRendered, reactId, source]);
 
   if (!svg) {
     return (
@@ -84,11 +89,54 @@ function MermaidDiagram({ source, zoom, onError }: MermaidDiagramProps) {
 }
 
 export function ArchitectureFlows({ state }: { state: ProjectState }) {
-  const { mermaidDiagram, diagramZoom, setDiagramZoom, isLoading, isProcessing } = state;
+  const {
+    mermaidDiagram,
+    diagramZoom,
+    setDiagramZoom,
+    isLoading,
+    isProcessing,
+    projectId,
+    projects,
+  } = state;
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [renderedSvg, setRenderedSvg] = useState('');
   const handleRenderError = useCallback((message: string | null) => setRenderError(message), []);
+  const handleRendered = useCallback((svg: string) => setRenderedSvg(svg), []);
   const source = mermaidDiagram.trim();
   const isWaitingForFirstDiagram = !source && (isLoading || isProcessing);
+  const projectName = projects.find((project) => project.id === projectId)?.name || 'project';
+  const safeProjectName = projectName
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'project';
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadMarkdown = () => {
+    if (!source) return;
+    const markdown = `# ${projectName} — Project Flowchart\n\n\`\`\`mermaid\n${source}\n\`\`\`\n`;
+    downloadBlob(
+      new Blob([markdown], { type: 'text/markdown;charset=utf-8' }),
+      `${safeProjectName}_flowchart.md`,
+    );
+  };
+
+  const handleDownloadDiagram = () => {
+    if (!renderedSvg) return;
+    downloadBlob(
+      new Blob([renderedSvg], { type: 'image/svg+xml;charset=utf-8' }),
+      `${safeProjectName}_flowchart.svg`,
+    );
+  };
 
   return (
     <div className="space-y-3 animate-fadeIn">
@@ -98,33 +146,58 @@ export function ArchitectureFlows({ state }: { state: ProjectState }) {
             <Network className="h-5 w-5 shrink-0 text-primary" />
             <div className="min-w-0">
               <h3 className="text-sm font-bold text-on-surface">Project Flowchart</h3>
-              <p className="break-words font-mono text-[11px] text-on-surface-variant">
-                Mermaid. Generated from saved requirements and user stories
-              </p>
             </div>
           </div>
 
-          {source && !renderError && (
-            <div className="flex shrink-0 rounded-xl bg-black/5 p-1">
-              <Tooltip label="Zoom out" side="bottom">
+          {source && (
+            <div className="flex shrink-0 items-center gap-2">
+              {renderedSvg && (
+                <Tooltip label="Download rendered diagram as SVG" side="bottom">
+                  <button
+                    type="button"
+                    onClick={handleDownloadDiagram}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-outline bg-white px-2.5 py-1.5 text-xs font-semibold text-on-surface transition-colors hover:border-primary/40 hover:text-primary"
+                    aria-label="Download diagram as SVG"
+                  >
+                    <ImageDown className="h-3.5 w-3.5" />
+                    Diagram
+                  </button>
+                </Tooltip>
+              )}
+              <Tooltip label="Download Mermaid as Markdown" side="bottom">
                 <button
-                  onClick={() => setDiagramZoom((previous) => Math.max(70, previous - 15))}
-                  aria-label="Zoom out"
-                  className="cursor-pointer rounded px-2.5 py-1 text-xs font-semibold transition-all hover:bg-white"
+                  type="button"
+                  onClick={handleDownloadMarkdown}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-outline bg-white px-2.5 py-1.5 text-xs font-semibold text-on-surface transition-colors hover:border-primary/40 hover:text-primary"
+                  aria-label="Download diagram as Markdown"
                 >
-                  −
+                  <Download className="h-3.5 w-3.5" />
+                  Markdown
                 </button>
               </Tooltip>
-              <span className="flex items-center px-3 font-mono text-xs font-bold">{diagramZoom}%</span>
-              <Tooltip label="Zoom in" side="bottom">
-                <button
-                  onClick={() => setDiagramZoom((previous) => Math.min(150, previous + 15))}
-                  aria-label="Zoom in"
-                  className="cursor-pointer rounded px-2.5 py-1 text-xs font-semibold transition-all hover:bg-white"
-                >
-                  +
-                </button>
-              </Tooltip>
+              {!renderError && (
+                <div className="flex rounded-xl bg-black/5 p-1">
+                  <Tooltip label="Zoom out" side="bottom">
+                    <button
+                      onClick={() => setDiagramZoom((previous) => Math.max(70, previous - 15))}
+                      aria-label="Zoom out"
+                      className="cursor-pointer rounded px-2.5 py-1 text-xs font-semibold transition-all hover:bg-white"
+                    >
+                      −
+                    </button>
+                  </Tooltip>
+                  <span className="flex items-center px-3 font-mono text-xs font-bold">{diagramZoom}%</span>
+                  <Tooltip label="Zoom in" side="bottom">
+                    <button
+                      onClick={() => setDiagramZoom((previous) => Math.min(150, previous + 15))}
+                      aria-label="Zoom in"
+                      className="cursor-pointer rounded px-2.5 py-1 text-xs font-semibold transition-all hover:bg-white"
+                    >
+                      +
+                    </button>
+                  </Tooltip>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -150,7 +223,12 @@ export function ArchitectureFlows({ state }: { state: ProjectState }) {
               <p className="max-w-lg break-words font-mono text-[10px] text-red-700">{renderError}</p>
             </div>
           ) : source ? (
-            <MermaidDiagram source={source} zoom={diagramZoom} onError={handleRenderError} />
+            <MermaidDiagram
+              source={source}
+              zoom={diagramZoom}
+              onError={handleRenderError}
+              onRendered={handleRendered}
+            />
           ) : (
             <div className="flex min-h-72 flex-col items-center justify-center gap-2 text-center">
               <FileCode className="h-7 w-7 text-primary/40" />

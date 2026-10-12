@@ -837,13 +837,17 @@ async def _process_requirements_pipeline(
             "generated_prd": "",
             "generated_diagrams": "",
             "current_workflow_state": current_state,
-            "version_number": request.current_version if request.current_version is not None else 1,
+            "requirements_revision": 1,
+            "version_number": 1,
             "updated_at": None
         }
     else:
         req_state["current_workflow_state"] = current_state
-        # If frontend sent newer structured_requirements (e.g. user manually updated them), sync in memory before workflow run
-        if request.structured_requirements:
+        # Gatherer requests may carry a newer client-side draft. Architect
+        # generation is read-only with respect to requirements and must always
+        # use the complete canonical server board; overlaying a flattened client
+        # snapshot here previously collapsed multi-requirement projects to one.
+        if request.structured_requirements and request.target_agent != "architect":
             reqs = request.structured_requirements
             all_ac = []
             for us in reqs.get("user_stories", []):
@@ -882,8 +886,6 @@ async def _process_requirements_pipeline(
                     ]
             req_state["user_stories"] = reqs.get("user_stories", [])
             req_state["acceptance_criteria"] = all_ac
-            if "version" in reqs:
-                req_state["version_number"] = reqs["version"]
 
     # Formulate initial state corresponding to AgentState TypedDict
     knowledge_documents = []
@@ -918,7 +920,8 @@ async def _process_requirements_pipeline(
                 else ""
             ),
             "version": req_state.get("version_number", 1),
-            "user_stories": req_state.get("user_stories", [])
+            "user_stories": req_state.get("user_stories", []),
+            "requirements": req_state.get("requirements", []),
         },
         "audit_result": {},
         "prd_markdown": req_state.get("generated_prd", ""),
@@ -985,7 +988,50 @@ async def _process_requirements_pipeline(
 
         audit_operational_error = bool(final_state.get("audit_operational_error"))
         audit_auto_persisted = False
+        architect_auto_persisted = False
         logger.info(f"[IN-MEMORY MERGE] Storing merged state as pending action for project {request.project_id}...")
+
+        # Architect generation changes document artifacts, not the gathered
+        # requirements. Persist the generated PRD/diagram immediately and append
+        # its immutable version without sending the unchanged requirements
+        # through the generic merge dialog (which previously made the first PRD
+        # appear in preview but not in Version History).
+        if request.target_agent == "architect" and not stale_result:
+            generated_prd = str(req_state.get("generated_prd") or "").strip()
+            if not generated_prd:
+                raise RuntimeError("Architect completed without generating a PRD document")
+            from app.prd_section_service import sync_sections_from_prd
+            from app.version_service import record_prd_version
+
+            merged_prd = await sync_sections_from_prd(
+                request.project_id,
+                generated_prd,
+                session,
+                changed_by="automated_agent",
+            )
+            final_prd = merged_prd or generated_prd
+            version_record = await record_prd_version(
+                request.project_id,
+                session,
+                generated_prd=final_prd,
+                generated_by="automated_agent",
+                change_type="ai",
+            )
+            req_state = await RequirementStateRepository.save_or_update(
+                request.project_id,
+                {
+                    "generated_prd": final_prd,
+                    "generated_diagrams": req_state.get("generated_diagrams", ""),
+                    "current_workflow_state": "COMPLETED",
+                },
+                session,
+            )
+            final_state["requirement_state"] = req_state
+            architect_auto_persisted = True
+            logger.info(
+                "Architect artifacts persisted as PRD version %s for project %s",
+                version_record.get("version_number"), request.project_id,
+            )
 
         # GATHERING 8.0 — Handoff to the CONFIRMATION flow: the merged state is NOT
         #             persisted. It is staged as a pending action carrying the whole
@@ -1022,7 +1068,7 @@ async def _process_requirements_pipeline(
             final_state["audit_result"]["clarification_questions"] = saved_audit_state.get("clarification_questions", [])
             audit_auto_persisted = True
             logger.info("Auditor result persisted directly for project %s; no merge confirmation required", request.project_id)
-        elif not audit_operational_error and not stale_result:
+        elif not architect_auto_persisted and not audit_operational_error and not stale_result:
             pending_action = await PendingActionRepository.create(
                 project_id=request.project_id,
                 data={
@@ -1120,7 +1166,7 @@ async def _process_requirements_pipeline(
             "prd_markdown": req_state.get("generated_prd", ""),
             "mermaid_diagram": req_state.get("generated_diagrams", ""),
             "message": agent_message,
-            "pending_merge": not audit_operational_error and not stale_result and not audit_auto_persisted,
+            "pending_merge": not audit_operational_error and not stale_result and not audit_auto_persisted and not architect_auto_persisted,
             "pending_action_id": pending_action_id,
             "stale_result": stale_result,
             "audit_auto_persisted": audit_auto_persisted,

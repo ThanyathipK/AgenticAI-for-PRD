@@ -817,6 +817,38 @@ class TestExportEndpoints:
         assert match, resp.headers["content-disposition"]
 
     @pytest.mark.asyncio
+    async def test_export_filename_uses_latest_prd_semver(
+        self, client, seeded_project, db_session, monkeypatch
+    ):
+        """The download name identifies the PRD release, not its DB row number."""
+        from app.repositories.prd import PRDVersionRepository
+        import app.routes.projects as projects_route
+
+        await PRDVersionRepository.create(seeded_project, {
+            "generated_prd": KRUNGSRI_BODY,
+            "generated_by": "automated_agent",
+            "semver": "2.3.1",
+        }, db_session)
+        await db_session.commit()
+        monkeypatch.setattr(projects_route, "soffice_available", lambda: False)
+        monkeypatch.setattr(
+            projects_route, "compile_latex_to_pdf", lambda source: b"%PDF-semver"
+        )
+
+        resp = await client.post(
+            f"/api/project/{seeded_project}/export/pdf",
+            json={"latex_source": KRUNGSRI_BODY, "version": 99,
+                  "project_name": "Export Test Project"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.headers["x-prd-semver"] == "2.3.1"
+        assert re.fullmatch(
+            r'attachment; filename="PRD_Export_Test_Project_V2\.3\.1_\d{4}-\d{2}-\d{2}_\d{4}\.pdf"',
+            resp.headers["content-disposition"],
+        )
+
+    @pytest.mark.asyncio
     async def test_pdf_export_renders_reference_shaped_docx(self, client, seeded_project, monkeypatch):
         """PDF prefers the same native Word layout as DOCX because the supplied
         reference PDF uses Word/Aptos geometry."""

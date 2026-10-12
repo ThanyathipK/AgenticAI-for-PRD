@@ -42,7 +42,7 @@ async def graph_project(db_session):
     )
     db_session.add(project)
     await db_session.flush()
-    db_session.add(RequirementStateModel(project_id=project.id, project_name=project.name))
+    db_session.add(RequirementStateModel(project_id=project.id))
     await db_session.flush()
     await RequirementStateRepository.save_or_update(str(project.id), {
         "requirements": [{

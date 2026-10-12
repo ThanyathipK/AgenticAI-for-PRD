@@ -183,6 +183,7 @@ app.add_middleware(
     allow_origins=settings.cors_origins_list,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "X-PRD-SemVer"],
 )
 
 # GZip response compression. The biggest payloads are the project-state reads,

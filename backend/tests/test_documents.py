@@ -526,7 +526,7 @@ class TestDraftOnlyExtraction:
         )
         assert doc_row.extraction_status == "extraction_pending"
 
-        # --- Confirm: single atomic merge, ONE version bump --------------
+        # --- Confirm: single atomic merge, no PRD version bump -----------
         confirm = await client.post(
             f"/api/confirm-action/{action.id}", params={"project_id": seeded_project}
         )
@@ -536,7 +536,8 @@ class TestDraftOnlyExtraction:
             (await db_session.execute(select(RequirementStateModel))).scalars().all()
         )
         assert len(states) == 1
-        assert states[0].version_number == 2  # exactly one bump from default v1
+        assert states[0].version_number == 1
+        assert states[0].requirements_revision == 2
 
         story_rows = (
             (await db_session.execute(select(UserStoryModel))).scalars().all()

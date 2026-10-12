@@ -795,8 +795,8 @@ async def process_document(
     the whole document, builds a SINGLE merged merge preview against the current
     requirement state, and stores that draft in ONE pending_action (action_type
     ``INSERT_CHUNKED_REQUIREMENTS``). The draft is versioned
-    (``version_number + 1``) so confirming via ``/api/confirm-action/{id}``
-    applies it as a single atomic merge with one version bump.
+    (``requirements_revision + 1``) so confirming via ``/api/confirm-action/{id}``
+    applies it as a single atomic merge without creating a PRD version.
 
     Args:
         project_id: Owning project UUID string.

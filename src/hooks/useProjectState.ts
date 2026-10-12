@@ -297,13 +297,13 @@ export function useProjectState(
     );
 
     try {
-      const blob =
+      const download =
         fmt === 'pdf'
           ? await api.exportPrdPdf(pid, store.prdMarkdown, store.currentVersion, projectName)
           : await api.exportPrdDocx(pid, store.prdMarkdown, store.currentVersion, projectName);
 
-      // Default download name follows the shared PRD_projectname_version_date_time
-      // convention: PRD_<project>_V<version>_<YYYY-MM-DD>_<HHMM>.<fmt>.
+      // The server resolves the latest immutable PRD snapshot and supplies its
+      // SemVer filename. This local name is only a defensive fallback.
       const now = new Date();
       const pad = (n: number) => String(n).padStart(2, '0');
       const dateStamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
@@ -313,8 +313,10 @@ export function useProjectState(
         .slice(0, 48)
         .replace(/^_+|_+$/g, '')}`;
       const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = `${stem}_V${store.currentVersion}_${dateStamp}_${timeStamp}.${fmt}`;
+      link.href = URL.createObjectURL(download.blob);
+      const latestSemVer = store.versionHistory[0]?.semVersion;
+      const fallbackVersion = latestSemVer || String(store.currentVersion);
+      link.download = download.filename || `${stem}_V${fallbackVersion}_${dateStamp}_${timeStamp}.${fmt}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

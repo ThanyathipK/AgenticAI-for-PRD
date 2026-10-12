@@ -88,6 +88,7 @@ REQ_STATE = {
     "generated_prd": "",
     "generated_diagrams": "",
     "current_workflow_state": "gatherer_node",
+    "requirements_revision": 5,
     "version_number": 5,
     "updated_at": None,
 }
@@ -264,9 +265,10 @@ async def test_version_bumps_once_on_change_and_ignores_llm_version_echo(monkeyp
         "structured_requirements": {},
     })
 
-    assert result["current_version"] == 6
-    assert result["requirement_state"]["version_number"] == 6
-    assert result["structured_requirements"]["version"] == 6
+    assert result["current_version"] == 5
+    assert result["requirement_state"]["version_number"] == 5
+    assert result["requirement_state"]["requirements_revision"] == 6
+    assert result["structured_requirements"]["version"] == 5
 
 
 @pytest.mark.asyncio
@@ -533,8 +535,9 @@ async def test_removed_story_archives_and_empties_its_requirement_group(monkeypa
     assert grouping == {"REQ-001": ["US-001", "US-002"]}  # REQ-002 dropped (empty)
     flat_codes = [s["ticket_code"] for s in result["requirement_state"]["user_stories"]]
     assert "US-003" not in flat_codes
-    # Archiving is a change -> version bumps
-    assert result["current_version"] == 6
+    # Archiving is a requirement change, not a PRD release.
+    assert result["current_version"] == 5
+    assert result["requirement_state"]["requirements_revision"] == 6
     # Summary message mentions the removal
     assert saved and "Archived" in saved[0]["message"] and "US-003" in saved[0]["message"]
 

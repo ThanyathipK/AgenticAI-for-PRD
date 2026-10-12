@@ -29,6 +29,7 @@ from app.models import (
 )
 from app.requirement_codes import next_requirement_code
 from app.repositories.project import ProjectRepository
+from app.repositories.requirement_state import RequirementStateRepository
 
 
 @pytest_asyncio.fixture
@@ -124,6 +125,25 @@ async def test_newly_created_project_has_an_empty_board(client, db_session):
     assert body["requirements"] == []
     assert body["user_stories"] == []
     assert body["project_name"] == "Repository Created"
+    assert await _count(db_session, RequirementModel) == 0
+
+
+@pytest.mark.asyncio
+async def test_explicit_empty_requirement_payload_does_not_create_a_default_requirement(
+    client, db_session
+):
+    """Saving an empty board must not invent a placeholder REQ-001 row."""
+    project_id = await _create_bare_project(db_session, "Actually Empty Project")
+
+    await RequirementStateRepository.save_or_update(project_id, {
+        "requirements": [],
+        "user_stories": [],
+    }, db_session)
+    await db_session.commit()
+
+    body = (await client.get(f"/api/project/{project_id}")).json()
+    assert body["requirements"] == []
+    assert body["user_stories"] == []
     assert await _count(db_session, RequirementModel) == 0
 
 

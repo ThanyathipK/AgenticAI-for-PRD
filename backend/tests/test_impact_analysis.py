@@ -213,7 +213,8 @@ class TestImpactAnalysis:
         assert resp.status_code == status.HTTP_200_OK
         data = resp.json()
 
-        assert data["current_version"] == 2
+        # Confirming requirements no longer advances the PRD release counter.
+        assert data["current_version"] == 1
         assert data["proposed_version"] == 3
         assert data["has_changes"] is True
 

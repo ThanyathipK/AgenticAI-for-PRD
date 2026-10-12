@@ -375,7 +375,19 @@ async def confirm_action(
     #               else partial update that rebuilds the child tables from the lists
     #               supplied in the draft. Committed by the request's get_db on success.
     previous_state = await RequirementStateRepository.get_by_project_id(project_id, session)
-    persisted_state = await RequirementStateRepository.save_or_update(project_id, proposed_changes, session)
+    requirement_merge = action.get("workflow_stage") != "COMPLETED"
+    updates_to_persist = dict(proposed_changes)
+    if requirement_merge:
+        # Older pending actions contain ``version_number`` from the time that
+        # requirements and PRD releases shared one counter.  Never let that
+        # legacy field advance the PRD version during a requirements-only save.
+        updates_to_persist.pop("version_number", None)
+        previous_revision = int((previous_state or {}).get("requirements_revision") or 1)
+        updates_to_persist["requirements_revision"] = max(
+            int(updates_to_persist.get("requirements_revision") or 0),
+            previous_revision + 1,
+        )
+    persisted_state = await RequirementStateRepository.save_or_update(project_id, updates_to_persist, session)
 
     # Architect output is staged without touching the section/version stores.
     # Materialize its sections only at this confirmation boundary so Cancel
@@ -453,55 +465,9 @@ async def confirm_action(
         except Exception as log_err:  # never block a confirmed merge on logging
             logger.warning(f"[MERGE CONFIRM] Failed to log document merge event: {log_err}")
 
-    # 3c. VERSION LEDGER — log EVERY confirmed merge as its own immutable
-    # version row so the Version History records AI/chat merges too, not only
-    # manual part edits / Generate PRD. A requirement merge does not change the
-    # PRD document content itself; the row exists to log the merge event and
-    # keep the version ledger in lock-step with the requirement version.
-    try:
-        from app.repositories.prd import PRDVersionRepository
-        from app.version_service import record_prd_version
-
-        latest_ledger = await PRDVersionRepository.get_latest(project_id, session)
-        # Pin the ledger row to the requirement state's OWN version when it
-        # already advanced exactly once (e.g. document-extraction drafts store
-        # version_number + 1) — otherwise take the next free ledger number.
-        # Never collides, never double-bumps.
-        # CONFIRM 3.3.7 — Version ledger (VERSIONING flow): every confirmed merge gets
-        #               its own immutable prd_versions row. `pinned_version` is the max
-        #               of the draft's own version and the next free ledger number, so
-        #               a draft that already bumped (document extraction) cannot
-        #               double-bump. record_prd_version re-writes
-        #               requirement_states.version_number, hence the re-read below.
-        #               Fail-soft: a ledger failure is logged, the merge stays applied.
-        pinned_version = max(
-            int(persisted_state.get("version_number") or 1),
-            int((latest_ledger or {}).get("version_number") or 0) + 1,
-        )
-        merge_note = (action.get("original_user_message") or "").strip()
-        story_count = len(proposed_changes.get("user_stories") or []) if isinstance(proposed_changes, dict) else 0
-        quoted = (merge_note[:180] + "…") if len(merge_note) > 180 else merge_note
-        merge_summary = (
-            f"Requirements merge confirmed (Save): \"{quoted or 'no message'}\""
-            + (f" — {story_count} user stories" if story_count else "")
-        )
-        await record_prd_version(
-            project_id, session,
-            generated_prd=persisted_state.get("generated_prd") or "",
-            generated_by="ai_merge",
-            change_type="ai",
-            change_summary=merge_summary,
-            version_number=pinned_version,
-        )
-        # record_prd_version re-synced requirement_states.version_number to the
-        # pinned ledger row; re-read so the response carries the final version.
-        persisted_state = await RequirementStateRepository.get_by_project_id(project_id, session) or persisted_state
-        logger.info(
-            "[MERGE CONFIRM] Merge logged as version %d for project %s",
-            pinned_version, project_id,
-        )
-    except Exception as ledger_err:  # NEVER block a confirmed merge on ledger logging
-        logger.warning(f"[MERGE CONFIRM] Failed to log merge into the version ledger: {ledger_err}")
+    # A confirmed requirements merge is recorded by the requirement/audit
+    # history, but it is not a PRD release.  Do not append a prd_versions row
+    # or change SemVer until PRD content is generated or edited.
 
     # CONFIRM 3.3.8 — The action row is DELETED, never marked "applied": the pending
     #               action carries the only copy of the draft, and its absence is what

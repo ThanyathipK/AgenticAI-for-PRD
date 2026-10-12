@@ -660,6 +660,13 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
 
       if (generatedPrd) store.setPrdMarkdown(generatedPrd);
       if (generatedMermaid) store.setMermaidDiagram(generatedMermaid);
+      if (data.structured_requirements?.version) {
+        store.setCurrentVersion(data.structured_requirements.version);
+      }
+      // Architect generation now appends the immutable snapshot immediately;
+      // reload so the first AI-generated PRD appears in Versions without a
+      // project refresh or an unrelated merge confirmation.
+      await store.loadVersionHistory(projectId);
 
       store.setMessages(prev => [...prev, {
         id: `prd-generated-${Date.now()}`,

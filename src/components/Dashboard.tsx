@@ -9,7 +9,6 @@
 //   - File exports (PDF/DOCX) are compiled server-side in useProjectState.ts
 //     (the browser never re-parses the LaTeX PRD into markdown).
 import { useEffect, useRef, useState } from 'react';
-import { motion } from 'motion/react';
 import {
   PanelLeft,
   Plus,
@@ -431,7 +430,7 @@ export default function Dashboard() {
                         if (e.key === 'Enter') handleRenameProject(p.id, renameProjectName);
                         if (e.key === 'Escape') setRenameProjectId(null);
                       }}
-                      maxLength={40}
+                      maxLength={50}
                       className="flex-1 bg-white border border-primary/30 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-primary"
                       autoFocus
                       onClick={(e) => e.stopPropagation()}
@@ -498,8 +497,8 @@ export default function Dashboard() {
                               aria-label={p.is_pinned ? 'Unpin' : 'Pin'}
                             >
                               {p.is_pinned
-                                ? <Pin className="w-3 h-3" />
-                                : <PinOff className="w-3 h-3" />}
+                                ? <PinOff className="w-3 h-3" />
+                                : <Pin className="w-3 h-3" />}
                             </button>
                           </Tooltip>
                           <Tooltip label="Rename" side="left">
@@ -566,12 +565,12 @@ export default function Dashboard() {
                 const p = projects.find((pr) => pr.id === projectContextMenu.projectId);
                 return p && p.is_pinned ? (
                   <>
-                    <Pin className="w-3.5 h-3.5 text-primary" />
+                    <PinOff className="w-3.5 h-3.5 text-primary" />
                     <span>Unpin</span>
                   </>
                 ) : (
                   <>
-                    <PinOff className="w-3.5 h-3.5" />
+                    <Pin className="w-3.5 h-3.5" />
                     <span>Pin</span>
                   </>
                 );
@@ -855,7 +854,11 @@ export default function Dashboard() {
       {/* NEW PROJECT MODAL (styled replacement for native prompt()) */}
       <NewProjectModal
         isOpen={isCreateModalOpen}
-        onCreate={handleCreateProject}
+        onCreate={async (name) => {
+          const failure = await handleCreateProject(name);
+          if (failure === null) setActiveView('workspace');
+          return failure;
+        }}
         onClose={() => setIsCreateModalOpen(false)}
       />
 

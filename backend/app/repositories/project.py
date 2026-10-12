@@ -219,7 +219,6 @@ class ProjectRepository:
         # Initialize requirement state
         req_state = RequirementStateModel(
             project_id=project.id,
-            project_name=project.name
         )
         session.add(req_state)
 
@@ -243,7 +242,8 @@ class ProjectRepository:
     # PROJECT 5.3.2 — WRITE path of rename/field update: owner-scoped SELECT (a
     # non-owner simply gets None → route 404), then the artifact-lock gate
     # (LockService.raise_if_locked_model) before any assignment, then UPDATE of the
-    # supplied fields + flush/refresh.
+    # supplied fields + flush/refresh.  The project name is stored exclusively
+    # in projects, so a rename has no denormalized copies to synchronize.
     @staticmethod
     async def update(
         project_id: str,

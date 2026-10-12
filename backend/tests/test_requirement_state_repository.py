@@ -67,6 +67,9 @@ class _Result:
     def scalar_one_or_none(self):
         return self._scalar_items[0] if self._scalar_items else None
 
+    def one_or_none(self):
+        return self._tuple_rows[0] if self._tuple_rows else None
+
 
 class FakeAsyncSession:
     """Pre-seeds model instances and counts how often each entity is queried."""
@@ -95,7 +98,10 @@ class FakeAsyncSession:
             return self._dispatch("user_story", _Result(scalar_items=self._stories))
 
         if RequirementStateModel in entities:
-            return self._dispatch("requirement_state", _Result(scalar_items=[self._state]))
+            return self._dispatch(
+                "requirement_state",
+                _Result(tuple_rows=[(self._state, "Acme")]),
+            )
 
         if EpicModel in entities:
             items = [self._active_epic] if self._active_epic else []
@@ -167,7 +173,6 @@ def _ac(story_id, stub, *, criteria_text):
 def _make_state(project_id):
     return RequirementStateModel(
         project_id=project_id,
-        project_name="Acme",
         requirements={},
         business_goals=[],
         actors=[],

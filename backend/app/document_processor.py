@@ -321,8 +321,8 @@ def build_merge_preview(
     This is the payload stored in ``pending_action.proposed_changes``. It
     preserves every existing requirement and related state (so a confirm never
     archives anything not mentioned) and merges the de-duplicated document
-    stories against the current user-story list, collectively versioned against
-    the current requirement state (``version_number + 1``). Purely in-memory —
+    stories against the current user-story list, collectively revisioned against
+    the current requirement state (``requirements_revision + 1``). Purely in-memory —
     nothing here writes to the database.
     """
     current_state = current_state or {}
@@ -369,7 +369,7 @@ def build_merge_preview(
             existing_by_code[code] = target
         target["user_stories"].extend(doc_req.get("user_stories", []))
 
-    next_version = max(1, int((current_state.get("version_number") or 1)) + 1)
+    next_revision = max(1, int((current_state.get("requirements_revision") or 1)) + 1)
 
     draft: Dict[str, Any] = {
         "project_id": project_id,
@@ -384,7 +384,7 @@ def build_merge_preview(
         "generated_prd": current_state.get("generated_prd") or "",
         "generated_diagrams": current_state.get("generated_diagrams") or "",
         "current_workflow_state": "gatherer_node",
-        "version_number": next_version,
+        "requirements_revision": next_revision,
     }
     if document_id:
         draft[DRAFT_DOCUMENT_REF_KEY] = {

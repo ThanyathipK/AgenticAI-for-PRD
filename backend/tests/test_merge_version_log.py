@@ -153,10 +153,10 @@ async def _create_merge_action(session: AsyncSession, project_id: str, message: 
 # =====================================================================
 class TestMergeVersionLog:
     @pytest.mark.asyncio
-    async def test_confirm_logs_merge_as_version_row_once(
+    async def test_confirm_merge_does_not_create_a_prd_version(
         self, seeded_project, client, db_session
     ):
-        """Save on a pending merge: one ledger row, exactly one version bump."""
+        """Requirement gathering is audited separately from PRD releases."""
         action = await _create_merge_action(
             db_session, seeded_project, "Add secure login requirement", version_number=2
         )
@@ -166,33 +166,25 @@ class TestMergeVersionLog:
         )
         assert confirm.status_code == status.HTTP_200_OK
 
-        # The merge is logged in the PRD version ledger — merges are versions
-        # too, not only manual edits / Generate PRD.
         rows = (
             (await db_session.execute(select(PRDVersionModel))).scalars().all()
         )
-        assert len(rows) == 1
-        row = rows[0]
-        assert row.version_number == 2, "ledger row must adopt the merge's own version (no double bump)"
-        assert row.generated_by == "ai_merge"
-        assert row.change_type == "ai"
-        assert "secure login" in (row.change_summary or "").lower()
+        assert rows == []
 
-        # The requirement state's version is in lock-step with the ledger.
         states = (
             (await db_session.execute(select(RequirementStateModel))).scalars().all()
         )
         assert len(states) == 1
-        assert states[0].version_number == 2
+        assert states[0].version_number == 1
 
         # The pending action is consumed.
         assert await _count(db_session, PendingActionModel) == 0
 
     @pytest.mark.asyncio
-    async def test_confirm_never_resets_version_below_state(
+    async def test_confirm_merge_preserves_existing_prd_version(
         self, seeded_project, client, db_session
     ):
-        """A pre-existing ledger must never be shadowed by a lower pinned row."""
+        """A requirement merge must not alter an existing PRD ledger."""
         # Existing ledger at v5 (e.g. earlier PRD generations).
         db_session.add(
             PRDVersionModel(
@@ -206,7 +198,6 @@ class TestMergeVersionLog:
         )
         await db_session.commit()
 
-        # The in-memory merge did NOT bump the state version (still 5).
         action = await _create_merge_action(
             db_session, seeded_project, "Tweak stories", version_number=5
         )
@@ -218,14 +209,13 @@ class TestMergeVersionLog:
         rows = (
             (await db_session.execute(select(PRDVersionModel))).scalars().all()
         )
-        assert len(rows) == 2
-        merge_row = next(r for r in rows if r.generated_by == "ai_merge")
-        assert merge_row.version_number == 6, "ledger takes the next free number when the state did not bump"
+        assert len(rows) == 1
+        assert rows[0].version_number == 5
 
         states = (
             (await db_session.execute(select(RequirementStateModel))).scalars().all()
         )
-        assert states[0].version_number == 6
+        assert states[0].version_number == 1
 
     @pytest.mark.asyncio
     async def test_cancel_rolls_back_writes_nothing(

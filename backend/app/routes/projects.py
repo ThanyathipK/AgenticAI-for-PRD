@@ -531,19 +531,15 @@ async def get_project_requirement_state(
         # read from there instead of a fabricated demo label.
         # PROJECT 2.3.3.1 — Repository read of the authoritative project name
         #                  (projects row) instead of a fabricated demo label.
-        project = await ProjectRepository.get_by_id(project_id, session)
         logger.info(f"[DB LOG] Initializing empty state for project {project_id}...")
         # Persist BOOKKEEPING fields only: passing the empty
-        # ``requirements``/``user_stories`` lists would make the state repository
-        # fabricate a "Default Requirement" (``REQ-001``) row — exactly the
-        # phantom first requirement this fix removes. Requirement rows are
-        # created by the first real merge/gather save instead, which is what lets
-        # the requirement sequence start at ``REQ-001``.
+        # ``requirements``/``user_stories`` lists are unnecessary for this
+        # bookkeeping write. Requirement rows are created by the first real
+        # merge/gather save, so the requirement sequence starts at ``REQ-001``.
         # PROJECT 2.3.3.2 — Repository write: bookkeeping fields ONLY (no
         #                  requirements/user_stories lists), which is what keeps the
         #                  board empty so the first real capture starts at REQ-001.
         state = await RequirementStateRepository.save_or_update(project_id, {
-            "project_name": (project or {}).get("name") or "",
             "validation_status": "pending",
             "current_workflow_state": "gatherer_node",
             "version_number": 1,
@@ -882,8 +878,8 @@ class LatexExportPayload(BaseModel):
     standalone LaTeX document). It is only a FALLBACK: the export endpoints
     resolve the LATEST stored document server-side (see
     ``_latest_stored_prd_source``) so both PDF and DOCX always carry the
-    newest version. ``version``/``project_name`` only shape the suggested
-    download filename.
+    newest version. ``project_name`` shapes the suggested download filename;
+    ``version`` is only a legacy fallback when no PRD version snapshot exists.
     """
 
     latex_source: str = Field(..., description="Full LaTeX PRD document source.")
@@ -901,6 +897,7 @@ def _safe_filename_stem(
     project_id: UUID,
     payload: LatexExportPayload,
     now: Optional[datetime] = None,
+    semver: Optional[str] = None,
 ) -> str:
     """``PRD_<project>_V<version>_<YYYY-MM-DD>_<HHMM>`` default download name.
 
@@ -910,7 +907,16 @@ def _safe_filename_stem(
     """
     name = (payload.project_name or "").strip()
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", name)[:48].strip("_") if name else str(project_id)[:8]
-    version_part = f"_V{payload.version}" if payload.version else ""
+    # A downloaded document is a PRD release, so its immutable ledger SemVer
+    # identifies it more accurately than the internal monotonic row number.
+    # Keep the payload integer only for pre-ledger/legacy projects.
+    version_label = (semver or "").strip()
+    if version_label:
+        version_label = re.sub(r"[^0-9A-Za-z.+-]+", "_", version_label).strip("_")
+        version_label = version_label.removeprefix("v").removeprefix("V")
+    elif payload.version:
+        version_label = str(payload.version)
+    version_part = f"_V{version_label}" if version_label else ""
     return f"PRD_{stem}{version_part}_{_timestamp_stamp(now)}"
 
 
@@ -1207,13 +1213,16 @@ async def _export_prd_bytes(
     media_type = "application/pdf" if fmt == "pdf" else (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
-    stem = _safe_filename_stem(UUID(project_id), payload)
+    latest_prd_version = await PRDVersionRepository.get_latest(project_id, db)
+    semver = str((latest_prd_version or {}).get("semver") or "").strip()
+    stem = _safe_filename_stem(UUID(project_id), payload, semver=semver or None)
     return Response(
         content=data,
         media_type=media_type,
         headers={
             "Content-Disposition": f'attachment; filename="{stem}.{fmt}"',
             "X-PRD-Template": "krungsrinimble-reference-v2",
+            "X-PRD-SemVer": semver,
         },
     )
 

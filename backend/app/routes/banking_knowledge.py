@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthenticatedUser, get_current_user
 from app.banking_knowledge_service import (
+    clear_knowledge_document,
     create_knowledge_document,
     get_knowledge_document,
     list_knowledge_documents,
@@ -24,6 +25,15 @@ async def get_banking_knowledge(
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
     return await list_knowledge_documents(current_user.id, db)
+
+
+@router.delete("/api/banking-knowledge")
+async def clear_banking_knowledge(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    deleted = await clear_knowledge_document(current_user.id, db)
+    return {"status": "cleared", "deleted": deleted}
 
 
 @router.get("/api/banking-knowledge/{document_id}")

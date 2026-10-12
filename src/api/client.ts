@@ -120,11 +120,23 @@ async function postFormData<T>(url: string, formData: FormData): Promise<T> {
   return data;
 }
 
-// Binary download helper — the JSON helpers above parse the body; file exports
-// (LaTeX-compiled PDF / DOCX) must come back untouched as a Blob.
-async function postBlob(url: string, body?: unknown): Promise<Blob> {
+export interface BlobDownload {
+  blob: Blob;
+  filename?: string;
+}
+
+// Binary download helper — preserve the server's authoritative filename as
+// well as the body. PRD exports encode the snapshot SemVer in that header.
+async function postBlob(url: string, body?: unknown): Promise<BlobDownload> {
   const resp = await axios.post<Blob>(url, body ?? null, { responseType: 'blob' });
-  return resp.data;
+  const disposition = resp.headers['content-disposition'];
+  const filenameMatch = typeof disposition === 'string'
+    ? disposition.match(/filename="([^"]+)"/i)
+    : null;
+  return {
+    blob: resp.data,
+    filename: filenameMatch?.[1],
+  };
 }
 
 // Error bodies from binary endpoints arrive as a Blob too, so the FastAPI
@@ -481,6 +493,8 @@ export const api = {
     formData.append('tags', metadata.tags);
     return postFormData<BankingKnowledgeDocumentPayload>('/api/banking-knowledge/upload', formData);
   },
+  clearBankingKnowledge: () =>
+    del<{ status: string; deleted: number }>('/api/banking-knowledge'),
   approveBankingKnowledge: (documentId: string) =>
     post<BankingKnowledgeDocumentPayload>(`/api/banking-knowledge/${documentId}/approve`),
   retireBankingKnowledge: (documentId: string) =>

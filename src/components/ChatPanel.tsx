@@ -41,7 +41,6 @@ export function ChatPanel({ state }: { state: ProjectState }) {
     handleGeneratePRD,
     projects,
     projectId,
-    lmStudioModel,
     lmStudioOnline,
     lmStudioModelLoaded,
     documents,
@@ -304,7 +303,7 @@ export function ChatPanel({ state }: { state: ProjectState }) {
                               type="text"
                               value={clarificationAnswers[answerKey] || ""}
                               onChange={(e) => handleUpdateAnswerValue(answerKey, e.target.value)}
-                              placeholder="e.g. 180 seconds cached via Redis key prefix 'idemp:...'"
+                              placeholder="Type your answer"
                               className="w-full bg-white border border-outline rounded-lg px-3 py-1.5 text-xs text-on-surface focus:ring-1 focus:ring-primary/40 focus:border-primary placeholder:text-on-surface-variant/40 outline-none"
                             />
                           </div>
@@ -339,7 +338,7 @@ export function ChatPanel({ state }: { state: ProjectState }) {
               {currentAgentNode === 'gatherer_node' && 'Technical Product Owner Assistant: structuring requirements...'}
               {currentAgentNode === 'auditor_node' && 'Technical Product Owner Assistant: auditing requirements...'}
               {currentAgentNode === 'architect_node' && 'Technical Product Owner Assistant: building markdown PRD...'}
-              {!currentAgentNode && (lmStudioModel ? `Dispatched task to LM Studio Local LLM (${lmStudioModel})...` : 'Dispatched task to LM Studio Local LLM...')}
+              {!currentAgentNode && 'Technical Product Owner Assistant: processing your request...'}
             </span>
           </motion.div>
         )}

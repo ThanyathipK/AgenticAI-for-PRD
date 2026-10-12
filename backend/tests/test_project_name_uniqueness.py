@@ -24,6 +24,7 @@ from app.database import get_db as app_get_db
 from app.main import app as fastapi_app
 from app.repositories.project import ProjectRepository
 from app.repositories.user import UserRepository
+from app.repositories.requirement_state import RequirementStateRepository
 
 
 # =====================================================================
@@ -197,29 +198,29 @@ async def test_create_whitespace_only_name_rejected(client):
 
 
 @pytest.mark.asyncio
-async def test_create_name_over_40_chars_rejected(client):
-    resp = await _create_via_api(client, "A" * 41)
+async def test_create_name_over_50_chars_rejected(client):
+    resp = await _create_via_api(client, "A" * 51)
 
     assert resp.status_code == 422
-    assert "40 characters or fewer" in resp.json()["detail"][0]["msg"]
+    assert "50 characters or fewer" in resp.json()["detail"][0]["msg"]
 
 
 @pytest.mark.asyncio
-async def test_create_name_padded_over_40_chars_rejected(client):
+async def test_create_name_padded_over_50_chars_rejected(client):
     # The cap is applied AFTER trimming, so surrounding whitespace must not
     # let an over-long name slip through.
-    resp = await _create_via_api(client, "  " + "A" * 41 + " ")
+    resp = await _create_via_api(client, "  " + "A" * 51 + " ")
 
     assert resp.status_code == 422
-    assert "40 characters or fewer" in resp.json()["detail"][0]["msg"]
+    assert "50 characters or fewer" in resp.json()["detail"][0]["msg"]
 
 
 @pytest.mark.asyncio
-async def test_create_name_exactly_40_chars_succeeds(client):
-    resp = await _create_via_api(client, "A" * 40)
+async def test_create_name_exactly_50_chars_succeeds(client):
+    resp = await _create_via_api(client, "A" * 50)
 
     assert resp.status_code == 201
-    assert resp.json()["name"] == "A" * 40
+    assert resp.json()["name"] == "A" * 50
 
 
 @pytest.mark.asyncio
@@ -281,13 +282,27 @@ async def test_rename_to_own_name_allowed(client):
 
 
 @pytest.mark.asyncio
-async def test_rename_over_40_chars_rejected(client):
+async def test_rename_is_reflected_in_requirement_state(client, db_session):
+    """The state response resolves its name from projects, not a stale copy."""
+    created = await _create_via_api(client, "Payment Hub")
+    project_id = created.json()["id"]
+
+    renamed = await client.put(f"/api/projects/{project_id}", json={"name": "Payments Platform"})
+
+    assert renamed.status_code == 200
+    state = await RequirementStateRepository.get_by_project_id(project_id, db_session)
+    assert state is not None
+    assert state["project_name"] == "Payments Platform"
+
+
+@pytest.mark.asyncio
+async def test_rename_over_50_chars_rejected(client):
     id_a, _ = await _seed_two_projects(client, "Payment Hub", "Lending Suite")
 
-    resp = await client.put(f"/api/projects/{id_a}", json={"name": "B" * 41})
+    resp = await client.put(f"/api/projects/{id_a}", json={"name": "B" * 51})
 
     assert resp.status_code == 422
-    assert "40 characters or fewer" in resp.json()["detail"][0]["msg"]
+    assert "50 characters or fewer" in resp.json()["detail"][0]["msg"]
 
 
 @pytest.mark.asyncio

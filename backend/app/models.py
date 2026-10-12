@@ -503,7 +503,9 @@ class RequirementStateModel(Base):
     __tablename__ = "requirement_states"
     
     project_id = Column(GUID, ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True, index=True)
-    project_name = Column(String(255), nullable=False, default="Default Project")
+    # The project name deliberately belongs only to ``projects.name``.  Keeping
+    # a second copy here made a rename dependent on every state write path and
+    # allowed generated artifacts to use an obsolete name.
     requirements = Column(JSON, nullable=False, default=dict)
     business_goals = Column(JSON, nullable=False, default=list)
     actors = Column(JSON, nullable=False, default=list)
@@ -514,6 +516,8 @@ class RequirementStateModel(Base):
     generated_prd = Column(Text, nullable=False, default="")
     generated_diagrams = Column(Text, nullable=False, default="")
     current_workflow_state = Column(String(50), nullable=False, default="gatherer_node")
+    # Requirement work must not advance the PRD release version or SemVer.
+    requirements_revision = Column(Integer, nullable=False, default=1, server_default="1")
     version_number = Column(Integer, nullable=False, default=1)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

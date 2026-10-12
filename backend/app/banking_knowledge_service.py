@@ -9,7 +9,7 @@ import re
 from typing import Any
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -84,12 +84,21 @@ async def create_knowledge_document(
         raise ValueError("Knowledge document contains no usable text")
     owner_id = uuid.UUID(str(owner_user_id))
     checksum = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    duplicate = await session.scalar(select(BankingKnowledgeDocumentModel).where(
+
+    # The shared banking knowledge behaves like one owner-level SKILL.md: a
+    # successful new upload replaces the previous source and all of its chunks.
+    # Conversion happens before this function, and the surrounding transaction
+    # rolls this deletion back if creation fails.
+    existing_ids = select(BankingKnowledgeDocumentModel.id).where(
         BankingKnowledgeDocumentModel.owner_user_id == owner_id,
-        BankingKnowledgeDocumentModel.content_checksum == checksum,
+    )
+    await session.execute(delete(BankingKnowledgeChunkModel).where(
+        BankingKnowledgeChunkModel.document_id.in_(existing_ids),
     ))
-    if duplicate:
-        raise ValueError("This knowledge document has already been uploaded")
+    await session.execute(delete(BankingKnowledgeDocumentModel).where(
+        BankingKnowledgeDocumentModel.owner_user_id == owner_id,
+    ))
+    await session.flush()
 
     document = BankingKnowledgeDocumentModel(
         owner_user_id=owner_id,
@@ -145,6 +154,22 @@ async def create_knowledge_document(
     payload["chunk_count"] = len(chunks)
     payload["embedding_status"] = "ready" if any(embeddings) else "lexical_only"
     return payload
+
+
+async def clear_knowledge_document(owner_user_id: str, session: AsyncSession) -> int:
+    """Remove the owner's singleton shared knowledge source and its chunks."""
+    owner_id = uuid.UUID(str(owner_user_id))
+    document_ids = select(BankingKnowledgeDocumentModel.id).where(
+        BankingKnowledgeDocumentModel.owner_user_id == owner_id,
+    )
+    await session.execute(delete(BankingKnowledgeChunkModel).where(
+        BankingKnowledgeChunkModel.document_id.in_(document_ids),
+    ))
+    result = await session.execute(delete(BankingKnowledgeDocumentModel).where(
+        BankingKnowledgeDocumentModel.owner_user_id == owner_id,
+    ))
+    await session.flush()
+    return int(result.rowcount or 0)
 
 
 async def list_knowledge_documents(owner_user_id: str, session: AsyncSession) -> list[dict[str, Any]]:

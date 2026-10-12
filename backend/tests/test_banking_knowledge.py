@@ -8,7 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.banking_knowledge_service import (
     build_audit_retrieval_query,
+    clear_knowledge_document,
     create_knowledge_document,
+    list_knowledge_documents,
     retrieve_banking_knowledge,
     set_knowledge_status,
 )
@@ -67,20 +69,7 @@ async def test_only_relevant_approved_owner_knowledge_is_retrieved(db_session, o
     )
     await set_knowledge_status(relevant["id"], first, "approved", db_session)
 
-    # Draft knowledge and another owner's approved knowledge must never enter
-    # this owner's audit context.
-    await create_knowledge_document(
-        first,
-        db_session,
-        title="Unapproved Draft",
-        original_filename="draft.md",
-        original_format="md",
-        mime_type="text/markdown",
-        document_type="draft",
-        jurisdiction="TH",
-        tags=[],
-        content_markdown="Transfers require an experimental unapproved control.",
-    )
+    # Another owner's approved knowledge must never enter this owner's context.
     foreign = await create_knowledge_document(
         second,
         db_session,
@@ -113,25 +102,38 @@ async def test_only_relevant_approved_owner_knowledge_is_retrieved(db_session, o
 
 
 @pytest.mark.asyncio
-async def test_duplicate_content_is_rejected(db_session, owners, monkeypatch):
+async def test_new_upload_replaces_previous_owner_file_and_clear_removes_it(db_session, owners, monkeypatch):
     first, _second, _project = owners
     async def no_embeddings(_texts):
         return []
 
     monkeypatch.setattr("app.banking_knowledge_service.embed_texts", no_embeddings)
-    arguments = dict(
-        title="Duplicate",
-        original_filename="duplicate.md",
+    first_document = await create_knowledge_document(first, db_session, **dict(
+        title="Old guidance",
+        original_filename="old.md",
         original_format="md",
         mime_type="text/markdown",
         document_type="standard",
         jurisdiction="global",
         tags=[],
-        content_markdown="A reusable banking control.",
-    )
-    await create_knowledge_document(first, db_session, **arguments)
-    with pytest.raises(ValueError, match="already been uploaded"):
-        await create_knowledge_document(first, db_session, **arguments)
+        content_markdown="The old reusable banking control.",
+    ))
+    replacement = await create_knowledge_document(first, db_session, **dict(
+        title="Current guidance",
+        original_filename="current.md",
+        original_format="md",
+        mime_type="text/markdown",
+        document_type="standard",
+        jurisdiction="global",
+        tags=[],
+        content_markdown="The current reusable banking control.",
+    ))
+
+    documents = await list_knowledge_documents(first, db_session)
+    assert [document["id"] for document in documents] == [replacement["id"]]
+    assert first_document["id"] != replacement["id"]
+    assert await clear_knowledge_document(first, db_session) == 1
+    assert await list_knowledge_documents(first, db_session) == []
 
 
 def test_audit_query_contains_requirement_story_and_criteria():

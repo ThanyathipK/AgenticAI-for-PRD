@@ -219,3 +219,39 @@ async def test_architect_preview_does_not_write_sections_or_version(monkeypatch)
 
     assert "1.0.0" in result["prd_markdown"]
     assert result["mermaid_diagram"].startswith("flowchart TD")
+
+
+@pytest.mark.asyncio
+async def test_architect_preview_preserves_all_canonical_requirement_groups(monkeypatch):
+    """A flattened client snapshot must not collapse a multi-requirement board."""
+    multi = copy.deepcopy(REQ_STATE)
+    multi["requirements"].append({
+        "requirement_code": "REQ-002",
+        "title": "Refund Notifications",
+        "description": "Notify customers when refund status changes.",
+        "user_stories": [{
+            "ticket_code": "US-002",
+            "story_title": "Receive refund updates",
+            "as_a": "Retail Customer",
+            "i_want_to": "receive refund status notifications",
+            "so_that": "I know when my refund completes",
+            "acceptance_criteria": ["Given a status change, notify the customer"],
+        }],
+    })
+    _patch(monkeypatch, multi)
+
+    result = await agents.architect_node({
+        "project_id": "p1",
+        "current_version": 2,
+        # This is the lossy shape that previously caused REQ-002 to disappear.
+        "structured_requirements": {
+            "epic_name": "Refund Request Submission",
+            "version": 2,
+            "user_stories": copy.deepcopy(multi["requirements"][0]["user_stories"]),
+        },
+        "stage_artifacts_only": True,
+    })
+
+    requirements = result["requirement_state"]["requirements"]
+    assert [r["requirement_code"] for r in requirements] == ["REQ-001", "REQ-002"]
+    assert requirements[1]["user_stories"][0]["ticket_code"] == "US-002"

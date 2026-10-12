@@ -255,7 +255,14 @@ class TestDiffVersions:
     async def test_diff_of_first_version_returns_none(self, db_session):
         session, project_id = db_session
         await record_prd_version(project_id, session, generated_prd=_doc_v1(), change_type="ai")
-        assert await diff_versions(project_id, 1, session) is None
+        diff = await diff_versions(project_id, 1, session)
+        assert diff is not None
+        assert diff["base_version"] == 0
+        assert any(section["changed"] for section in diff["sections"])
+        assert all(
+            section["change_kind"] == "created"
+            for section in diff["sections"] if section["changed"]
+        )
 
     @pytest.mark.asyncio
     async def test_diff_respects_current_locks(self, db_session):

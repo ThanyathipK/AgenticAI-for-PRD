@@ -168,13 +168,13 @@ export function VersionHistory({ state }: { state: ProjectState }) {
   useEffect(() => {
     if (!projectId || selectedHistVersion < 1) return;
     const base = diffBaseVersion ?? undefined;
-    if (selectedHistVersion === 1 || !base || base === selectedHistVersion) {
+    if (base === selectedHistVersion) {
       setDiff(null); setDiffError(null); return;
     }
     // VERSION 1.2 — Diff fetch effect (the ONLY caller of api.getPrdVersionDiff):
-    //             skips work when there is no base to compare against (v1, no base
-    //             selected, or base === selected) and treats a 404 as "nothing to
-    //             compare" rather than an error, so the panel stays quiet.
+    //             Version 1 is fetched without an explicit base; the backend
+    //             compares it to an empty document so its created lines remain
+    //             inspectable. A 404 is treated as "nothing to compare".
     console.log('[Diff] Fetching diff:', projectId, 'v' + selectedHistVersion, 'vs v' + base);
     setDiffLoading(true);
     setDiffError(null);

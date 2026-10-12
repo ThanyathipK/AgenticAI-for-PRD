@@ -9,22 +9,22 @@ from uuid import UUID
 # PROJECT 4.4.0 / 5.3.0 — Shared request schema for create AND rename, so both
 # routes inherit identical name rules: trimmed at the boundary (matching the
 # trim+lower comparison in ProjectRepository.name_exists, PROJECT 4.4.1), blank
-# rejected, and capped at 40 characters AFTER trimming. Violations surface as
+# rejected, and capped at 50 characters AFTER trimming. Violations surface as
 # FastAPI 422 via the app-wide RequestValidationError handler.
 class ProjectCreate(BaseModel):
     """Schema for introducing new banking systems under compliance review."""
-    name: str = Field(..., description="Name of core banking system or microservice (max 40 characters).")
+    name: str = Field(..., description="Name of core banking system or microservice (max 50 characters).")
     description: Optional[str] = Field(None, description="System functional scope details.")
     industry_standard: str = Field("Krungsri Nimble Baseline", description="Target compliance guideline standard.")
 
     @field_validator("name")
     @classmethod
     def _strip_and_require_name(cls, value: str) -> str:
-        """Trim surrounding whitespace, reject blank names, and cap at 40 characters.
+        """Trim surrounding whitespace, reject blank names, and cap at 50 characters.
 
         Duplicate-name detection (see ``ProjectRepository.name_exists``)
         compares trimmed, lower-cased names, so the stored name is
-        canonicalized here once at the schema boundary. The 40-character cap
+        canonicalized here once at the schema boundary. The 50-character cap
         keeps names short (dashboard table, PRD export filename), is applied
         AFTER trimming so padded names count their real length, and applies to
         BOTH create and rename (both routes share this schema).
@@ -32,8 +32,8 @@ class ProjectCreate(BaseModel):
         stripped = value.strip()
         if not stripped:
             raise ValueError("Project name must not be empty.")
-        if len(stripped) > 40:
-            raise ValueError("Project name must be 40 characters or fewer.")
+        if len(stripped) > 50:
+            raise ValueError("Project name must be 50 characters or fewer.")
         return stripped
 
 class RequirementState(BaseModel):
@@ -429,7 +429,8 @@ class RequirementStateResponse(BaseModel):
     generated_prd: str = Field("", description="Markdown PRD content.")
     generated_diagrams: str = Field("", description="Mermaid diagram source.")
     current_workflow_state: str = Field("gatherer_node", description="Current multi-agent workflow node.")
-    version_number: int = Field(1, description="Current requirement-document revision.")
+    version_number: int = Field(1, description="Current immutable PRD version number.")
+    requirements_revision: int = Field(1, description="Monotonic revision for requirement gathering and edits.")
     updated_at: Optional[str] = Field(None, description="ISO8601 timestamp of the last update.")
     conversation_history: List[ConversationMessageResponse] = Field(default_factory=list, description="Persisted conversation messages for the project.")
 

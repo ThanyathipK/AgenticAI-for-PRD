@@ -249,20 +249,26 @@ export function useProjects(isAuthenticated: boolean, authUserId: string | null)
   // that the modal renders inline next to the input. No toast here: the modal
   // is the presentation layer for create failures.
   // PROJECT 4.2 — Create handler (UI: New Project modal). Client-side guards
-  //              (empty / > 40 chars) mirror the ProjectCreate schema; the
+  //              (empty / > 50 chars) mirror the ProjectCreate schema; the
   //              server's 409 duplicate detail is returned for inline display.
   //              Chain: 4.2 → 4.3 (api.createProject) → route 4.4 → repository
-  //              4.4.2 (projects + requirement_states INSERT) → 4.5 list refresh.
+  //              4.4.2 (projects + requirement_states INSERT) → 4.5 select/open.
   const handleCreateProject = async (name: string): Promise<string | null> => {
     const trimmed = name.trim();
     if (!trimmed) return 'Project name must not be empty.';
-    if (trimmed.length > 40) return 'Project name must be 40 characters or fewer.';
+    if (trimmed.length > 50) return 'Project name must be 50 characters or fewer.';
     try {
       // PROJECT 4.3 — API boundary → POST /api/projects (route PROJECT 4.4).
-      await api.createProject(trimmed);
-      // PROJECT 4.5 — Re-read the list so the new project (and its server-side
-      //              ordering/owner scoping) is authoritative; then the modal closes.
-      setProjects(await api.listProjects());
+      const created = await api.createProject(trimmed);
+      // PROJECT 4.5 — Re-read the authoritative list, then select the returned
+      // project id. Changing projectId triggers useProjectSync, which loads the
+      // new project's empty state immediately after the modal closes.
+      const refreshed = await api.listProjects();
+      searchStateRef.current.searching = false;
+      searchStateRef.current.seq += 1;
+      setProjectSearchQuery('');
+      setProjects(refreshed);
+      setProjectId(created.id);
       return null;
     } catch (err) {
       return detailFromJsonError(err) ?? 'Failed to create the project.';

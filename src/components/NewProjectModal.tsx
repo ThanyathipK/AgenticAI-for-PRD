@@ -95,7 +95,7 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
             if (e.key === 'Enter') handleSubmit();
           }}
           placeholder="e.g. Smart Budget Planner"
-          maxLength={40}
+          maxLength={50}
           aria-invalid={!!error}
           className={`w-full h-[42px] bg-[#faf9f7] border rounded-[10px] px-3 text-sm text-on-surface placeholder:text-on-surface-variant/35 focus:outline-none transition-colors ${
             error

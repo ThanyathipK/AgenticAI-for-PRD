@@ -16,6 +16,7 @@ from app.models import (
     AuditResultModel,
     ClarificationQuestionModel,
     EpicModel,
+    ProjectModel,
     RequirementModel,
     RequirementStateModel,
     UserStoryModel,
@@ -59,11 +60,19 @@ class RequirementStateRepository:
 
     @staticmethod
     async def _get_by_project_id_impl(project_id: uuid.UUID, session: AsyncSession) -> Optional[Dict[str, Any]]:
-        stmt = select(RequirementStateModel).where(RequirementStateModel.project_id == project_id)
+        # ProjectModel.name is the only persisted project-name source.  Joining
+        # it here means every consumer (chat, diagrams and PRD generation) sees
+        # a rename immediately, even for state created before the rename.
+        stmt = (
+            select(RequirementStateModel, ProjectModel.name)
+            .join(ProjectModel, ProjectModel.id == RequirementStateModel.project_id)
+            .where(RequirementStateModel.project_id == project_id)
+        )
         result = await session.execute(stmt)
-        model = result.scalar_one_or_none()
-        if not model:
+        row = result.one_or_none()
+        if not row:
             return None
+        model, project_name = row
 
         # Load active epic directly from epics table
         active_epic = await EpicRepository.get_active_by_project(str(project_id), session)
@@ -202,7 +211,7 @@ class RequirementStateRepository:
 
         return {
             "project_id": str(model.project_id),
-            "project_name": model.project_name,
+            "project_name": project_name,
             "requirements": requirements_list if requirements_list else [],
             "business_goals": model.business_goals,
             "actors": model.actors,
@@ -221,6 +230,7 @@ class RequirementStateRepository:
             "generated_prd": generated_prd if generated_prd else "",
             "generated_diagrams": generated_diagrams if generated_diagrams else "",
             "current_workflow_state": model.current_workflow_state,
+            "requirements_revision": model.requirements_revision,
             "version_number": version_num,
             "updated_at": model.__dict__.get("updated_at").isoformat() if model.__dict__.get("updated_at") else None
         }
@@ -242,6 +252,12 @@ class RequirementStateRepository:
 
     @staticmethod
     async def _save_or_update_impl(project_id: uuid.UUID, updates: Dict[str, Any], session: AsyncSession) -> Dict[str, Any]:
+        project_name = await session.scalar(
+            select(ProjectModel.name).where(ProjectModel.id == project_id)
+        )
+        if project_name is None:
+            raise ValueError(f"Project {project_id} does not exist")
+
         stmt = select(RequirementStateModel).where(RequirementStateModel.project_id == project_id)
         result = await session.execute(stmt)
         model = result.scalar_one_or_none()
@@ -253,7 +269,6 @@ class RequirementStateRepository:
         if not model:
             model = RequirementStateModel(
                 project_id=project_id,
-                project_name=updates.get("project_name", "Default Project"),
                 requirements={},
                 business_goals=updates.get("business_goals", []),
                 actors=updates.get("actors", []),
@@ -264,6 +279,7 @@ class RequirementStateRepository:
                 generated_prd="",
                 generated_diagrams="",
                 current_workflow_state=updates.get("current_workflow_state", "gatherer_node"),
+                requirements_revision=updates.get("requirements_revision", 1),
                 version_number=updates.get("version_number", 1)
             )
             session.add(model)
@@ -273,12 +289,12 @@ class RequirementStateRepository:
         # re-derived is cleared just before the child tables are rebuilt below (this
         # is what stops deleted requirements/stories from surviving a re-save).
         else:
-            if "project_name" in updates and updates["project_name"] is not None:
-                model.project_name = updates["project_name"]
             if "validation_status" in updates and updates["validation_status"] is not None:
                 model.validation_status = updates["validation_status"]
             if "current_workflow_state" in updates and updates["current_workflow_state"] is not None:
                 model.current_workflow_state = updates["current_workflow_state"]
+            if "requirements_revision" in updates and updates["requirements_revision"] is not None:
+                model.requirements_revision = updates["requirements_revision"]
             if "version_number" in updates and updates["version_number"] is not None:
                 model.version_number = updates["version_number"]
             if "business_goals" in updates and updates["business_goals"] is not None:
@@ -337,31 +353,29 @@ class RequirementStateRepository:
                     req_items = reqs_data
                 elif isinstance(reqs_data, dict):
                     # Legacy flat format: {"epic_name": "...", "user_stories": [...]}
-                    # Convert to single requirement
+                    # Convert real legacy content to one requirement. An empty
+                    # legacy object represents an empty board and must not
+                    # fabricate REQ-001.
                     legacy_epic = reqs_data.get("epic_name", "")
                     legacy_stories = reqs_data.get("user_stories", []) if "user_stories" in reqs_data else updates.get("user_stories", [])
+                    if legacy_epic or legacy_stories:
+                        req_items = [{
+                            "requirement_code": default_requirement_code(0),
+                            "title": legacy_epic or project_name,
+                            "description": "",
+                            "user_stories": legacy_stories if isinstance(legacy_stories, list) else []
+                        }]
+            elif "user_stories" in updates and updates["user_stories"] is not None:
+                # Legacy flat stories need a parent requirement because of the
+                # relational schema. Empty stories, however, mean an empty board.
+                legacy_stories = updates["user_stories"] if isinstance(updates["user_stories"], list) else []
+                if legacy_stories:
                     req_items = [{
                         "requirement_code": default_requirement_code(0),
-                        "title": legacy_epic or updates.get("project_name", "Default Requirement"),
+                        "title": project_name,
                         "description": "",
-                        "user_stories": legacy_stories if isinstance(legacy_stories, list) else []
+                        "user_stories": legacy_stories,
                     }]
-            elif "user_stories" in updates and updates["user_stories"] is not None:
-                # Legacy flat user_stories fallback
-                req_items = [{
-                    "requirement_code": default_requirement_code(0),
-                    "title": "Structured Requirements",
-                    "description": "",
-                    "user_stories": updates["user_stories"] if isinstance(updates["user_stories"], list) else []
-                }]
-
-            if not req_items:
-                req_items = [{
-                    "requirement_code": default_requirement_code(0),
-                    "title": "Default Requirement",
-                    "description": "",
-                    "user_stories": []
-                }]
 
             # Determine epic name from first requirement or updates
             epic_name_val = ""
@@ -370,7 +384,7 @@ class RequirementStateRepository:
             if not epic_name_val and req_items:
                 epic_name_val = req_items[0].get("title", "")
             if not epic_name_val:
-                epic_name_val = updates.get("project_name", "Default Epic")
+                epic_name_val = project_name
 
             # Save or update active Epic in epics table
             active_epic = await EpicRepository.get_active_by_project(str(project_id), session)

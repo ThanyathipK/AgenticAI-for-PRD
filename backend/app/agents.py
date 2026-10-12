@@ -161,6 +161,7 @@ async def get_or_init_requirement_state(project_id: str, session: Optional[Async
             "generated_prd": "",
             "generated_diagrams": "",
             "current_workflow_state": "gatherer_node",
+            "requirements_revision": 1,
             "version_number": current_version,
             "updated_at": None
         }
@@ -977,7 +978,6 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
                         "user_stories": legacy_stories,
                     }
                 ]
-        req_state["version_number"] = passed_structured.get("version", req_state["version_number"])
 
     result = None
     parsing_error = None
@@ -1515,21 +1515,17 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
 
 
     # ===============================================
-    # Versioning: NEVER trust the LLM's ``version`` echo (the model does not
-    # know the current version and its schema default of 1 used to RESET the
-    # project version on every gather). Bump by exactly one when the merge
-    # actually changed something; otherwise keep the current version.
+    # Requirement gathering is not a PRD release. Track its own revision so
+    # collecting/editing requirements cannot advance document SemVer.
     # ===============================================
-    # GATHERING 4.3 — Version bump rule: the LLM's own `version` echo is ignored (it
-    #             does not know the current version and its schema default RESET the
-    #             counter). Exactly +1 when the merge report contains created /
-    #             updated / archived, otherwise the version stays put.
+    # The LLM's version echo is ignored. Exactly +1 when the merge report
+    # contains created / updated / archived; otherwise it stays put.
     report_actions = {str((info or {}).get("action", "")) for info in merge_report.values()}
     has_changes = bool(report_actions & {"created", "updated", "archived"})
-    current_version = req_state.get("version_number") or 1
-    version_number = current_version + 1 if has_changes else current_version
+    current_revision = req_state.get("requirements_revision") or 1
+    requirements_revision = current_revision + 1 if has_changes else current_revision
 
-    req_state["version_number"] = version_number
+    req_state["requirements_revision"] = requirements_revision
     req_state["current_workflow_state"] = "gatherer_node"
     req_state["semantic_recommendations"] = semantic_recs
     req_state["detected_intent"] = detected_intent
@@ -1554,7 +1550,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
     # Sync to outer structure for backend/frontend backward compatibility
     structured_out = {
         "epic_name": epic_name,
-        "version": version_number,
+        "version": req_state.get("version_number", 1),
         "user_stories": req_state.get("user_stories", []),
         "requirements": req_state.get("requirements", [])
     }
@@ -1567,7 +1563,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
         "requirement_state": req_state,
         "structured_requirements": structured_out,
         "detected_intent": detected_intent,
-        "current_version": version_number
+        "current_version": req_state.get("version_number", 1)
     }
 
 async def delete_requirement_node(state: AgentState) -> Dict[str, Any]:
@@ -1920,7 +1916,6 @@ async def auditor_node(state: AgentState) -> Dict[str, Any]:
                 }
             ]
         req_state["user_stories"] = passed_stories
-        req_state["version_number"] = passed_structured.get("version", req_state["version_number"])
         all_ac = []
         for us in req_state["user_stories"]:
             all_ac.extend(us.get("acceptance_criteria", []))
@@ -2205,7 +2200,13 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
     regeneration_scope = state.get("regeneration_scope") or None
     req_state = await get_or_init_requirement_state(project_id, session=db_session, current_version=state.get("current_version", 1))
     
-    passed_structured = state.get("structured_requirements") or {}
+    # A Generate PRD preview is read-only with respect to requirements. The
+    # canonical server state loaded above is authoritative; client snapshots
+    # may be flattened or stale and must never rebuild/remove requirement groups.
+    passed_structured = (
+        {} if state.get("stage_artifacts_only")
+        else (state.get("structured_requirements") or {})
+    )
     # The frontend can briefly hold an empty/stale structured snapshot after a
     # reload. Architect is read-only with respect to requirements, so an empty
     # client snapshot must never erase the canonical server board in memory.
@@ -2262,7 +2263,15 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
                     **inc,
                     "requirement_code": inc.get("requirement_code") or _default_requirement_code(idx),
                     "title": inc.get("title") or passed_structured.get("epic_name", ""),
-                    "user_stories": inc_stories or passed_stories
+                    # A multi-requirement group with no stories must stay empty;
+                    # attaching every flat story to it duplicates/cross-links the
+                    # entire board. The flat fallback is valid only for one legacy
+                    # requirement container.
+                    "user_stories": (
+                        inc_stories
+                        if inc_stories or len(incoming_reqs) > 1
+                        else passed_stories
+                    )
                 })
             if rebuilt_reqs:
                 req_state["requirements"] = rebuilt_reqs
@@ -2287,7 +2296,6 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
                 }
             ]
         req_state["user_stories"] = passed_stories
-        req_state["version_number"] = passed_structured.get("version", req_state["version_number"])
         all_ac = []
         for us in req_state["user_stories"]:
             all_ac.extend(us.get("acceptance_criteria", []))
