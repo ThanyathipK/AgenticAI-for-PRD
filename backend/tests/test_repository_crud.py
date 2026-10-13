@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.models import ProjectModel, UserModel
 from app.repositories.acceptance_criteria import AcceptanceCriteriaRepository
+from app.repositories.audit_result import AuditResultRepository
+from app.repositories.event_log import ArtifactEventLogRepository
 from app.repositories.epic import EpicRepository
 from app.repositories.requirement import RequirementRepository
 from app.repositories.semantic_memory import SemanticMemoryRepository
@@ -185,3 +187,70 @@ async def test_semantic_memory_crud_and_recall_telemetry(repository_db):
 
     assert await SemanticMemoryRepository.delete_for_project(project_id, session=session) == 2
     assert await SemanticMemoryRepository.get_recent(project_id, session=session) == []
+
+
+@pytest.mark.asyncio
+async def test_audit_result_crud_including_unassigned_requirement(repository_db):
+    """Document-only audits get an archived anchor requirement and remain editable."""
+    session, project_id = repository_db
+    created = await AuditResultRepository.create(project_id, {
+        "is_valid": False,
+        "audit_version_reviewed": 2,
+        "passed_checks": ["Naming"],
+        "failed_checks": ["Approval"],
+        "findings": [{"severity": "high"}],
+        "source_references": ["BRD-1"],
+        "verdict": "fail",
+        "project_context": {"country": "TH"},
+        "checklist_id": "payments",
+        "checklist_version": "2.0.0",
+    }, session)
+    audit_id = created["id"]
+
+    assert created["verdict"] == "fail"
+    assert (await AuditResultRepository.get_by_id(audit_id, project_id, session))["checklist_id"] == "payments"
+    assert await AuditResultRepository.get_by_id(
+        audit_id, "00000000-0000-0000-0000-000000000000", session
+    ) is None
+    assert len(await AuditResultRepository.get_by_project(project_id, session)) == 1
+    assert await AuditResultRepository.get_by_project(
+        project_id, session, requirement_id=__import__("uuid").uuid4()
+    ) == []
+
+    updated = await AuditResultRepository.update(audit_id, project_id, {
+        "is_valid": True,
+        "audit_version_reviewed": 3,
+        "passed_checks": ["Naming", "Approval"],
+        "failed_checks": [],
+        "findings": [],
+        "source_references": ["BRD-2"],
+        "verdict": "pass",
+        "project_context": {"country": "SG"},
+        "checklist_id": "core",
+        "checklist_version": "3.0.0",
+    }, session)
+    assert updated["is_valid"] is True
+    assert updated["audit_version_reviewed"] == 3
+    assert updated["verdict"] == "pass"
+    assert updated["checklist_version"] == "3.0.0"
+
+    assert await AuditResultRepository.delete(audit_id, project_id, session) is True
+    assert await AuditResultRepository.delete(audit_id, project_id, session) is False
+    assert await AuditResultRepository.update(audit_id, project_id, {}, session) is None
+
+
+@pytest.mark.asyncio
+async def test_event_log_records_and_filters_project_events(repository_db):
+    session, project_id = repository_db
+    event = await ArtifactEventLogRepository.log_event(
+        "requirement", "REQ-001", "create", session, project_id=project_id,
+        old_value={"title": "old"}, new_value={"title": "new"}, performed_by="tester",
+    )
+    assert event["action"] == "CREATE"
+    assert len(await ArtifactEventLogRepository.get_by_artifact("requirement", "REQ-001", session)) == 1
+    assert len(await ArtifactEventLogRepository.get_by_project(
+        project_id, session, artifact_type="requirement", action="create"
+    )) == 1
+    assert len(await ArtifactEventLogRepository.get_by_action("CREATE", session)) == 1
+    with pytest.raises(ValueError, match="Invalid action"):
+        await ArtifactEventLogRepository.log_event("requirement", "REQ-002", "bad", session)
