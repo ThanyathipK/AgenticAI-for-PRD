@@ -64,7 +64,7 @@ class RequirementStateRepository:
         # it here means every consumer (chat, diagrams and PRD generation) sees
         # a rename immediately, even for state created before the rename.
         stmt = (
-            select(RequirementStateModel, ProjectModel.name)
+            select(RequirementStateModel, ProjectModel.name, ProjectModel.status)
             .join(ProjectModel, ProjectModel.id == RequirementStateModel.project_id)
             .where(RequirementStateModel.project_id == project_id)
         )
@@ -72,7 +72,7 @@ class RequirementStateRepository:
         row = result.one_or_none()
         if not row:
             return None
-        model, project_name = row
+        model, project_name, project_status = row
 
         # Load active epic directly from epics table
         active_epic = await EpicRepository.get_active_by_project(str(project_id), session)
@@ -212,6 +212,7 @@ class RequirementStateRepository:
         return {
             "project_id": str(model.project_id),
             "project_name": project_name,
+            "project_status": project_status,
             "requirements": requirements_list if requirements_list else [],
             "business_goals": model.business_goals,
             "actors": model.actors,

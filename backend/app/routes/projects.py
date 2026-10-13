@@ -773,7 +773,7 @@ async def post_prd_export_generation(
     # skeleton - every table, merged-cell structure and \newpage marker - is
     # always the untouched official template, so the export is PDF-exact and
     # compiles every time.
-    from app.prd_filler import PENDING_VERSION_LABEL, fill_template_body, stamp_version_label
+    from app.prd_filler import PENDING_VERSION_LABEL, extract_intake_fields, fill_template_body, format_project_status, stamp_version_label
 
     nested = any(
         isinstance(r, dict) and r.get("user_stories") for r in (requirements or [])
@@ -798,9 +798,15 @@ async def post_prd_export_generation(
         ],
     }
 
+    saved_intake = extract_intake_fields(req_state.get("generated_prd", ""))
     markdown_content = fill_template_body(
         project_id=str(project_id),
         project_name=str(project.get("name", "")),
+        pmo_no=saved_intake.get("pmo_no"),
+        author=saved_intake.get("author") or "Product Owner",
+        status=format_project_status(project.get("status")),
+        stakeholders=saved_intake.get("stakeholders"),
+        business_topics=saved_intake.get("business_topics"),
         version=version_number,
         data=data,
         version_summary="Initial approved version",
@@ -931,12 +937,21 @@ async def _latest_stored_prd_source(project_id: str, db: AsyncSession) -> str:
     compile an OLDER version than the preview shows. Empty string when the
     project has no stored document yet.
     """
+    # Resolve through the same repository used by the preview. It compares the
+    # materialized document with the immutable version ledger and returns the
+    # newest saved PRD, including manual section edits.
+    state = await RequirementStateRepository.get_by_project_id(project_id, db)
+    source = ((state or {}).get("generated_prd") or "").strip()
+    if source:
+        return source
+
+    # Compatibility fallback for old projects created before a requirement
+    # state row existed. These sources still pass through the unchanged
+    # Krungsri template renderer below.
     doc = await PRDDocumentRepository.get_latest_for_project(project_id, db)
     source = ((doc or {}).get("prd_markdown") or "").strip()
     if source:
         return source
-    # No document rows at all — the newest immutable version-ledger snapshot
-    # is still a valid exportable document (it does not store diagrams).
     ledger = await PRDVersionRepository.get_latest(project_id, db)
     return ((ledger or {}).get("generated_prd") or "").strip()
 
@@ -1009,7 +1024,7 @@ async def _fill_official_export_template(
     db: AsyncSession,
 ) -> str:
     """Put project data and legacy prose into the official template body."""
-    from app.prd_filler import fill_template_body
+    from app.prd_filler import extract_intake_fields, extract_manual_export_fields, fill_template_body, format_project_status
 
     req_state = await RequirementStateRepository.get_by_project_id(project_id, db) or {}
     requirements = req_state.get("requirements") or []
@@ -1076,9 +1091,28 @@ async def _fill_official_export_template(
         "problem_statement": [problem_statement] if problem_statement else [],
     }
     narrative = {key: value for key, value in recovered["narrative"].items() if value}
+    manual_fields = extract_manual_export_fields(markdown_source)
+    # Saved preview edits are newer and explicitly user-owned, so they take
+    # precedence over reconstructed requirement/narrative values.
+    narrative.update(manual_fields.get("narrative") or {})
+    if manual_fields.get("scope_present"):
+        data["scope_in"] = manual_fields["scope_in"]
+        data["scope_out"] = manual_fields["scope_out"]
+    if manual_fields.get("functional_table_present") and manual_fields.get("functional_rows"):
+        # The Product Scope section was manually edited; export those saved
+        # FR/AC rows instead of reconstructing older rows from requirements.
+        data["requirements"] = []
+        data["user_stories"] = manual_fields["functional_rows"]
+        data["acceptance_criteria"] = []
+    saved_intake = extract_intake_fields(markdown_source)
     return fill_template_body(
         project_id=project_id,
         project_name=str(project.get("name") or payload.project_name or ""),
+        pmo_no=saved_intake.get("pmo_no"),
+        author=saved_intake.get("author") or "Product Owner",
+        status=format_project_status(project.get("status")),
+        stakeholders=saved_intake.get("stakeholders"),
+        business_topics=saved_intake.get("business_topics"),
         version=version_number,
         data=data,
         narrative=narrative,

@@ -31,6 +31,7 @@ import type { PendingActionPayload, ProjectStatus, ProjectSummary } from '../api
 import { api, detailFromBlobError } from '../api/client';
 import { handleError } from '../components/Toast';
 import type { UseDocumentsResult, DocumentExtractionProgress } from './useDocuments';
+import type { CreateProjectOptions, CreateProjectResult } from './useProjects';
 import type { AppView, WorkspaceTab } from './useWorkspaceUi';
 import { useArtifactLocks } from './useArtifactLocks';
 import { useChat } from './useChat';
@@ -66,7 +67,7 @@ export interface ProjectState {
    * caller may close its dialog), or to a user-facing error message — e.g. a
    * duplicate-name conflict from the backend — for inline display.
    */
-  handleCreateProject: (name: string) => Promise<string | null>;
+  handleCreateProject: (name: string, options?: CreateProjectOptions) => Promise<CreateProjectResult>;
   handleTogglePin: (projectId: string) => Promise<void>;
   /** Flags/unflags a project (dashboard ★ marker) — independent of pinning. */
   handleToggleFlag: (projectId: string) => Promise<void>;
@@ -110,7 +111,8 @@ export interface ProjectState {
   clarificationAnswers: Record<string, string>;
   handleUpdateAnswerValue: (key: string, value: string) => void;
   handleSubmitClarifications: (e: React.FormEvent) => Promise<void>;
-  handleSendMessage: (textToSend?: string) => Promise<void>;
+  /** Optional project id is used by the new-project intake before React has re-rendered the selection. */
+  handleSendMessage: (textToSend?: string, projectIdOverride?: string) => Promise<void>;
   handleValidateRequirements: () => Promise<void>;
   handleGeneratePRD: () => Promise<void>;
   /**

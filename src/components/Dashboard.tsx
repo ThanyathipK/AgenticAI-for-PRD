@@ -40,7 +40,7 @@ import { RequirementTraceability } from './RequirementTraceability';
 import { VersionHistory } from './VersionHistory';
 import { ConfirmationPanel } from './ConfirmationPanel';
 import { DocumentLibrary } from './DocumentLibrary';
-import { NewProjectModal } from './NewProjectModal';
+import { BUSINESS_TOPICS, NewProjectModal, STAKEHOLDER_ROLES } from './NewProjectModal';
 import { ConfirmModal } from './ConfirmModal';
 import { AuthPanel } from './AuthPanel';
 import { AuthModal } from './AuthModal';
@@ -48,6 +48,74 @@ import { useAuth } from '../hooks/useAuth';
 import { ProjectsDashboard } from './ProjectsDashboard';
 import { Tooltip, TooltipBubble } from './Tooltip';
 import { highlightMatch } from '../utils/highlight';
+import { api } from '../api/client';
+import type { ProjectIntake } from './NewProjectModal';
+
+const escapeTableCell = (value: string) => value.replaceAll('|', '\\|').replaceAll('\n', '<br>');
+
+const replaceCoverField = (content: string, label: string, value: string) => {
+  // The cover is a Markdown table. Replace only its second cell; replacing a
+  // whole line would collapse label and value into the first cell.
+  const tableField = new RegExp(`(\\|\\s*\\*\\*${label}:\\*\\*\\s*\\|\\s*)[^|]*(\\|)`, 'i');
+  if (tableField.test(content)) return content.replace(tableField, `$1${escapeTableCell(value)}$2`);
+  return content.replace(new RegExp(`(${label}:\\s*)[^\\n]*`, 'i'), `$1${value}`);
+};
+
+const stakeholderSectionContent = (stakeholders: Record<string, string>) =>
+  ['### Stakeholders', '', '|Role|Name|', '|---|---|', ...STAKEHOLDER_ROLES.map(role => `|${role}|${escapeTableCell(stakeholders[role] ?? '')}|`)].join('\n');
+
+const businessOverviewContent = (topics: Record<string, string>) =>
+  ['### 1. Business & Strategic Overview', '', '|Topic|Details|', '|---|---|', ...BUSINESS_TOPICS.map(topic => `|${topic}|${escapeTableCell(topics[topic] ?? '')}|`)].join('\n');
+
+const seedPrdIntake = async (projectId: string, projectName: string, intake: ProjectIntake): Promise<void> => {
+  // Materialize the official template first. A preview-only response has
+  // placeholder content, so patching it would replace the cover with blank.
+  const { sections } = await api.getPrdSections(projectId, true);
+  const title = sections.find(section => section.section_key === 'title');
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const titleContent = title
+    ? [
+      ['PMO No', intake.pmoNo || 'TBD'],
+      ['PMO Name', projectName],
+      ['Version', 'V1.0'],
+      ['Status', 'Draft'],
+      ['Last Update', today],
+      ['Author', intake.author || 'Product Owner'],
+    ].reduce(
+      (content, [label, value]) => replaceCoverField(content, label, value),
+      title.content,
+    )
+    : '';
+  const hasStakeholderInput = Object.values(intake.stakeholders).some(value => value.trim());
+  const hasBusinessInput = Object.values(intake.businessTopics).some(value => value.trim());
+  // These writes deliberately stay sequential. A first edit seeds the nine
+  // PRD rows server-side; concurrent PATCH requests can otherwise race while
+  // both requests see the unseeded project and attempt the same INSERT.
+  if (title) {
+    await api.updatePrdSection(projectId, 'title', titleContent, {
+      base_content: title.content,
+      change_summary: 'Set PMO number from project intake.',
+      // The cover is hybrid: PMO/Author are reused by the deterministic
+      // generator, while Version/Status/Last Update must refresh on Generate.
+      ai_generatable: true,
+    });
+  }
+  if (hasStakeholderInput) {
+    await api.updatePrdSection(projectId, 'stakeholders', stakeholderSectionContent(intake.stakeholders), {
+      change_summary: 'Set stakeholders from project intake.',
+    });
+  }
+  if (hasBusinessInput) {
+    await api.updatePrdSection(projectId, 'business_overview', businessOverviewContent(intake.businessTopics), {
+      change_summary: 'Set business and strategic overview from project intake.',
+    });
+  }
+};
 
 // Workspace tabs (PRD Documents / Requirements / Flows / Versions). Declared
 // once and shared by both the desktop pill navigation and the tablet/mobile
@@ -96,6 +164,7 @@ export default function Dashboard() {
     handleRenameProject,
     handleDeleteProject,
     handleCreateProject,
+    handleSendMessage,
     handleTogglePin,
     isCreateModalOpen,
     setIsCreateModalOpen,
@@ -854,10 +923,29 @@ export default function Dashboard() {
       {/* NEW PROJECT MODAL (styled replacement for native prompt()) */}
       <NewProjectModal
         isOpen={isCreateModalOpen}
-        onCreate={async (name) => {
-          const failure = await handleCreateProject(name);
-          if (failure === null) setActiveView('workspace');
-          return failure;
+        onCreate={async (name, intake) => {
+          // Do not select yet: selecting starts an async project load, which
+          // previously raced the intake writes and could repaint the editor
+          // with the empty template after the intake had saved.
+          const result = await handleCreateProject(name, { select: false });
+          if (result.error || !result.projectId) return result.error || 'Failed to create the project.';
+          try {
+            await seedPrdIntake(result.projectId, name, intake);
+          } catch {
+            return 'Project was created, but the PRD intake could not be saved. Please open the PRD sections and try again.';
+          }
+          setProjectId(result.projectId);
+          setActiveView('workspace');
+          // Selection now starts the one authoritative project load. Defer the
+          // Gatherer until that load has read the same stitched version that
+          // the PRD preview renders.
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            void (async () => {
+              await loadProjectState(result.projectId!);
+              await handleSendMessage(intake.gathererBrief, result.projectId);
+            })();
+          }));
+          return null;
         }}
         onClose={() => setIsCreateModalOpen(false)}
       />

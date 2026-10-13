@@ -14,6 +14,15 @@ export interface ProjectContextMenuState {
   y: number;
 }
 
+export type CreateProjectResult =
+  | { projectId: string; error: null }
+  | { projectId: null; error: string };
+
+export interface CreateProjectOptions {
+  /** Keep the project unselected while a caller seeds its initial PRD data. */
+  select?: boolean;
+}
+
 export interface UseProjectsResult {
   projectId: string | null;
   setProjectId: Dispatch<SetStateAction<string | null>>;
@@ -35,7 +44,7 @@ export interface UseProjectsResult {
    * caller may close its dialog), or to a user-facing error message — e.g. a
    * duplicate-name conflict from the backend — for inline display.
    */
-  handleCreateProject: (name: string) => Promise<string | null>;
+  handleCreateProject: (name: string, options?: CreateProjectOptions) => Promise<CreateProjectResult>;
   handleTogglePin: (projectId: string) => Promise<void>;
   /** Flags/unflags a project (dashboard ★ marker) — independent of pinning. */
   handleToggleFlag: (projectId: string) => Promise<void>;
@@ -253,10 +262,10 @@ export function useProjects(isAuthenticated: boolean, authUserId: string | null)
   //              server's 409 duplicate detail is returned for inline display.
   //              Chain: 4.2 → 4.3 (api.createProject) → route 4.4 → repository
   //              4.4.2 (projects + requirement_states INSERT) → 4.5 select/open.
-  const handleCreateProject = async (name: string): Promise<string | null> => {
+  const handleCreateProject = async (name: string, options: CreateProjectOptions = {}): Promise<CreateProjectResult> => {
     const trimmed = name.trim();
-    if (!trimmed) return 'Project name must not be empty.';
-    if (trimmed.length > 50) return 'Project name must be 50 characters or fewer.';
+    if (!trimmed) return { projectId: null, error: 'Project name must not be empty.' };
+    if (trimmed.length > 50) return { projectId: null, error: 'Project name must be 50 characters or fewer.' };
     try {
       // PROJECT 4.3 — API boundary → POST /api/projects (route PROJECT 4.4).
       const created = await api.createProject(trimmed);
@@ -268,10 +277,10 @@ export function useProjects(isAuthenticated: boolean, authUserId: string | null)
       searchStateRef.current.seq += 1;
       setProjectSearchQuery('');
       setProjects(refreshed);
-      setProjectId(created.id);
-      return null;
+      if (options.select !== false) setProjectId(created.id);
+      return { projectId: created.id, error: null };
     } catch (err) {
-      return detailFromJsonError(err) ?? 'Failed to create the project.';
+      return { projectId: null, error: detailFromJsonError(err) ?? 'Failed to create the project.' };
     }
   };
 

@@ -328,6 +328,22 @@ async def test_auth_config_reports_signup_state(client):
 
 
 @pytest.mark.asyncio
+async def test_request_lifecycle_uses_safe_correlation_id(client, caplog):
+    caplog.set_level("INFO", logger="app.main")
+
+    resp = await client.get(
+        "/api/auth/config",
+        headers={"X-Request-ID": "browser trace/123"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["X-Request-ID"] == "browser_trace_123"
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("[REQUEST][browser_trace_123][START]" in message for message in messages)
+    assert any("[REQUEST][browser_trace_123][DONE]" in message for message in messages)
+
+
+@pytest.mark.asyncio
 async def test_register_creates_a_loginable_row(client, db_session):
     resp = await client.post(
         "/api/auth/register",

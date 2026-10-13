@@ -1,5 +1,6 @@
 """Persistent background-job completion and cancellation semantics."""
 import asyncio
+import uuid
 
 import pytest
 import pytest_asyncio
@@ -108,3 +109,116 @@ async def test_user_cancel_is_terminal_but_shutdown_is_recoverable(job_db, monke
         assert interrupted.status == "queued"
         assert interrupted.progress_stage == "interrupted_by_shutdown"
         assert interrupted.cancel_requested is False
+
+
+@pytest.mark.parametrize(
+    ("error", "category"),
+    [
+        (asyncio.TimeoutError(), "timeout:"),
+        (RuntimeError("Could not connect to LM Studio"), "llm_unavailable:"),
+        (RuntimeError("Input is above the configured safe limit"), "context_limit:"),
+        (RuntimeError("Structured response parse failed"), "invalid_model_output:"),
+        (RuntimeError("internal database detail"), "workflow_error:"),
+    ],
+)
+def test_public_failure_returns_safe_actionable_categories(error, category):
+    public_message = jobs._public_failure(error)
+
+    assert public_message.startswith(category)
+    assert "database detail" not in public_message
+
+
+@pytest.mark.asyncio
+async def test_get_job_rejects_invalid_and_cross_project_ids(job_db):
+    factory, user_id, project_id = job_db
+    job_id = await _new_job(factory, user_id, project_id)
+
+    async with factory() as session:
+        assert await jobs.get_job("not-a-uuid", project_id, session) is None
+        assert await jobs.get_job(job_id, "not-a-uuid", session) is None
+        assert await jobs.get_job(job_id, str(uuid.uuid4()), session) is None
+        assert (await jobs.get_job(job_id, project_id, session)).id == uuid.UUID(job_id)
+
+
+@pytest.mark.asyncio
+async def test_create_job_rejects_second_active_job_for_project(job_db):
+    factory, user_id, project_id = job_db
+    first_id = await _new_job(factory, user_id, project_id)
+
+    async with factory() as session:
+        with pytest.raises(ValueError, match="already has an active architect job"):
+            await jobs.create_job(
+                project_id, user_id, "auditor", {"project_id": project_id}, session,
+            )
+
+        persisted = await session.get(GenerationJobModel, uuid.UUID(first_id))
+        assert persisted.status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_run_job_honours_cancellation_requested_before_execution(job_db, monkeypatch):
+    factory, user_id, project_id = job_db
+    job_id = await _new_job(factory, user_id, project_id)
+    execute_called = False
+
+    async def execute(_job, _session):
+        nonlocal execute_called
+        execute_called = True
+        return {}
+
+    monkeypatch.setattr(jobs, "_execute", execute)
+    async with factory() as session:
+        job = await session.get(GenerationJobModel, uuid.UUID(job_id))
+        job.cancel_requested = True
+        await session.commit()
+
+    await jobs._run_job(job_id)
+
+    async with factory() as session:
+        job = await session.get(GenerationJobModel, uuid.UUID(job_id))
+        assert job.status == "cancelled"
+        assert job.progress_stage == "cancelled"
+        assert job.completed_at is not None
+    assert execute_called is False
+
+
+@pytest.mark.asyncio
+async def test_recovery_requeues_work_and_finalizes_previously_cancelled_job(job_db, monkeypatch):
+    factory, user_id, project_id = job_db
+    queued_id = await _new_job(factory, user_id, project_id)
+
+    async with factory() as session:
+        queued = await session.get(GenerationJobModel, uuid.UUID(queued_id))
+        queued.status = "running"
+        second_project = ProjectModel(
+            user_id=uuid.UUID(user_id),
+            name="Cancelled Background Work",
+            industry_standard="Banking",
+        )
+        session.add(second_project)
+        await session.commit()
+
+        cancelled = GenerationJobModel(
+            project_id=second_project.id,
+            requested_by_user_id=uuid.UUID(user_id),
+            job_type="auditor",
+            request_payload={"project_id": project_id},
+            status="cancelling",
+            cancel_requested=True,
+        )
+        session.add(cancelled)
+        await session.commit()
+        cancelled_id = str(cancelled.id)
+
+    launched = []
+    monkeypatch.setattr(jobs, "launch_job", launched.append)
+
+    assert await jobs.recover_generation_jobs() == 1
+    assert launched == [queued_id]
+
+    async with factory() as session:
+        queued = await session.get(GenerationJobModel, uuid.UUID(queued_id))
+        cancelled = await session.get(GenerationJobModel, uuid.UUID(cancelled_id))
+        assert (queued.status, queued.progress_stage) == ("queued", "recovered_after_restart")
+        assert (cancelled.status, cancelled.progress_stage) == ("cancelled", "cancelled")
+        assert cancelled.completed_at is not None

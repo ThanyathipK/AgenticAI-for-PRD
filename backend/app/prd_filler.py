@@ -15,8 +15,9 @@ left as an honest placeholder (TBD) instead of invented content.
 from __future__ import annotations
 
 import re
-from datetime import date as _date
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from app.prompt_loader import load_prd_latex_template_body
 
@@ -64,6 +65,19 @@ def _clean(value: Any) -> str:
 # document is stored or exported. The marker is letters-only, so it survives
 # escape_latex, pandoc and LaTeX compilation untouched when unstamped.
 PENDING_VERSION_LABEL = "PENDINGSEMVER"
+
+
+def format_project_status(value: Any) -> str:
+    """Convert the stored workflow status into the cover-page label."""
+    raw = str(value or "draft").strip().lower()
+    labels = {
+        "draft": "Draft",
+        "in_review_hpo": "In Review (HPO)",
+        "in_review_po": "In Review (PO)",
+        "approved": "Approved",
+        "revised": "Revised",
+    }
+    return labels.get(raw, raw.replace("_", " ").title() or "Draft")
 
 
 def version_history_sentence(history_context: Optional[str]) -> str:
@@ -124,18 +138,217 @@ def stamp_version_label(document: str, label: str) -> str:
 # ---------------------------------------------------------------------------
 # Section fillers - each replaces the blank/marker inside the SAME skeleton
 # ---------------------------------------------------------------------------
+def extract_cover_fields(markdown: str) -> Dict[str, str]:
+    """Read user-owned cover values from a normalized Markdown PRD.
+
+    Intake data is stored in ``prd_sections`` and stitched into
+    ``requirement_states.generated_prd``.  Generation must read these values
+    before rebuilding the official LaTeX template; otherwise the historical
+    UUID-derived fallback silently replaces the user's PMO number.
+    """
+    source = str(markdown or "")
+    fields: Dict[str, str] = {}
+    for key, label in (("pmo_no", "PMO No"), ("pmo_name", "PMO Name"), ("author", "Author")):
+        table_match = re.search(
+            rf"\|\s*\*\*{re.escape(label)}:\*\*\s*\|\s*([^|\n]*)\|",
+            source,
+            re.IGNORECASE,
+        )
+        plain_match = re.search(
+            rf"^{re.escape(label)}:\s*(.+?)\s*$",
+            source,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        value = (table_match.group(1) if table_match else plain_match.group(1) if plain_match else "").strip()
+        if value and value.upper() not in {"PMO_NO", "PMO_NAME", "AUTHOR", "TBD"}:
+            fields[key] = value.replace("\\|", "|")
+    return fields
+
+
+STAKEHOLDER_ROLES = (
+    "Product Owner", "Technical Product Owner", "Solution Architecture",
+    "System Analyst", "Engineering Manager", "Project Manager",
+    "Quality Assurance Lead", "Performance QA Lead",
+)
+BUSINESS_TOPICS = (
+    "Introduction & Executive Summary", "Problem Statement",
+    "Business Objectives", "Expected Benefit", "Success Metrics",
+    "Target Audience & user Personas",
+)
+
+
+def extract_intake_fields(markdown: str) -> Dict[str, Any]:
+    """Extract every new-project intake value from persisted PRD Markdown."""
+    source = str(markdown or "")
+    result: Dict[str, Any] = {
+        **extract_cover_fields(source),
+        "stakeholders": {},
+        "business_topics": {},
+    }
+    current_section = ""
+    for raw_line in source.splitlines():
+        heading = re.match(r"^#{2,3}\s+(.+?)\s*$", raw_line.strip())
+        if heading:
+            title = heading.group(1).lower()
+            current_section = (
+                "stakeholders" if "stakeholder" in title
+                else "business" if "business & strategic" in title
+                else ""
+            )
+            continue
+        if current_section not in {"stakeholders", "business"}:
+            continue
+        cells = [cell.strip().replace("\\|", "|").replace("<br>", "\n")
+                 for cell in raw_line.strip().strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        label = re.sub(r"\*\*", "", cells[0]).strip()
+        value = cells[1].strip()
+        if not value:
+            continue
+        choices = STAKEHOLDER_ROLES if current_section == "stakeholders" else BUSINESS_TOPICS
+        canonical = next((choice for choice in choices if choice.lower() == label.lower()), None)
+        if canonical:
+            target = "stakeholders" if current_section == "stakeholders" else "business_topics"
+            result[target][canonical] = value
+    return result
+
+
+def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
+    """Recover editable preview values needed by the official export filler.
+
+    The Markdown document is the saved user-owned representation, while the
+    PDF/DOCX is rebuilt with the untouched LaTeX template.  This bridge keeps
+    manual Scope, Technical and Appendix edits from being replaced by older
+    normalized requirement records during that rebuild.
+    """
+    result: Dict[str, Any] = {
+        "scope_in": [], "scope_out": [], "scope_present": False,
+        "functional_rows": [], "functional_table_present": False,
+        "narrative": {},
+    }
+    section = ""
+    scope_headers = False
+    glossary_headers = False
+    narrative_labels = {
+        "non functional requirements": "non_functional",
+        "expected tps customer volume": "tps_volume",
+        "growth prediction y0y%": "growth",
+        "launch & rollout plan": "launch_plan",
+        "open questions & risks": "open_questions",
+        "assumptions": "assumptions",
+    }
+
+    def clean_cell(value: str) -> str:
+        value = re.sub(r"\*\*", "", value).replace("<br>", "\n")
+        return value.strip()
+
+    def label(value: str) -> str:
+        normalized = clean_cell(value).replace("&\n", "& ").replace("\n", " ").replace("-", " ")
+        return re.sub(r"\s+", " ", normalized).strip().lower()
+
+    def list_items(value: str) -> List[str]:
+        items = []
+        for part in clean_cell(value).splitlines():
+            item = re.sub(r"^\s*\d+[.)]\s*", "", part).strip()
+            if item and item.upper() != "TBD":
+                items.append(item)
+        return items
+
+    glossary: List[tuple[str, str]] = []
+    for raw_line in str(markdown or "").splitlines():
+        heading = re.match(r"^#{2,4}\s+(.+?)\s*$", raw_line.strip())
+        if heading:
+            title = heading.group(1).lower()
+            if "product scope" in title:
+                section = "scope"
+            elif "scope definition" in title:
+                # Subheading inside Product Scope; keep the parent section.
+                section = "scope"
+            elif "technical & operational" in title:
+                section = "tech"
+            elif "appendix" in title:
+                section = "appendix"
+            elif len(heading.group(0)) - len(heading.group(0).lstrip("#")) <= 3:
+                section = ""
+            continue
+        if not raw_line.strip().startswith("|"):
+            continue
+        cells = [clean_cell(cell) for cell in raw_line.strip().strip("|").split("|")]
+        if not cells or all(re.fullmatch(r"[-: ]*", cell) for cell in cells):
+            continue
+
+        if section == "scope" and len(cells) >= 2:
+            joined_labels = " ".join(label(cell) for cell in cells)
+            if "functional requirement (fr)" in joined_labels and "acceptance criteria" in joined_labels:
+                result["functional_table_present"] = True
+                continue
+            if len(cells) >= 4 and cells[2].strip() and re.match(r"^FR\s+\d", cells[2].strip(), re.I):
+                fr_text = re.sub(r"^FR\s+[\d.]+:\s*", "", clean_cell(cells[2]), flags=re.I)
+                code_match = re.match(r"([^:]+):\s*(.*)", fr_text)
+                ticket_code = code_match.group(1).strip() if code_match else ""
+                title = code_match.group(2).strip() if code_match else fr_text.strip()
+                acs = [
+                    re.sub(r"^AC\s+[\d.]+:\s*", "", item, flags=re.I).strip()
+                    for item in clean_cell(cells[3]).splitlines()
+                ]
+                acs = [item for item in acs if item and item.upper() != "TBD"]
+                result["functional_rows"].append({
+                    "ticket_code": ticket_code,
+                    "story_title": title,
+                    "acceptance_criteria": acs,
+                })
+                result["functional_table_present"] = True
+                continue
+            if "scope in" in label(cells[0]) and "scope out" in label(cells[1]):
+                scope_headers = True
+                result["scope_present"] = True
+                continue
+            if scope_headers:
+                result["scope_in"].extend(list_items(cells[0]))
+                result["scope_out"].extend(list_items(cells[1]))
+                scope_headers = False
+                continue
+
+        if section in {"tech", "appendix"} and len(cells) >= 2:
+            row_label = label(cells[0])
+            key = narrative_labels.get(row_label)
+            if key:
+                value = "\n".join(list_items(cells[1])) or clean_cell(cells[1])
+                # Presence of the editable row is authoritative even when the
+                # user cleared it; use TBD rather than resurrecting stale AI data.
+                result["narrative"][key] = value if value and value.upper() != "TBD" else "TBD"
+                glossary_headers = row_label == "glossary"
+                continue
+            if row_label == "glossary":
+                glossary_headers = True
+                continue
+            if glossary_headers and len(cells) >= 3:
+                term, definition = cells[-2].strip(), cells[-1].strip()
+                if label(term) == "term" and label(definition) == "definition":
+                    continue
+                if term and definition and term.upper() != "TBD" and definition.upper() != "TBD":
+                    glossary.append((term, definition))
+
+    if glossary:
+        result["narrative"]["glossary"] = glossary
+    return result
+
+
 def _fill_cover(body: str, project_id: str, project_name: str, version_label: str,
-                author: str, today: str) -> str:
-    body = body.replace(r"\prdfield{PMO\_NO}", escape_latex(project_id[:8].upper()), 1)
+                author: str, today: str, pmo_no: Optional[str] = None,
+                status: str = "Draft") -> str:
+    resolved_pmo_no = (pmo_no or "").strip() or project_id[:8].upper()
+    body = body.replace(r"\prdfield{PMO\_NO}", escape_latex(resolved_pmo_no), 1)
     body = body.replace(r"\prdfield{PMO\_NAME}", escape_latex(project_name), 1)
     body = body.replace(r"\prdfield{VERSION}", escape_latex(version_label), 1)
-    body = body.replace(r"\prdfield{STATUS}", "Draft", 1)
+    body = body.replace(r"\prdfield{STATUS}", escape_latex(status or "Draft"), 1)
     body = body.replace(r"\prdfield{LAST\_UPDATE}", escape_latex(today), 1)
     body = body.replace(r"\prdfield{AUTHOR}", escape_latex(author or "Product Owner"), 1)
     return body
 
 
-def _fill_stakeholders(body: str, actors: List[Any]) -> str:
+def _fill_stakeholders(body: str, actors: List[Any], stakeholders: Optional[Dict[str, str]] = None) -> str:
     names = [str(a.get("name", a)) if isinstance(a, dict) else str(a)
              for a in (actors or [])]
 
@@ -145,12 +358,8 @@ def _fill_stakeholders(body: str, actors: List[Any]) -> str:
                 return n
         return ""
 
-    for role in (
-        "Product Owner", "Technical Product Owner", "Solution Architecture",
-        "System Analyst", "Engineering Manager", "Project Manager",
-        "Quality Assurance Lead", "Performance QA Lead",
-    ):
-        name = _match(role)
+    for role in STAKEHOLDER_ROLES:
+        name = (stakeholders or {}).get(role) or _match(role)
         body = body.replace(f"{role} & \\\\", f"{role} & {escape_latex(name)} \\\\", 1)
     return body
 
@@ -188,9 +397,18 @@ def _fill_reviews(body: str, actors: List[Any]) -> str:
 
 
 def _fill_business_overview(body: str, data: Dict[str, Any],
-                            narrative: Optional[Dict[str, str]]) -> str:
+                            narrative: Optional[Dict[str, str]],
+                            business_topics: Optional[Dict[str, str]] = None) -> str:
+    business_topics = business_topics or {}
     goals = [g.get("description", g) if isinstance(g, dict) else g
              for g in (data.get("business_goals") or [])]
+    if business_topics.get("Business Objectives"):
+        goals = [business_topics["Business Objectives"]]
+    narrative = dict(narrative or {})
+    if business_topics.get("Expected Benefit"):
+        narrative["expected_benefit"] = business_topics["Expected Benefit"]
+    if business_topics.get("Success Metrics"):
+        narrative["success_metrics"] = business_topics["Success Metrics"]
     actors = data.get("actors") or []
 
     def _narr(key: str, fallback: str) -> str:
@@ -198,9 +416,16 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
             return r"\prdfield{" + escape_latex(_clean(narrative[key])) + "}"
         return fallback
 
-    epic = _narr("exec_summary", r"\prdfield{TBD}")
+    def _topic(name: str, fallback: str) -> str:
+        value = business_topics.get(name)
+        return r"\prdfield{" + escape_latex(_clean(value)) + "}" if value else fallback
 
-    problems = [_clean(p) for p in (data.get("problem_statement") or [])
+    epic = _topic("Introduction & Executive Summary", _narr("exec_summary", r"\prdfield{TBD}"))
+
+    problem_source = ([business_topics["Problem Statement"]]
+                      if business_topics.get("Problem Statement")
+                      else (data.get("problem_statement") or []))
+    problems = [_clean(p) for p in problem_source
                 if str(p or "").strip()] or ["TBD"]
     problem_cell = r"\prdfield{" + "".join(
         f"{i + 1}. {escape_latex(p)}"
@@ -226,7 +451,8 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
         (a.get("name", a) if isinstance(a, dict) else a) for a in (actors or [])
     ]
     target = [n for n in target if str(n or "").strip()]
-    target_cell = r"\prdfield{" + escape_latex(", ".join(str(n) for n in target)) + "}"
+    target_text = business_topics.get("Target Audience & user Personas") or ", ".join(str(n) for n in target)
+    target_cell = r"\prdfield{" + escape_latex(target_text) + "}"
     if target_cell == r"\prdfield{":
         target_cell = r"\prdfield{TBD}"
 
@@ -487,6 +713,10 @@ def fill_template_body(
     project_name: str = "",
     version: int = 1,
     author: str = "Product Owner",
+    status: str = "Draft",
+    pmo_no: Optional[str] = None,
+    stakeholders: Optional[Dict[str, str]] = None,
+    business_topics: Optional[Dict[str, str]] = None,
     today: Optional[str] = None,
     data: Optional[Dict[str, Any]] = None,
     narrative: Optional[Dict[str, str]] = None,
@@ -507,17 +737,17 @@ def fill_template_body(
     stamp the resolved semver with :func:`stamp_version_label` afterwards.
     """
     data = data or {}
-    today = today or _date.today().isoformat()
+    today = today or datetime.now(ZoneInfo("Asia/Bangkok")).date().isoformat()
     version_label = (version_label or "").strip() or f"V{version}.0"
 
     body = load_prd_latex_template_body()
-    body = _fill_cover(body, project_id, project_name, version_label, author, today)
-    body = _fill_stakeholders(body, data.get("actors") or [])
+    body = _fill_cover(body, project_id, project_name, version_label, author, today, pmo_no, status)
+    body = _fill_stakeholders(body, data.get("actors") or [], stakeholders)
     body = _fill_version_history(
         body, version_label, author, today, version_summary, version_history,
     )
     body = _fill_reviews(body, data.get("actors") or [])
-    body = _fill_business_overview(body, data, narrative)
+    body = _fill_business_overview(body, data, narrative, business_topics)
     body = _fill_product_scope(body, data)
     body = _fill_tech_appendix(body, narrative)
     return body

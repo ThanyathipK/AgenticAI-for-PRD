@@ -10,7 +10,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "schema:parse": "tsx scripts/parse_check.ts",
-    "schema:drift": "python3 backend/check_schema_drift.py",
+    "schema:drift": "./venv/bin/python backend/check_schema_drift.py",
     "test": "tsx --test scripts/unit.test.ts scripts/auth.test.ts scripts/requirement_locks.test.ts"
   },
   "dependencies": {

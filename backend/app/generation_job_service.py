@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -129,27 +130,37 @@ async def _execute(job: GenerationJobModel, session) -> dict[str, Any]:
 
 
 async def _run_job(job_id: str) -> None:
+    started = time.perf_counter()
+    logger.info("[JOB][%s][LOAD][START] Loading queued generation job", job_id)
     async with AsyncSessionLocal() as session:
         job = await session.get(GenerationJobModel, uuid.UUID(job_id))
         if job is None or job.status in TERMINAL_STATUSES:
+            logger.info("[JOB][%s][LOAD][SKIP] Job is missing or already terminal", job_id)
             return
         if job.cancel_requested:
             job.status = "cancelled"
             job.progress_stage = "cancelled"
             job.completed_at = datetime.now(timezone.utc)
             await session.commit()
+            logger.info("[JOB][%s][CANCEL][DONE] Cancelled before execution", job_id)
             return
         job.status = "running"
         job.progress_stage = "model_processing"
         job.started_at = job.started_at or datetime.now(timezone.utc)
         await session.commit()
+        logger.info(
+            "[JOB][%s][EXECUTE][START] type=%s project=%s",
+            job_id, job.job_type, job.project_id,
+        )
         try:
             if job.job_type in {"architect", "auditor"}:
                 job.progress_stage = "waiting_for_local_model"
                 await session.commit()
+                logger.info("[JOB][%s][MODEL_SLOT][WAIT] Waiting for local-model capacity", job_id)
                 async with _heavy_inference_semaphore:
                     job.progress_stage = "model_processing"
                     await session.commit()
+                    logger.info("[JOB][%s][MODEL][START] Local-model processing started", job_id)
                     result = await asyncio.wait_for(
                         _execute(job, session),
                         timeout=settings.LLM_BACKGROUND_JOB_TIMEOUT_SECONDS,
@@ -161,6 +172,10 @@ async def _run_job(job_id: str) -> None:
             job.result_payload = result
             job.completed_at = datetime.now(timezone.utc)
             await session.commit()
+            logger.info(
+                "[JOB][%s][COMPLETE][DONE] type=%s elapsed_ms=%.1f",
+                job_id, job.job_type, (time.perf_counter() - started) * 1000,
+            )
         except asyncio.CancelledError:
             await session.rollback()
             job = await session.get(GenerationJobModel, uuid.UUID(job_id))
@@ -181,8 +196,13 @@ async def _run_job(job_id: str) -> None:
                     job.progress_stage = "interrupted_by_shutdown"
                     job.completed_at = None
                 await session.commit()
-            logger.info("Generation job %s interrupted (user_cancelled=%s)", job_id, bool(job and job.cancel_requested))
+            logger.info(
+                "[JOB][%s][INTERRUPTED] user_cancelled=%s elapsed_ms=%.1f",
+                job_id, bool(job and job.cancel_requested),
+                (time.perf_counter() - started) * 1000,
+            )
         except Exception as exc:
+            failed_stage = job.progress_stage
             await session.rollback()
             job = await session.get(GenerationJobModel, uuid.UUID(job_id))
             if job is not None:
@@ -191,7 +211,11 @@ async def _run_job(job_id: str) -> None:
                 job.error_message = _public_failure(exc)
                 job.completed_at = datetime.now(timezone.utc)
                 await session.commit()
-            logger.exception("Generation job %s failed", job_id)
+            logger.exception(
+                "[JOB][%s][FAILED] stage=%s elapsed_ms=%.1f",
+                job_id, failed_stage,
+                (time.perf_counter() - started) * 1000,
+            )
 
 
 def launch_job(job_id: str) -> None:

@@ -1,4 +1,7 @@
 import logging
+import re
+import time
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, status
@@ -173,6 +176,36 @@ app = FastAPI(
     },
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def request_lifecycle_log(request: Request, call_next):
+    """Log every HTTP request boundary without exposing bodies or credentials."""
+    supplied_request_id = request.headers.get("X-Request-ID", "")
+    request_id = re.sub(r"[^A-Za-z0-9._-]", "_", supplied_request_id)[:64]
+    request_id = request_id or uuid.uuid4().hex[:12]
+    request.state.request_id = request_id
+    started = time.perf_counter()
+    logger.info(
+        "[REQUEST][%s][START] %s %s",
+        request_id, request.method, request.url.path,
+    )
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "[REQUEST][%s][FAILED] %s %s elapsed_ms=%.1f",
+            request_id, request.method, request.url.path,
+            (time.perf_counter() - started) * 1000,
+        )
+        raise
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "[REQUEST][%s][DONE] %s %s status=%s elapsed_ms=%.1f",
+        request_id, request.method, request.url.path, response.status_code,
+        (time.perf_counter() - started) * 1000,
+    )
+    return response
 
 
 # Enterprise CORS middleware with explicit allowed origins.

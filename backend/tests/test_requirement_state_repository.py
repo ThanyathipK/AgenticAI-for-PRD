@@ -100,7 +100,7 @@ class FakeAsyncSession:
         if RequirementStateModel in entities:
             return self._dispatch(
                 "requirement_state",
-                _Result(tuple_rows=[(self._state, "Acme")]),
+                _Result(tuple_rows=[(self._state, "Acme", "draft")]),
             )
 
         if EpicModel in entities:
@@ -247,6 +247,7 @@ class TestGetByProjectIdBatches:
         )
 
         assert result is not None
+        assert result["project_status"] == "draft"
         assert len(result["requirements"]) == 3
 
     @pytest.mark.asyncio

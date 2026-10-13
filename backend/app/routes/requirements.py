@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Dict, Any, List
 from uuid import UUID, uuid4
 
@@ -578,11 +579,19 @@ async def _process_requirements_pipeline(
     """
     from datetime import datetime, timedelta, timezone
 
+    run_id = uuid4().hex[:12]
+    pipeline_started = time.perf_counter()
+    logger.info(
+        "[WORKFLOW][%s][START] project=%s requested_agent=%s",
+        run_id, request.project_id, request.target_agent or "gatherer",
+    )
+
     # Finding #39: enforce MAX_CONTEXT_TOKENS on the incoming processing payload
     # (raw_input + structured_requirements) before spending any LLM budget.
     # Runs BEFORE the "Triggering on-demand agent" log so a rejected request
     # never claims an agent run was started.
     validate_body_budget(request.model_dump(), "Process-requirements request")
+    logger.info("[WORKFLOW][%s][VALIDATE_INPUT][DONE]", run_id)
 
     logger.info(f"Triggering on-demand {request.target_agent} agent for project {request.project_id}")
 
@@ -615,6 +624,11 @@ async def _process_requirements_pipeline(
     req_state = await RequirementStateRepository.get_by_project_id(request.project_id, session)
     persisted_version_at_start = req_state.get("version_number") if req_state else None
     logger.info(f"[DB LOG] Loading RequirementState for processing project {request.project_id} complete. Found: {req_state is not None}")
+    logger.info(
+        "[WORKFLOW][%s][LOAD_STATE][DONE] found=%s version=%s",
+        run_id, req_state is not None,
+        req_state.get("version_number") if req_state else "none",
+    )
 
     # Detect intent on the raw input
     # INTENT 1.3 — Detector invocation: raw user text + the project's current user
@@ -634,6 +648,10 @@ async def _process_requirements_pipeline(
     # instead of assuming a perfect 1.0 confidence.
     intent_confidence = float(detected_intent_result.get("confidence", 1.0) or 1.0)
     logger.info(f"[INTENT DETECTION] Detected intent: {detected_intent} (confidence: {detected_intent_result.get('confidence', 0.0)})")
+    logger.info(
+        "[WORKFLOW][%s][DETECT_INTENT][DONE] intent=%s confidence=%.3f",
+        run_id, detected_intent, intent_confidence,
+    )
 
     # ==========================================
     # CHAT 2.3 — GENERAL_CHAT short-circuit: the chat flow's backend branch. Runs
@@ -655,6 +673,7 @@ async def _process_requirements_pipeline(
     #              an empty message always classifies as GENERAL_CHAT.
     on_demand_agents = ("architect", "auditor", "delete_requirement")
     if detected_intent == "GENERAL_CHAT" and request.target_agent not in on_demand_agents:
+        logger.info("[WORKFLOW][%s][GENERAL_CHAT][START]", run_id)
         logger.info("[GENERAL_CHAT] Handling as general chat. Generating conversational response with project context.")
 
         # Load conversation history for context. This is a DB read that feeds the
@@ -727,6 +746,10 @@ async def _process_requirements_pipeline(
         #            artifacts echoed back unchanged (nothing was written). The UI
         #            branches on `detected_intent` in CHAT 1.4.
         # Return response (no project artifacts modified)
+        logger.info(
+            "[WORKFLOW][%s][GENERAL_CHAT][DONE] elapsed_ms=%.1f",
+            run_id, (time.perf_counter() - pipeline_started) * 1000,
+        )
         return {
             "status": "general_chat",
             "detected_intent": "GENERAL_CHAT",
@@ -951,7 +974,17 @@ async def _process_requirements_pipeline(
         # avoids reserving a database connection for the entire generation.
         await session.commit()
         # Run state graph asynchronously (merges and generates in memory)
+        logger.info(
+            "[WORKFLOW][%s][AGENT][START] target=%s requirements=%d knowledge_documents=%d",
+            run_id, request.target_agent or "gatherer",
+            len(req_state.get("requirements", []) or []), len(knowledge_documents),
+        )
         final_state = await prd_workflow.ainvoke(initial_state)
+        logger.info(
+            "[WORKFLOW][%s][AGENT][DONE] target=%s elapsed_ms=%.1f",
+            run_id, request.target_agent or "gatherer",
+            (time.perf_counter() - pipeline_started) * 1000,
+        )
 
         # Read updated centralized RequirementState from final graph output
         req_state = final_state.get("requirement_state", req_state)
@@ -1029,8 +1062,8 @@ async def _process_requirements_pipeline(
             final_state["requirement_state"] = req_state
             architect_auto_persisted = True
             logger.info(
-                "Architect artifacts persisted as PRD version %s for project %s",
-                version_record.get("version_number"), request.project_id,
+                "[WORKFLOW][%s][PERSIST_PRD][DONE] version=%s project=%s",
+                run_id, version_record.get("version_number"), request.project_id,
             )
 
         # GATHERING 8.0 — Handoff to the CONFIRMATION flow: the merged state is NOT
@@ -1084,7 +1117,10 @@ async def _process_requirements_pipeline(
                 session=session
             )
             pending_action_id = pending_action.get("id")
-            logger.info(f"[IN-MEMORY MERGE] Pending action {pending_action_id} created. Awaiting user confirmation.")
+            logger.info(
+                "[WORKFLOW][%s][STAGE_MERGE][DONE] pending_action=%s",
+                run_id, pending_action_id,
+            )
         elif audit_operational_error:
             logger.warning("Auditor operational failure: no pending action created for project %s", request.project_id)
         else:
@@ -1157,6 +1193,12 @@ async def _process_requirements_pipeline(
             "target_agent": request.target_agent,
         })
 
+        logger.info(
+            "[WORKFLOW][%s][COMPLETE][DONE] status=%s pending_merge=%s elapsed_ms=%.1f",
+            run_id, status_str,
+            not audit_operational_error and not stale_result and not audit_auto_persisted and not architect_auto_persisted,
+            (time.perf_counter() - pipeline_started) * 1000,
+        )
         return {
             "status": status_str,
             "workflow_routing": workflow_routing,
@@ -1174,21 +1216,37 @@ async def _process_requirements_pipeline(
     except HTTPException:
         # Preserve intentional 4xx responses (notably validation-context 413s)
         # instead of disguising them as a generic LangGraph 500.
+        logger.warning(
+            "[WORKFLOW][%s][FAILED] http_error elapsed_ms=%.1f",
+            run_id, (time.perf_counter() - pipeline_started) * 1000,
+        )
         raise
     except LMStudioUnavailableError as e:
-        logger.error(f"LM Studio unreachable during workflow for project {request.project_id}: {e}")
+        logger.exception(
+            "[WORKFLOW][%s][FAILED] kind=lm_studio_unavailable project=%s elapsed_ms=%.1f",
+            run_id, request.project_id,
+            (time.perf_counter() - pipeline_started) * 1000,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The local inference gateway (LM Studio) is unreachable. Start LM Studio with a loaded model and retry the generation.",
         )
     except LMStudioGatewayError as e:
-        logger.error(f"LM Studio gateway error during workflow for project {request.project_id}: {e}")
+        logger.exception(
+            "[WORKFLOW][%s][FAILED] kind=lm_studio_gateway project=%s elapsed_ms=%.1f",
+            run_id, request.project_id,
+            (time.perf_counter() - pipeline_started) * 1000,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The local inference gateway rejected the generation request. Retry once the model is responsive.",
         )
     except LMStudioOutputParsingError as e:
-        logger.error(f"LM Studio returned an unreadable payload for project {request.project_id}: {e}")
+        logger.exception(
+            "[WORKFLOW][%s][FAILED] kind=output_parsing project=%s elapsed_ms=%.1f",
+            run_id, request.project_id,
+            (time.perf_counter() - pipeline_started) * 1000,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The model returned an unreadable response. Please retry the generation.",
@@ -1197,13 +1255,21 @@ async def _process_requirements_pipeline(
         # invoke_llm_structured exhausts both of its parse attempts (e.g. a
         # reasoning model burning its whole token budget on thinking content).
         # That is a retryable model-output failure, not a server bug — 503, not 500.
-        logger.error(f"Workflow produced no usable structured output for project {request.project_id}: {e}")
+        logger.exception(
+            "[WORKFLOW][%s][FAILED] kind=structured_output project=%s elapsed_ms=%.1f",
+            run_id, request.project_id,
+            (time.perf_counter() - pipeline_started) * 1000,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The audit or generation could not complete. Please try again. Your previous saved results have not been replaced.",
         )
     except Exception as e:
-        logger.error(f"Multi-agent workflow execution failed for project {request.project_id}: {str(e)}")
+        logger.exception(
+            "[WORKFLOW][%s][FAILED] kind=unexpected project=%s elapsed_ms=%.1f",
+            run_id, request.project_id,
+            (time.perf_counter() - pipeline_started) * 1000,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"LangGraph multi-agent workflow execution failed: {str(e)}"

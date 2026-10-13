@@ -170,6 +170,20 @@ test('parsePRDToSections: plain text stays one title section', () => {
   assert.equal(sections[0].content, 'Just some intro text');
 });
 
+test('parsePRDToSections: branded cover heading stays in the title part', () => {
+  const sections = parsePRDToSections([
+    'PRODUCT REQUIREMENT',
+    '',
+    '## Nimble by Krungsri',
+    'PMO No: PMO-001',
+    '### Stakeholders',
+    '|Role|Name|',
+  ].join('\n'));
+  assert.deepEqual(sections.map((section) => section.id), ['title', 'stakeholders']);
+  assert.match(sections[0].content, /Nimble by Krungsri/);
+  assert.match(sections[0].content, /PMO No: PMO-001/);
+});
+
 test('parsePRDToSections: blank markdown keeps the empty title section', () => {
   const sections = parsePRDToSections('   ');
   assert.equal(sections.length, 1);

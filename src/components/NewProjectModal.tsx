@@ -2,6 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { useModalBehavior } from '../hooks/useModalBehavior';
 
+export const STAKEHOLDER_ROLES = ['Product Owner', 'Technical Product Owner', 'Solution Architecture', 'System Analyst', 'Engineering Manager', 'Project Manager', 'Quality Assurance Lead', 'Performance QA Lead'] as const;
+export const BUSINESS_TOPICS = ['Introduction & Executive Summary', 'Problem Statement', 'Business Objectives', 'Expected Benefit', 'Success Metrics', 'Target Audience & user Personas'] as const;
+
+export interface ProjectIntake {
+  pmoNo: string;
+  author: string;
+  stakeholders: Record<string, string>;
+  businessTopics: Record<string, string>;
+  gathererBrief: string;
+}
+
 interface NewProjectModalProps {
   isOpen: boolean;
   /**
@@ -9,7 +20,7 @@ interface NewProjectModalProps {
    * or to a user-facing error message — e.g. the backend's duplicate-name
    * conflict — which is rendered inline below the input.
    */
-  onCreate: (name: string) => Promise<string | null>;
+  onCreate: (name: string, intake: ProjectIntake) => Promise<string | null>;
   onClose: () => void;
 }
 
@@ -18,6 +29,10 @@ interface NewProjectModalProps {
 // outline-border inputs, primary CTA.
 export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalProps) {
   const [name, setName] = useState<string>('');
+  const [pmoNo, setPmoNo] = useState<string>('');
+  const [author, setAuthor] = useState<string>('');
+  const [stakeholders, setStakeholders] = useState<Record<string, string>>({});
+  const [businessTopics, setBusinessTopics] = useState<Record<string, string>>({});
   const [isCreating, setIsCreating] = useState<boolean>(false);
   // Inline validation error (e.g. "name already exists" from the backend's
   // 409 duplicate check) — cleared as soon as the user edits the input.
@@ -38,6 +53,10 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
   useEffect(() => {
     if (!isOpen) return;
     setName('');
+    setPmoNo('');
+    setAuthor('');
+    setStakeholders({});
+    setBusinessTopics({});
     setIsCreating(false);
     setError(null);
     const timer = setTimeout(() => inputRef.current?.focus(), 30);
@@ -52,7 +71,15 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
     setIsCreating(true);
     setError(null);
     try {
-      const failure = await onCreate(trimmed);
+      const gathererBrief = [
+        `Initial project intake for ${trimmed}.`,
+        pmoNo.trim() && `PMO No.: ${pmoNo.trim()}`,
+        author.trim() && `Author: ${author.trim()}`,
+        ...STAKEHOLDER_ROLES.map(role => stakeholders[role]?.trim() && `${role}: ${stakeholders[role].trim()}`),
+        ...BUSINESS_TOPICS.map(topic => businessTopics[topic]?.trim() && `${topic}: ${businessTopics[topic].trim()}`),
+        'Create the initial requirements from this intake. Use the stated stakeholders as actors and do not invent scope that is not supported by this brief.',
+      ].filter(Boolean).join('\n\n');
+      const failure = await onCreate(trimmed, { pmoNo: pmoNo.trim(), author: author.trim(), stakeholders, businessTopics, gathererBrief });
       if (failure === null) {
         onClose();
       } else {
@@ -71,7 +98,7 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="w-[400px] max-w-[calc(100vw-1.5rem)] bg-white border border-outline rounded-[16px] shadow-[0_12px_28px_rgba(43,36,32,0.14)] p-6 focus:outline-none"
+        className="w-[700px] max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-2rem)] overflow-y-auto bg-white border border-outline rounded-[16px] shadow-[0_12px_28px_rgba(43,36,32,0.14)] p-6 focus:outline-none"
         role="dialog"
         aria-modal="true"
         aria-label="Create new project"
@@ -80,6 +107,7 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
         <div className="flex items-center gap-2.5 mb-5">
           <div className="min-w-0 flex-1">
             <h3 className="text-[18px] font-bold text-on-surface">New Project</h3>
+            <p className="mt-1 text-xs text-on-surface-variant">Start with a short intake. The Gatherer will turn it into your first requirements draft.</p>
           </div>
         </div>
 
@@ -103,6 +131,18 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
               : 'border-outline focus:border-primary'
           }`}
         />
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="text-xs font-semibold text-on-surface">
+            PMO No. <span className="font-normal text-on-surface-variant">(optional)</span>
+            <input value={pmoNo} onChange={(e) => setPmoNo(e.target.value)} placeholder="e.g. PMO-2026-001" maxLength={80} className="mt-1.5 w-full h-[42px] bg-[#faf9f7] border border-outline rounded-[10px] px-3 text-sm focus:outline-none focus:border-primary" />
+          </label>
+          <label className="text-xs font-semibold text-on-surface">
+            Author <span className="font-normal text-on-surface-variant">(optional)</span>
+            <input value={author} onChange={(e) => setAuthor(e.target.value)} placeholder="Name" maxLength={200} className="mt-1.5 w-full h-[42px] bg-[#faf9f7] border border-outline rounded-[10px] px-3 text-sm focus:outline-none focus:border-primary" />
+          </label>
+        </div>
+        <fieldset className="mt-4"><legend className="text-xs font-bold text-on-surface">Stakeholders by role</legend><div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">{STAKEHOLDER_ROLES.map(role => <label key={role} className="text-xs font-semibold text-on-surface">{role}<input value={stakeholders[role] ?? ''} onChange={(e) => setStakeholders(prev => ({ ...prev, [role]: e.target.value }))} placeholder="Name or team" maxLength={200} className="mt-1.5 w-full h-[38px] bg-[#faf9f7] border border-outline rounded-[10px] px-3 text-sm focus:outline-none focus:border-primary" /></label>)}</div></fieldset>
+        <fieldset className="mt-4"><legend className="text-xs font-bold text-on-surface">1. Business &amp; Strategic Overview</legend><div className="mt-2 space-y-3">{BUSINESS_TOPICS.map(topic => <label key={topic} className="block text-xs font-semibold text-on-surface">{topic}<textarea value={businessTopics[topic] ?? ''} onChange={(e) => setBusinessTopics(prev => ({ ...prev, [topic]: e.target.value }))} placeholder={`Describe ${topic.toLowerCase()}`} rows={2} maxLength={2000} className="mt-1.5 w-full resize-y bg-[#faf9f7] border border-outline rounded-[10px] px-3 py-2 text-sm focus:outline-none focus:border-primary" /></label>)}</div></fieldset>
         {error && (
           <p role="alert" className="mt-2 text-[11px] font-medium text-red-600 leading-snug">
             {error}
@@ -119,11 +159,11 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
           </button>
           <button
             onClick={handleSubmit}
-            disabled={!name.trim() || isCreating}
+            disabled={!name.trim() || !businessTopics['Introduction & Executive Summary']?.trim() || isCreating}
             className="px-4 py-2 rounded-[10px] bg-primary text-on-primary hover:brightness-110 active:scale-[0.99] transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100"
           >
             <Plus className="w-3.5 h-3.5" />
-            {isCreating ? 'Creating...' : 'Create Project'}
+            {isCreating ? 'Creating...' : 'Create & Start Gatherer'}
           </button>
         </div>
       </div>

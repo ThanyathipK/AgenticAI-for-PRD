@@ -45,7 +45,7 @@ export interface UseChatResult {
   syncStatus: string;
   chatEndRef: RequirementStore['chatEndRef'];
   clarificationAnswers: Record<string, string>;
-  handleSendMessage: (textToSend?: string) => Promise<void>;
+  handleSendMessage: (textToSend?: string, projectIdOverride?: string) => Promise<void>;
   handleValidateRequirements: () => Promise<void>;
   handleGeneratePRD: () => Promise<void>;
   /** Aborts the in-flight agent request (Stop button). No-op when idle. */
@@ -187,8 +187,9 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
   // Local guards: no selected project → inline warning bubble (no request);
   // blank input → no-op. The optimistic user bubble is appended BEFORE the
   // request, and the AbortController is what the Stop button cancels.
-  const handleSendMessage = async (textToSend?: string) => {
-    if (!deps.projectId) {
+  const handleSendMessage = async (textToSend?: string, projectIdOverride?: string) => {
+    const targetProjectId = projectIdOverride ?? deps.projectId;
+    if (!targetProjectId) {
       store.setMessages(prev => [...prev, {
         id: `error-${Date.now()}`,
         role: 'assistant',
@@ -197,7 +198,7 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
       }]);
       return;
     }
-    const projectId = deps.projectId;
+    const projectId = targetProjectId;
     const inputMsg = textToSend || rawInput;
     if (!inputMsg.trim()) return;
 
@@ -232,13 +233,18 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
       const data = await api.processRequirements({
         project_id: projectId,
         raw_input: inputMsg,
-        current_version: deps.currentVersion,
+        // An intake is dispatched just after project creation, before the
+        // hook closure has necessarily observed the newly selected project.
+        // It must never carry the prior project's version or requirements.
+        current_version: projectIdOverride ? 1 : deps.currentVersion,
         // CHAT 1.3 — DISCREPANCY (documented, unchanged): the chat path hardcodes
         // this string even though buildVersionHistorySummaries() above exists and
         // the agent actions use it; the backend's default is the same text.
         version_history_summaries: 'No previous history.',
         target_agent: 'gatherer',
-        structured_requirements: toGatheredRequirementsPayload(store.structuredRequirements),
+        ...(projectIdOverride
+          ? {}
+          : { structured_requirements: toGatheredRequirementsPayload(store.structuredRequirements) }),
       }, controller.signal);
 
       // CHAT 1.4 — Response branch. GENERAL_CHAT (below) is the pure-conversation

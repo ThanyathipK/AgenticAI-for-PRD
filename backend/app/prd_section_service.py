@@ -28,6 +28,7 @@ import re
 import uuid
 from typing import Any, Dict, List, Optional, Set
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.prd_section import PRDSectionRepository
@@ -127,6 +128,11 @@ def _derive_section_key(title: str) -> str:
     # empty top-level heading and must remain its own lockable canonical part.
     if not t.strip():
         return "contents"
+    # The markdown fallback template uses a level-two brand heading as part of
+    # the cover. It is not an eleventh editable section: keep its PMO fields
+    # together with the front matter in the canonical ``title`` part.
+    if "nimble by krungsri" in t:
+        return "title"
     if "executive summary" in t:
         return "exec_summary"
     if "technical architecture" in t or "technical infrastructure" in t or "technical constraints" in t:
@@ -177,16 +183,24 @@ def split_markdown_sections(markdown: str) -> List[Dict[str, str]]:
         trimmed = line.strip()
         heading = re.match(r"^#{2,3}(?:\s+(.*)|$)", trimmed)
         if heading:
+            title = (heading.group(1) or "").strip()
+            if not title:
+                title = "Contents"
+            next_key = _derive_section_key(title)
+            # ``## Nimble by Krungsri`` is a visual cover heading in the
+            # markdown fallback, not a section boundary.  Folding it into the
+            # preceding front matter prevents an empty ``title`` plus a stray
+            # tenth ``nimble_by_krungsri`` section.
+            if next_key == "title" and current_key == "title":
+                current_lines.append(line)
+                continue
             parts.append({
                 "section_key": current_key,
                 "title": current_title,
                 "content": "\n".join(current_lines).strip(),
             })
-            title = (heading.group(1) or "").strip()
-            if not title:
-                title = "Contents"
             current_title = title
-            current_key = _derive_section_key(title)
+            current_key = next_key
             current_lines = [line]
         else:
             current_lines.append(line)
@@ -385,6 +399,19 @@ async def ensure_sections_seeded(
     the project's current markdown PRD), otherwise from the official Krungsri
     ``prompts/template.md`` skeleton. No-op when sections already exist.
     """
+    # Several first-write requests can arrive together (for example, the new
+    # project intake writes Cover, Stakeholders and Business Overview).  The
+    # initial "does this project have sections?" read must be serialized on
+    # PostgreSQL; otherwise each transaction can see no rows and attempt the
+    # same unique (project_id, section_key) insert.  SQLite test databases do
+    # not provide advisory locks, so they retain the existing idempotent path.
+    bind = session.get_bind()
+    if bind.dialect.name == "postgresql":
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+            {"lock_key": f"prd-sections:{project_id}"},
+        )
+
     existing = await PRDSectionRepository.get_by_project(project_id, session)
     if existing:
         return existing
@@ -540,7 +567,12 @@ async def sync_sections_from_prd(
             existing[created["section_key"]] = created
         elif (
             not row.get("is_locked")
-            and row.get("ai_generatable", True)
+            # The cover is a hybrid section. Its PMO/Author values are read
+            # from the saved document before generation, but Version, Status
+            # and Last Update are system-managed and must refresh. Allow the
+            # generated cover through even for projects whose intake save
+            # previously marked the whole title section human-owned.
+            and (row.get("ai_generatable", True) or part["section_key"] == "title")
             and (row.get("content") or "") != part["content"]
         ):
             updated = await PRDSectionRepository.update_content(

@@ -234,12 +234,10 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
       setPrdMarkdownDisplay('');
       return;
     }
-    const looksLikeLatex = /\\(begin|section|documentclass|thispagestyle|newpage|vspace|shortstack)/.test(src);
-    if (!looksLikeLatex) {
-      setPrdMarkdownDisplay(src);
-      return;
-    }
     let cancelled = false;
+    // Normalize both LaTeX and stored Markdown. The backend also repairs
+    // Pandoc's merged-table artifacts in legacy/current Markdown snapshots,
+    // so sections 07–09 render and edit with the same semantic rows.
     api
       .convertPrdToMarkdown(src)
       .then((res) => {

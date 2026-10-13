@@ -131,19 +131,24 @@ async def list_prd_sections(
     project_id: str,
     current_user: AuthenticatedUser = Depends(require_project_owner),
     session: AsyncSession = Depends(get_db),
+    materialize: bool = False,
 ) -> PrdSectionListResponse:
-    """List all PRD parts in document order without changing persistence.
+    """List all PRD parts in document order.
 
     If no stored parts exist, deterministic preview rows are derived from the
-    current PRD (or the official template). The first mutation materializes
-    those rows through :func:`_ensure_sections_for_write`.
+    current PRD (or the official template). ``materialize=true`` is an
+    explicit first-write preparation step for callers that need to patch a
+    template field without losing the template's surrounding content.
     """
     await _validate_project(project_id)
     state = await RequirementStateRepository.get_by_project_id(project_id, session)
     source = (state or {}).get("generated_prd") or ""
     sections = await PRDSectionRepository.get_by_project(project_id, session)
     if not sections:
-        sections = preview_prd_sections(project_id, source)
+        if materialize:
+            sections = await ensure_sections_seeded(project_id, session, source_markdown=source)
+        else:
+            sections = preview_prd_sections(project_id, source)
     return {"project_id": project_id, "sections": sections}
 
 

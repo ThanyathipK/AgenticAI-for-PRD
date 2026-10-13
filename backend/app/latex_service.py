@@ -1178,7 +1178,118 @@ def _normalize_pandoc_gfm(markdown: str) -> str:
         converted = _html_table_to_gfm(match.group(0))
         return f"\n{converted}\n" if converted else ""
 
-    return _HTML_TABLE_RE.sub(_sub, normalized)
+    normalized = _HTML_TABLE_RE.sub(_sub, normalized)
+    return _normalize_template_table_semantics(normalized)
+
+
+def _normalize_template_table_semantics(markdown: str) -> str:
+    """Repair Pandoc's interpretation of the three complex trailing tables.
+
+    The LaTeX template uses merged/multirow cells. GFM has no equivalent, so
+    Pandoc can split one label across several physical rows and can promote the
+    first real data row to a Markdown header. Keep the visual document and the
+    structured editor faithful by joining split labels and adding explicit
+    semantic headers where the source table has none.
+    """
+    source = markdown or ""
+
+    def _section(title: str, transform) -> None:
+        nonlocal source
+        pattern = re.compile(
+            rf"(?ms)(^###\s+{re.escape(title)}\s*$)(.*?)(?=^###\s+|\Z)"
+        )
+        source = pattern.sub(lambda match: match.group(1) + transform(match.group(2)), source)
+
+    def _product(body: str) -> str:
+        # Wrapped words are one semantic label, not separate requirements.
+        body = re.sub(
+            r"\|\s*Mapping\s*&\s*\|\s*\|\s*\|\s*\|\s*\n"
+            r"\|\s*Functional\s*\|\s*\|\s*\|\s*\|\s*\n"
+            r"\|\s*Requirements\s*\|\s*([^|]*)\|\s*\|\s*\|",
+            r"| Mapping & Functional Requirements | \1 |  |  |",
+            body,
+        )
+        body = re.sub(
+            r"\|\s*Definition \(In\s*\|\s*\|\s*\|\s*\|\s*\n"
+            r"\|\s*vs\. Out\)\s*\|\s*\|\s*\|\s*\|",
+            "| Scope Definition (In vs. Out) |  |  |  |",
+            body,
+        )
+        # Pandoc inserts hard breaks inside short headings. Let CSS wrap only
+        # when the viewport actually requires it.
+        body = re.sub(r"(?i)<br\s*/?>\s*", " ", body)
+        body = body.replace("**User Story (System** **Focus)**", "**User Story (System Focus)**")
+        body = body.replace("**Functional** **Requirement (FR)**", "**Functional Requirement (FR)**")
+
+        # The nested LaTeX scope block has no direct GFM equivalent. Pandoc
+        # flattens it into unrelated rows, so rebuild it as one clear table.
+        # A stored Markdown document may already contain that table after a
+        # user edit; never parse it a second time or its header/value cells
+        # would be mistaken for flattened LaTeX content and shifted columns.
+        if "| Scope In (Included) | Scope Out (Excluded) |" in body:
+            return body
+        lines = body.splitlines()
+        scope_start = next((
+            index for index, line in enumerate(lines)
+            if "Definition (In" in line or "Scope Definition (In vs. Out)" in line
+        ), None)
+        if scope_start is None:
+            return body
+        scope_text = " ".join(
+            " ".join(cell.strip() for cell in line.strip().strip("|").split("|") if cell.strip())
+            for line in lines[scope_start:] if line.strip().startswith("|")
+        ).replace("**", " ")
+        scope_text = re.sub(r"Scope Definition \(In vs\. Out\)", "", scope_text, flags=re.I)
+        scope_text = re.sub(r"Definition \(In\s+vs\. Out\)", "", scope_text, flags=re.I)
+        split_out = re.split(r"\bScope\s+out\b", scope_text, maxsplit=1, flags=re.I)
+        in_text = re.sub(r"^.*?\bScope\s+In\b", "", split_out[0], flags=re.I).strip()
+        out_text = split_out[1].strip() if len(split_out) > 1 else ""
+
+        def _items(text: str) -> str:
+            matches = re.findall(r"\d+\.\s*.*?(?=(?:\s+\d+\.)|$)", text.strip())
+            values = [re.sub(r"\s+", " ", item).strip() for item in matches]
+            if not values and text.strip():
+                values = [text.strip()]
+            return "<br>".join(values)
+
+        prefix = lines[:scope_start]
+        while prefix and not prefix[-1].strip():
+            prefix.pop()
+        return "\n".join(prefix + [
+            "", "#### Scope Definition (In vs. Out)", "",
+            "| Scope In (Included) | Scope Out (Excluded) |", "| --- | --- |",
+            f"| {_items(in_text)} | {_items(out_text)} |", "",
+        ])
+
+    def _technical(body: str) -> str:
+        lines = body.splitlines()
+        first = next((i for i, line in enumerate(lines) if line.strip().startswith("|")), None)
+        if first is not None and first + 1 < len(lines) and is_markdown_table_separator(lines[first + 1]):
+            if "Non-Functional" in lines[first]:
+                data_row = lines[first]
+                lines[first] = "| Consideration | Details |"
+                lines.insert(first + 2, data_row)
+        return "\n".join(lines)
+
+    def _appendix(body: str) -> str:
+        lines = body.splitlines()
+        first = next((i for i, line in enumerate(lines) if line.strip().startswith("|")), None)
+        if first is not None and first + 1 < len(lines) and is_markdown_table_separator(lines[first + 1]):
+            if "Questions" in lines[first] and "Risks" in lines[first]:
+                data_row = lines[first]
+                lines[first] = "| Appendix Item | Details | Reference |"
+                lines.insert(first + 2, data_row)
+        return "\n".join(lines)
+
+    _section("2. Product Scope & Functional Requirements", _product)
+    _section("3. Technical & Operational Considerations", _technical)
+    _section("4. Appendix", _appendix)
+    return source
+
+
+def is_markdown_table_separator(line: str) -> bool:
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
 
 
 def prd_to_markdown(source: str) -> str:
@@ -1200,7 +1311,7 @@ def prd_to_markdown(source: str) -> str:
     if not src:
         raise ValueError("Cannot convert an empty PRD.")
     if is_markdown_prd(src):
-        return src
+        return _normalize_template_table_semantics(src)
 
     document, kind = pandoc_friendly_document(src)
     if kind != "latex":

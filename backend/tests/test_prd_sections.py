@@ -199,6 +199,18 @@ class TestSplitMarkdownSections:
         assert keys == [c["section_key"] for c in CANONICAL_PRD_SECTIONS]
         assert len(keys) == 9
 
+    def test_markdown_fallback_keeps_the_cover_in_title(self):
+        """The fallback template's branded heading is cover content, not part 10."""
+        from app.prompt_loader import load_prd_template
+
+        parts = split_markdown_sections(load_prd_template())
+        assert [p["section_key"] for p in parts] == [
+            c["section_key"] for c in CANONICAL_PRD_SECTIONS
+        ]
+        title = parts[0]["content"]
+        assert "Nimble by Krungsri" in title
+        assert "PMO No:" in title
+
     def test_parts_include_their_heading_line(self):
         parts = split_markdown_sections(_markdown_prd())
         stakeholders = next(p for p in parts if p["section_key"] == "stakeholders")
@@ -373,6 +385,32 @@ class TestSeedingAndRepository:
 # AI regeneration ownership contract (sync_sections_from_prd)
 # =====================================================================
 class TestSyncSectionsFromPrd:
+    @pytest.mark.asyncio
+    async def test_generate_refreshes_system_cover_fields_for_legacy_human_cover(self, db_session):
+        session, project_id = db_session
+        original = _markdown_prd().replace(
+            "PMO No: PMO-1234",
+            "PMO No: PMO-1234\nVersion: V1.0\nStatus: Draft\nLast Update: 2026-10-12\nAuthor: Alice",
+        )
+        await ensure_sections_seeded(project_id, session, source_markdown=original)
+        title = await PRDSectionRepository.get_by_key("title", project_id, session)
+        await PRDSectionRepository.update_content(
+            title["id"], project_id, title["content"], session,
+            changed_by="user", content_source="human", ai_generatable=False,
+        )
+
+        regenerated = original.replace("Version: V1.0", "Version: V1.1").replace(
+            "Last Update: 2026-10-12", "Last Update: 2026-10-13",
+        )
+        merged = await sync_sections_from_prd(project_id, regenerated, session)
+
+        assert merged is not None
+        assert "PMO No: PMO-1234" in merged
+        assert "Author: Alice" in merged
+        assert "Version: V1.1" in merged
+        assert "Status: Draft" in merged
+        assert "Last Update: 2026-10-13" in merged
+
     @pytest.mark.asyncio
     async def test_locked_and_human_parts_survive_regeneration(self, db_session):
         session, project_id = db_session

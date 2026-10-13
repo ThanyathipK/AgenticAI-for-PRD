@@ -175,8 +175,8 @@ export const api = {
   // ---- PRD sections (part-level editing / locking / versioning) ------------
   // The PRD is stored as NINE editable parts; each part is independently
   // edited, locked, and versioned (append-only history).
-  getPrdSections: (projectId: string) =>
-    get<PrdSectionListPayload>(`/api/project/${projectId}/prd/sections`),
+  getPrdSections: (projectId: string, materialize = false) =>
+    get<PrdSectionListPayload>(`/api/project/${projectId}/prd/sections`, { materialize }),
   // ---- PRD sections (parts) ----------------------------------------------
   // PRD-SECTION 1.x — frontend side of the nine-part document. Backend:
   // routes 2.1–2.7, service 3.1–3.7, repository 4.1–4.5.

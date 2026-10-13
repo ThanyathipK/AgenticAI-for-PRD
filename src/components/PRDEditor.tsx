@@ -2,10 +2,11 @@
 // Renders the compiled PRD as editable markdown sections with lock/unlock and
 // inline section editing.
 import { useRef } from 'react';
-import { FileText, Pencil, Save, Lock, Unlock, Sparkles } from 'lucide-react';
+import { FileText, Pencil, Save, Lock, Unlock } from 'lucide-react';
 import { ProjectState } from '../hooks/useProjectState';
 import { getSafeSectionTitle, getSafeSectionContent } from '../utils/markdown';
 import { parseAndRenderMarkdown } from './MarkdownRenderer';
+import { StructuredSectionEditor } from './StructuredSectionEditor';
 
 export function PRDEditor({ state }: { state: ProjectState }) {
   const {
@@ -18,7 +19,6 @@ export function PRDEditor({ state }: { state: ProjectState }) {
     handleSaveSection,
     sectionLocks,
     handleToggleSectionLock,
-    handleHandSectionToAi,
   } = state;
 
   // The section text the current edit STARTED from. Sent back as
@@ -63,36 +63,7 @@ export function PRDEditor({ state }: { state: ProjectState }) {
                       <span className="min-w-0">{safeTitle}</span>
                     </h3>
                     
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {/* Per-part ownership + review badges */}
-                      {(() => {
-                        const lock = sectionLocks[section.id];
-                        if (!lock) return null;
-                        const sourceLabel =
-                          lock.content_source === 'human' ? 'Manual'
-                          : lock.content_source === 'template' ? 'Template'
-                          : 'AI';
-                        const sourceClass =
-                          lock.content_source === 'human' ? 'bg-violet-100 text-violet-700 border-violet-200'
-                          : lock.content_source === 'template' ? 'bg-slate-100 text-slate-600 border-slate-200'
-                          : 'bg-sky-100 text-sky-700 border-sky-200';
-                        const satisfied = lock.review_status === 'satisfied' || lock.review_status === 'approved';
-                        return (
-                          <>
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold uppercase tracking-wide ${sourceClass}`}>
-                              {sourceLabel}
-                            </span>
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold uppercase tracking-wide ${
-                              satisfied
-                                ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                                : 'bg-slate-100 text-slate-500 border-slate-200'
-                            }`}>
-                              {satisfied ? 'Satisfied' : 'Draft'}
-                            </span>
-                          </>
-                        );
-                      })()}
-
+                    <div className="ml-auto flex shrink-0 items-center justify-end gap-2">
                       {/* Lock/Unlock button for this part */}
                       {(() => {
                         const isLocked = sectionLocks[section.id]?.is_locked ?? false;
@@ -104,7 +75,7 @@ export function PRDEditor({ state }: { state: ProjectState }) {
                                 ? 'This part is locked. Edits and AI regeneration are blocked.'
                                 : 'Lock this part. The Architect will never overwrite it again.'
                             }
-                            className={`opacity-60 hover:opacity-100 group-hover:opacity-100 transition-opacity text-[11px] px-2.5 py-1.5 rounded-xl flex items-center gap-1.5 border shadow-sm cursor-pointer z-10 font-semibold ${
+                            className={`w-[82px] justify-center opacity-60 hover:opacity-100 group-hover:opacity-100 transition-opacity text-[11px] px-2.5 py-1.5 rounded-xl flex items-center gap-1.5 border shadow-sm cursor-pointer z-10 font-semibold ${
                               isLocked
                                 ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200'
                                 : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
@@ -125,22 +96,6 @@ export function PRDEditor({ state }: { state: ProjectState }) {
                         );
                       })()}
 
-                      {/* Hand a MANUAL (human-owned) part back to AI. A manual
-                          save marks the part human-owned so Generate PRD keeps
-                          it; this flips it back so the Architect can refresh it. */}
-                      {!isEditing
-                        && sectionLocks[section.id]?.content_source === 'human'
-                        && !(sectionLocks[section.id]?.is_locked ?? false) && (
-                        <button
-                          onClick={() => handleHandSectionToAi(section.id)}
-                          title="This part is Manual (kept as-is by Generate PRD). Hand it back to the AI to let the Architect refresh it."
-                          className="opacity-60 hover:opacity-100 group-hover:opacity-100 transition-opacity bg-violet-50 hover:bg-violet-100 text-violet-700 text-[11px] px-2.5 py-1.5 rounded-xl flex items-center gap-1.5 border border-violet-200 shadow-sm cursor-pointer z-10 font-semibold"
-                        >
-                          <Sparkles className="w-3.5 h-3.5 text-violet-600" />
-                          <span>Use AI</span>
-                        </button>
-                      )}
-
                       {!isEditing && (
                         <button
                           onClick={() => {
@@ -149,7 +104,7 @@ export function PRDEditor({ state }: { state: ProjectState }) {
                             editBaseRef.current = safeContent;
                           }}
                           disabled={sectionLocks[section.id]?.is_locked ?? false}
-                          className={`opacity-60 hover:opacity-100 group-hover:opacity-100 transition-opacity bg-white hover:bg-slate-50 text-slate-700 text-[11px] px-2.5 py-1.5 rounded-xl flex items-center gap-1.5 border border-slate-200 shadow-sm cursor-pointer z-10 font-semibold disabled:opacity-30 disabled:cursor-not-allowed`}
+                          className="w-[82px] justify-center opacity-60 hover:opacity-100 group-hover:opacity-100 transition-opacity bg-white hover:bg-slate-50 text-slate-700 text-[11px] px-2.5 py-1.5 rounded-xl flex items-center gap-1.5 border border-slate-200 shadow-sm cursor-pointer z-10 font-semibold disabled:opacity-30 disabled:cursor-not-allowed"
                         >
                           <Pencil className="w-3.5 h-3.5 text-primary" />
                           <span>Edit</span>
@@ -159,21 +114,9 @@ export function PRDEditor({ state }: { state: ProjectState }) {
                   </div>
 {isEditing ? (
                     <div className="space-y-4">
-                      <textarea
-                        ref={(el) => {
-                          if (el) {
-                            el.style.height = 'auto';
-                            el.style.height = `${el.scrollHeight}px`;
-                          }
-                        }}
+                      <StructuredSectionEditor
                         value={editBuffer}
-                        onChange={(e) => {
-                          setEditBuffer(e.target.value);
-                          e.target.style.height = 'auto';
-                          e.target.style.height = `${e.target.scrollHeight}px`;
-                        }}
-                        className="w-full text-sm font-sans text-slate-800 bg-white border border-outline rounded-[8px] p-4 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all resize-y custom-scrollbar min-h-[120px]"
-                        placeholder="Enter section content in markdown..."
+                        onChange={setEditBuffer}
                       />
                       <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100 mt-2">
                         <p className="text-[11px] text-slate-500 italic min-w-0">

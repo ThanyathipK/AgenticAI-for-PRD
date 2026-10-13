@@ -144,8 +144,8 @@ class Settings(BaseSettings):
     # Bound one provider call and the complete raw+fallback structured-output
     # sequence. Background jobs may outlive browser requests, but model work
     # must still terminate predictably.
-    LLM_REQUEST_TIMEOUT_SECONDS: float = 300.0
-    LLM_STRUCTURED_TOTAL_TIMEOUT_SECONDS: float = 330.0
+    LLM_REQUEST_TIMEOUT_SECONDS: float = 600.0
+    LLM_STRUCTURED_TOTAL_TIMEOUT_SECONDS: float = 630.0
     # LM Studio's OpenAI-compatible endpoint does not reliably implement
     # schema-constrained output for Qwen. Keep the optional provider fallback
     # available for other deployments, but do not repeat the complete prompt by
@@ -153,7 +153,7 @@ class Settings(BaseSettings):
     LLM_STRUCTURED_PROVIDER_FALLBACK: bool = False
     # Whole background-job deadline and process-wide heavy-inference limit.
     # One concurrent generation avoids swapping several 9B contexts on a 16GB Mac.
-    LLM_BACKGROUND_JOB_TIMEOUT_SECONDS: float = 360.0
+    LLM_BACKGROUND_JOB_TIMEOUT_SECONDS: float = 660.0
     LLM_MAX_CONCURRENT_HEAVY_JOBS: int = 1
     AUDITOR_MAX_PASSES: int = 4
     # Qwen3.x models are REASONING models: they first emit a long `reasoning_content`

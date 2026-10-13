@@ -2376,7 +2376,9 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
     #             the structure, so PDF-exact compilation is guaranteed.
     from app.prd_filler import (
         PENDING_VERSION_LABEL,
+        extract_intake_fields,
         fill_template_body,
+        format_project_status,
         version_history_sentence,
     )
 
@@ -2438,9 +2440,15 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
     # ARCHITECT 3.3 — The fill itself (3.1 helper): cover page, stakeholders, version
     #             history, reviews, business overview, scope tables, technical appendix
     #             and glossary, from `data` + the version summary.
+    saved_intake = extract_intake_fields(req_state.get("generated_prd", ""))
     generated_prd = fill_template_body(
         project_id=project_id,
         project_name=req_state.get("project_name", "") or "",
+        pmo_no=saved_intake.get("pmo_no"),
+        author=saved_intake.get("author") or "Product Owner",
+        status=format_project_status(req_state.get("project_status")),
+        stakeholders=saved_intake.get("stakeholders"),
+        business_topics=saved_intake.get("business_topics"),
         version=req_state["version_number"],
         data=data,
         version_summary=current_version_summary,

@@ -62,13 +62,6 @@ export function parsePRDToSections(markdown: unknown): PRDSection[] {
     // one giant undifferentiated block.
     const headingBoundary = trimmed.match(/^(#{2,3})(?:\s+(.*)|$)/);
     if (headingBoundary) {
-      // Save previous section if it has content
-      sections.push({
-        id: currentSectionId,
-        title: currentSectionTitle,
-        content: currentContent.join('\n').trim()
-      });
-      
       // Start new section
       // Pandoc drops the text from the template's centred
       // `\section*{\makebox[...,]{Contents}}` heading and emits a bare `###`.
@@ -76,39 +69,55 @@ export function parsePRDToSections(markdown: unknown): PRDSection[] {
       // Contents section instead of creating an anonymous `section` part.
       const parsedTitle = headingBoundary[2]?.trim() ?? '';
       const title = parsedTitle || 'Contents';
-      currentSectionTitle = title;
-      
       // Determine ID from title
-      if (title.toLowerCase().includes('executive summary')) {
-        currentSectionId = 'exec_summary';
+      let nextSectionId: string;
+      if (title.toLowerCase().includes('nimble by krungsri')) {
+        nextSectionId = 'title';
+      } else if (title.toLowerCase().includes('executive summary')) {
+        nextSectionId = 'exec_summary';
       } else if (title.toLowerCase().includes('technical architecture') || title.toLowerCase().includes('technical infrastructure') || title.toLowerCase().includes('technical constraints')) {
-        currentSectionId = 'tech_arch';
+        nextSectionId = 'tech_arch';
       } else if (title.toLowerCase().includes('scope of requirements') || title.toLowerCase().includes('user stories')) {
-        currentSectionId = 'user_stories';
+        nextSectionId = 'user_stories';
       } else if (title.toLowerCase().includes('stakeholder')) {
-        currentSectionId = 'stakeholders';
+        nextSectionId = 'stakeholders';
       } else if (title.toLowerCase().includes('version history')) {
-        currentSectionId = 'version_history';
+        nextSectionId = 'version_history';
       } else if (title.toLowerCase().includes('review')) {
-        currentSectionId = 'reviews';
+        nextSectionId = 'reviews';
       } else if (title.toLowerCase().includes('contents')) {
-        currentSectionId = 'contents';
+        nextSectionId = 'contents';
       } else if (title.toLowerCase().includes('business & strategic')) {
-        currentSectionId = 'business_overview';
+        nextSectionId = 'business_overview';
       } else if (title.toLowerCase().includes('product scope') || title.toLowerCase().includes('functional requirement')) {
-        currentSectionId = 'product_scope';
+        nextSectionId = 'product_scope';
       } else if (title.toLowerCase().includes('technical & operational')) {
-        currentSectionId = 'tech_ops';
+        nextSectionId = 'tech_ops';
       } else if (title.toLowerCase().includes('appendix')) {
-        currentSectionId = 'appendix';
+        nextSectionId = 'appendix';
       } else {
-        currentSectionId =
+        nextSectionId =
           title
             .toLowerCase()
             .replace(/\*/g, '')
             .replace(/[^a-z0-9]+/g, '_')
             .replace(/^_+|_+$/g, '') || 'section';
       }
+      // The markdown fallback represents the cover title as ``## Nimble by
+      // Krungsri``. It belongs to the existing front-matter section, rather
+      // than becoming an uneditable tenth part.
+      if (nextSectionId === 'title' && currentSectionId === 'title') {
+        currentContent.push(line);
+        continue;
+      }
+      // Save previous section if it has content.
+      sections.push({
+        id: currentSectionId,
+        title: currentSectionTitle,
+        content: currentContent.join('\n').trim()
+      });
+      currentSectionTitle = title;
+      currentSectionId = nextSectionId;
       currentContent = [line];
     } else {
       currentContent.push(line);

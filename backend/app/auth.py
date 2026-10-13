@@ -14,7 +14,7 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from passlib.context import CryptContext
@@ -302,14 +302,12 @@ class TokenData(BaseModel):
 
 class AuthenticatedUser(BaseModel):
     """Represents an authenticated user derived from a JWT token."""
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     email: str
     full_name: str
     role: str
-
-    class Config:
-        from_attributes = True
-
 
 # AUTH 1.7.3 — JWT creation for the LOGIN flow (called by route AUTH 1.7 only).
 #              Claims: sub (user id) / email / role + exp + iat; signed HS256 with
@@ -486,6 +484,8 @@ async def get_current_user_optional(
 
 class UserResponse(BaseModel):
     """Public user information returned by auth endpoints."""
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     email: str
     full_name: str
@@ -495,20 +495,14 @@ class UserResponse(BaseModel):
     is_active: bool = True
     created_at: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
-
-
 class UserMinimalResponse(BaseModel):
     """Minimal user info (e.g., for project ownership references)."""
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     email: str
     full_name: str
     
-    class Config:
-        from_attributes = True
-
-
 # ---------------------------------------------------------------------------
 # Project Ownership Helpers
 # ---------------------------------------------------------------------------
