@@ -83,7 +83,7 @@ async def test_architect_fills_template_from_full_project_dataset(monkeypatch):
     assert "V2.0" in prd                            # version history (fallback label: no ledger for "p1")
     assert "PENDINGSEMVER" not in prd               # pending marker always stamped out
     assert "Cut refund handling time by 60" in prd  # business objectives
-    assert "US-001: Submit refund request online" in prd  # FR row
+    assert "As a Retail Customer" in prd                  # user-story row
     assert "Given a valid transaction ID" in prd          # acceptance criteria
     assert "Submit refund request online" in prd          # scope in
     # persisted into the requirement state
@@ -190,7 +190,7 @@ async def test_architect_ignores_empty_client_snapshot_and_reads_locked_server_s
     })
 
     assert result["prd_markdown"]
-    assert "US-001" in result["prd_markdown"]
+    assert "As a Retail Customer" in result["prd_markdown"]
 
 
 @pytest.mark.asyncio

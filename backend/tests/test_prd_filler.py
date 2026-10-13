@@ -149,7 +149,7 @@ def test_manual_scope_and_operational_edits_feed_the_official_document():
 |  |  |  |  |
 | --- | --- | --- | --- |
 |  | **User Story (System Focus)** | **Functional Requirement (FR)** | **Acceptance Criteria** |
-|  |  | FR 1.1: US-MANUAL: Manually edited function | AC 1.1: Manually edited acceptance |
+|  | As a Operations User<br><br>I want to run the manually edited function<br><br>So that operations finish safely | FR 1.1: US-MANUAL: Manually edited function | AC 1.1: Manually edited acceptance |
 
 #### Scope Definition (In vs. Out)
 | Scope In (Included) | Scope Out (Excluded) |
@@ -174,6 +174,9 @@ def test_manual_scope_and_operational_edits_feed_the_official_document():
     assert fields["functional_rows"] == [{
         "ticket_code": "US-MANUAL",
         "story_title": "Manually edited function",
+        "as_a": "Operations User",
+        "i_want_to": "run the manually edited function",
+        "so_that": "operations finish safely",
         "acceptance_criteria": ["Manually edited acceptance"],
     }]
     assert fields["narrative"]["non_functional"] == "Manually edited latency target"
@@ -229,7 +232,7 @@ def test_project_data_filled_in():
     assert "7F5FBFEA" in body                          # PMO_NO (id prefix)
     assert "Napat Wong" in body                        # author
     assert "V1.0" in body                              # version history
-    assert "US-001: Submit refund request online" in body  # FR row
+    assert "As a Retail Customer" in body                  # user-story row
     assert "Given a valid transaction ID" in body       # acceptance criteria
     assert "Submit refunds online" in body              # scope in
     assert "Cross-bank instant settlement" in body      # scope out
@@ -278,7 +281,7 @@ def test_fr_rows_have_clean_row_terminators():
     body = _fill()
     assert "\\\\\\" not in body  # never three consecutive backslashes
     fr_lines = [ln for ln in body.splitlines()
-        if re.match(r"\s*& & (?:\\rule\{[^}]+\}\{[^}]+\})?FR ", ln)]
+        if re.match(r"\s*& .* & (?:\\rule\{[^}]+\}\{[^}]+\})?FR ", ln)]
     assert len(fr_lines) == 1  # module DATA carries one user story
     for ln in fr_lines:
         assert ln.rstrip().endswith("\\\\")  # clean two-backslash terminator
@@ -292,6 +295,10 @@ def test_fr_rows_have_clean_row_terminators():
     assert len(fr_rows) == 1, "FR row must render as exactly one table row"
     assert "AC 1.1:" in fr_rows[0] and "AC 1.2:" in fr_rows[0], \
         "acceptance criteria must live in the same row as the FR text"
+    assert "As a Retail Customer" in fr_rows[0]
+    assert "I want to submit a refund request with transaction ID and reason" in fr_rows[0]
+    assert "So that I get my money back without visiting a branch" in fr_rows[0]
+    assert "US-001: Submit refund request online" not in fr_rows[0]
 
 
 def test_appendix_has_nested_term_definition_grid():
@@ -394,7 +401,7 @@ def test_product_scope_table_grows_with_stories():
         assert f"FR {i}.1:" in body
     # the multirow label span must cover every FR row: rows + epic + header
     m = re.search(r"\\multirow(?:\[t\])?\{(\d+)\}\{\*\}", body)
-    fr_count = len(re.findall(r"& & (?:\\rule\{[^}]+\}\{[^}]+\})?FR \d+\.1:", body))
+    fr_count = len(re.findall(r"& .*? & (?:\\rule\{[^}]+\}\{[^}]+\})?FR \d+\.1:", body))
     assert m and int(m.group(1)) == fr_count + 2
     # no ellipsis truncation anywhere in the filled body
     assert "\\ldots" not in body.replace("must\\ldots}", "")

@@ -107,6 +107,7 @@ class AgentState(TypedDict, total=False):
     current_version: int
     version_history_summaries: str
     target_agent: str # Supports on-demand agent execution flow
+    force_prd_rebuild: bool
     requirement_state: RequirementState
     detected_intent: Optional[str]
     intent_confidence: Optional[float]
@@ -2198,6 +2199,7 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
     # Use session from state if available, otherwise let function create one
     db_session = state.get("db_session")
     regeneration_scope = state.get("regeneration_scope") or None
+    force_prd_rebuild = bool(state.get("force_prd_rebuild"))
     req_state = await get_or_init_requirement_state(project_id, session=db_session, current_version=state.get("current_version", 1))
     
     # A Generate PRD preview is read-only with respect to requirements. The
@@ -2323,6 +2325,7 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
     #             migrated to the template instead of being served forever.
     if (
         not regeneration_scope
+        and not force_prd_rebuild
         and not to_build_stories
         and existing_prd
         and existing_diagrams

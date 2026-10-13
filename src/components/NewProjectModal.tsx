@@ -20,7 +20,8 @@ interface NewProjectModalProps {
    * or to a user-facing error message — e.g. the backend's duplicate-name
    * conflict — which is rendered inline below the input.
    */
-  onCreate: (name: string, intake: ProjectIntake) => Promise<string | null>;
+  /** When `skipIntake` is true, create and open a blank project from its name alone. */
+  onCreate: (name: string, intake: ProjectIntake, skipIntake?: boolean) => Promise<string | null>;
   onClose: () => void;
 }
 
@@ -65,7 +66,7 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
 
   if (!isOpen) return null;
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (skipIntake = false) => {
     const trimmed = name.trim();
     if (!trimmed || isCreating) return;
     setIsCreating(true);
@@ -79,7 +80,11 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
         ...BUSINESS_TOPICS.map(topic => businessTopics[topic]?.trim() && `${topic}: ${businessTopics[topic].trim()}`),
         'Create the initial requirements from this intake. Use the stated stakeholders as actors and do not invent scope that is not supported by this brief.',
       ].filter(Boolean).join('\n\n');
-      const failure = await onCreate(trimmed, { pmoNo: pmoNo.trim(), author: author.trim(), stakeholders, businessTopics, gathererBrief });
+      const failure = await onCreate(
+        trimmed,
+        { pmoNo: pmoNo.trim(), author: author.trim(), stakeholders, businessTopics, gathererBrief },
+        skipIntake,
+      );
       if (failure === null) {
         onClose();
       } else {
@@ -107,7 +112,7 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
         <div className="flex items-center gap-2.5 mb-5">
           <div className="min-w-0 flex-1">
             <h3 className="text-[18px] font-bold text-on-surface">New Project</h3>
-            <p className="mt-1 text-xs text-on-surface-variant">Start with a short intake. The Gatherer will turn it into your first requirements draft.</p>
+            <p className="mt-1 text-xs text-on-surface-variant">Add an intake for a first requirements draft, or create an empty project with its name only.</p>
           </div>
         </div>
 
@@ -158,7 +163,14 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
             Cancel
           </button>
           <button
-            onClick={handleSubmit}
+            onClick={() => handleSubmit(true)}
+            disabled={!name.trim() || isCreating}
+            className="px-4 py-2 rounded-[10px] bg-white border border-primary text-primary hover:bg-primary/5 transition-colors text-xs font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isCreating ? 'Creating...' : 'Skip & Create Empty'}
+          </button>
+          <button
+            onClick={() => handleSubmit()}
             disabled={!name.trim() || !businessTopics['Introduction & Executive Summary']?.trim() || isCreating}
             className="px-4 py-2 rounded-[10px] bg-primary text-on-primary hover:brightness-110 active:scale-[0.99] transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100"
           >

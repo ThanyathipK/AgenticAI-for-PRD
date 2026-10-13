@@ -139,25 +139,30 @@ export function stitchSectionsToPRD(sectionsList: PRDSection[]): string {
 }
 
 export function formatUserStoriesToMarkdown(userStories: UserStory[]): string {
-  let md = `## 3. Scope of Requirements (User Stories)\n`;
+  let md = `## 3. Scope of Requirements (User Stories)\n\n`;
   if (!userStories || userStories.length === 0) {
     md += `No user stories registered yet.`;
     return md;
   }
-  
-  userStories.forEach(us => {
-    md += `\n### ${us.ticket_code}: ${us.story_title}\n`;
-    md += `**As a** ${us.as_a}\n`;
-    md += `**I want to** ${us.i_want_to}\n`;
-    md += `**So that** ${us.so_that}\n\n`;
-    
-    if (us.acceptance_criteria && us.acceptance_criteria.length > 0) {
-      md += `**Acceptance Criteria:**\n`;
-      us.acceptance_criteria.forEach(ac => {
-        md += `- ${ac}\n`;
-      });
-    }
+
+  const cell = (value: string) => String(value ?? '')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, '<br>')
+    .trim();
+
+  md += `|  | **User Story (System Focus)** | **Functional Requirement (FR)** | **Acceptance Criteria** |\n`;
+  md += `| --- | --- | --- | --- |\n`;
+  userStories.forEach((us, index) => {
+    const storyFocus = [
+      `As a ${cell(us.as_a)}`,
+      `I want to ${cell(us.i_want_to)}`,
+      `So that ${cell(us.so_that)}`,
+    ].join('<br><br>');
+    const acceptanceCriteria = (us.acceptance_criteria || [])
+      .map((ac, acIndex) => `AC ${index + 1}.${acIndex + 1}: ${cell(ac)}`)
+      .join('<br>') || 'TBD';
+    md += `|  | ${storyFocus} | FR ${index + 1}.1: ${cell(us.i_want_to)} | ${acceptanceCriteria} |\n`;
   });
-  
+
   return md;
 }

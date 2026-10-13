@@ -431,7 +431,8 @@ export default function Dashboard() {
 
         {/* Section headers ("Pinned" / "Recent Projects") render inside the
             scrollable list below, directly above each group of chats. */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar px-2 pb-2">
+        {expanded && (
+          <div className="flex-1 overflow-y-auto custom-scrollbar px-2 pb-2">
           {!authUser && expanded && (
             // Signed out: no project data exists on screen at all (the hook
             // never fetches without a session) — prompt for sign-in instead.
@@ -611,7 +612,8 @@ export default function Dashboard() {
               </div>,
             ];
           })}
-        </div>
+          </div>
+        )}
 
         {/* Context Menu */}
         {projectContextMenu && (
@@ -679,13 +681,15 @@ export default function Dashboard() {
             while the list scrolls. */}
         {/* AUTH 1.1 / AUTH 1.6 — Signed out: the "Sign in" trigger. Signed in:
             the user chip whose Log out button starts AUTH 4.1. */}
-        <AuthPanel
-          user={authUser}
-          isAuthenticating={isAuthenticating}
-          collapsed={collapsed}
-          onOpenAuth={() => setIsAuthModalOpen(true)}
-          onLogout={handleLogout}
-        />
+        <div className={collapsed ? 'mt-auto' : undefined}>
+          <AuthPanel
+            user={authUser}
+            isAuthenticating={isAuthenticating}
+            collapsed={collapsed}
+            onOpenAuth={() => setIsAuthModalOpen(true)}
+            onLogout={handleLogout}
+          />
+        </div>
       </aside>
       {/* MOBILE SIDEBAR DRAWER (below `lg`): hamburger toggle + dimmed backdrop.
           The sidebar itself is re-positioned as an overlay by #project-sidebar.mobile-open. */}
@@ -923,12 +927,17 @@ export default function Dashboard() {
       {/* NEW PROJECT MODAL (styled replacement for native prompt()) */}
       <NewProjectModal
         isOpen={isCreateModalOpen}
-        onCreate={async (name, intake) => {
+        onCreate={async (name, intake, skipIntake = false) => {
           // Do not select yet: selecting starts an async project load, which
           // previously raced the intake writes and could repaint the editor
           // with the empty template after the intake had saved.
           const result = await handleCreateProject(name, { select: false });
           if (result.error || !result.projectId) return result.error || 'Failed to create the project.';
+          if (skipIntake) {
+            setProjectId(result.projectId);
+            setActiveView('workspace');
+            return null;
+          }
           try {
             await seedPrdIntake(result.projectId, name, intake);
           } catch {

@@ -952,6 +952,7 @@ async def _process_requirements_pipeline(
         "current_version": req_state.get("version_number", 1),
         "version_history_summaries": request.version_history_summaries if request.version_history_summaries is not None else "No previous history.",
         "target_agent": request.target_agent or "gatherer",
+        "force_prd_rebuild": request.force_prd_rebuild,
         "requirement_state": req_state,
         "detected_intent": detected_intent,
         "intent_confidence": intent_confidence,

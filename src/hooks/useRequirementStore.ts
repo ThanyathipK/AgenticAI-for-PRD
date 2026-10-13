@@ -259,7 +259,19 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
       const remoteSections = parsePRDToSections(remoteRaw);
 
       if (prevSections.length === 0) {
-        return remoteSections;
+        return remoteSections.map(sec => {
+          if (
+            sec.id === 'user_stories'
+            && structuredRequirements.user_stories
+            && structuredRequirements.user_stories.length > 0
+          ) {
+            return {
+              ...sec,
+              content: formatUserStoriesToMarkdown(structuredRequirements.user_stories),
+            };
+          }
+          return sec;
+        });
       }
 
       let changed = false;

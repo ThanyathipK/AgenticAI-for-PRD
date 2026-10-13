@@ -160,6 +160,10 @@ class ProcessRequirementsRequest(BaseModel):
     current_version: Optional[int] = Field(default=1)
     version_history_summaries: Optional[str] = Field(default="No previous history.")
     target_agent: Optional[str] = Field(default="gatherer")
+    force_prd_rebuild: bool = Field(
+        default=False,
+        description="Rebuild the PRD from persisted artifacts even when no story is marked changed.",
+    )
     structured_requirements: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 

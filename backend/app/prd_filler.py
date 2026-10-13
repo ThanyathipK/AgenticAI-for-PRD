@@ -284,6 +284,16 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
                 result["functional_table_present"] = True
                 continue
             if len(cells) >= 4 and cells[2].strip() and re.match(r"^FR\s+\d", cells[2].strip(), re.I):
+                story_text = clean_cell(cells[1])
+
+                def story_value(start: str, end: Optional[str] = None) -> str:
+                    boundary = rf"(?=\n+\s*{end}\b|$)" if end else r"(?=$)"
+                    match = re.search(
+                        rf"(?is)(?:^|\n+)\s*{start}\s+(.+?){boundary}",
+                        story_text,
+                    )
+                    return re.sub(r"\s+", " ", match.group(1)).strip() if match else ""
+
                 fr_text = re.sub(r"^FR\s+[\d.]+:\s*", "", clean_cell(cells[2]), flags=re.I)
                 code_match = re.match(r"([^:]+):\s*(.*)", fr_text)
                 ticket_code = code_match.group(1).strip() if code_match else ""
@@ -293,11 +303,21 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
                     for item in clean_cell(cells[3]).splitlines()
                 ]
                 acs = [item for item in acs if item and item.upper() != "TBD"]
-                result["functional_rows"].append({
+                functional_row = {
                     "ticket_code": ticket_code,
                     "story_title": title,
                     "acceptance_criteria": acs,
-                })
+                }
+                as_a = story_value(r"As a", r"I want to")
+                i_want_to = story_value(r"I want to", r"So that")
+                so_that = story_value(r"So that")
+                if as_a or i_want_to or so_that:
+                    functional_row.update({
+                        "as_a": as_a,
+                        "i_want_to": i_want_to,
+                        "so_that": so_that,
+                    })
+                result["functional_rows"].append(functional_row)
                 result["functional_table_present"] = True
                 continue
             if "scope in" in label(cells[0]) and "scope out" in label(cells[1]):
@@ -507,15 +527,12 @@ def _rewrite_rows(body: str, rows: List[Tuple[str, str]]) -> str:
 
 
 def _fr_rows_for(stories: List[Dict[str, Any]]) -> str:
-    """Build FR/AC rows that GROW with the project data.
+    """Build user-story/FR/AC rows that grow with the project data.
 
-    Every user story becomes one ``longtable`` row and nothing is truncated
-    or dropped: the cells are plain text inside wrapping ``L{4cm}`` paragraph
-    columns, so long titles / acceptance criteria wrap (and the table breaks
-    across pages) instead of being stamped into fixed ``\\shortstack`` line
-    boxes.  ``\\\\`` between the AC entries is an in-cell line break - the
-    same construct the template itself uses for ``Introduction \\\\ Executive
-    Summary`` label cells.
+    Every persisted user story becomes one ``longtable`` row. Its dedicated
+    user-story cell contains only the stored persona, desired action, and
+    outcome. ``\\newline`` creates readable spacing in PDF/DOCX and is also
+    normalized cleanly by the Markdown preview converter.
     """
     if not stories:
         return r"""    & & \shortstack{FR 1.1: The system\\
@@ -525,11 +542,24 @@ AC 1.2:} \\"""
     for idx, story in enumerate(stories, start=1):
         code = story.get("ticket_code") or f"US-{idx:03d}"
         title = story.get("story_title") or story.get("i_want_to") or f"Story {idx}"
-        fr_block = f"FR {idx}.1: {escape_latex(_clean(f'{code}: {title}'))}"
+        story_lines = [
+            "As a " + escape_latex(_clean(story.get("as_a") or "TBD")),
+            "I want to " + escape_latex(_clean(story.get("i_want_to") or "TBD")),
+            "So that " + escape_latex(_clean(story.get("so_that") or "TBD")),
+        ]
+        story_block = r"\newline\newline ".join(story_lines)
+        # Requirement-only projects use a synthetic row without user-story
+        # sentence fields. Keep that requirement identifiable, while real
+        # user stories deliberately omit their ticket code and title.
+        desired_action_source = story.get("i_want_to")
+        if not desired_action_source:
+            desired_action_source = f"{code}: {title}"
+        desired_action = escape_latex(_clean(desired_action_source))
+        fr_block = f"FR {idx}.1: {desired_action}"
         acs = [escape_latex(_clean(a)) for a in (story.get("acceptance_criteria") or [])
                if str(a or "").strip()] or [r"\prdfield{TBD}"]
         ac_block = "\\\\".join(f"AC {idx}.{j}: {ac}" for j, ac in enumerate(acs, start=1))
-        rows.append(f"    & & \\rule{{0pt}}{{2.1cm}}{fr_block} & {ac_block} \\\\")
+        rows.append(f"    & {story_block} & \\rule{{0pt}}{{2.1cm}}{fr_block} & {ac_block} \\\\")
     # Each row already ends with a complete ``\\`` terminator; rows are
     # separated by a plain newline.  Joining with ``'\<newline>'`` used to
     # emit ``\\\<newline>`` between rows - the stray odd backslash leaked

@@ -402,6 +402,8 @@ export interface ProcessRequirementsRequest {
   current_version?: number;
   version_history_summaries?: string;
   target_agent?: string;
+  /** Rebuild the PRD from persisted artifacts even when their change flags are unchanged. */
+  force_prd_rebuild?: boolean;
   structured_requirements?: Record<string, unknown>;
 }
 

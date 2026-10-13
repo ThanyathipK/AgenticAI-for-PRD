@@ -622,6 +622,10 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
         //            (1.3 helper), which is what makes the reuse guard (2.2) and the
         //            version-history table in the template meaningful.
         target_agent: 'architect',
+        // An explicit Generate PRD click must rebuild the document from the
+        // persisted user-story records. This applies template-rendering
+        // improvements even when no requirement fields have changed.
+        force_prd_rebuild: true,
         structured_requirements: toGatheredRequirementsPayload(store.structuredRequirements),
         current_version: deps.currentVersion,
         version_history_summaries: buildVersionHistorySummaries(),

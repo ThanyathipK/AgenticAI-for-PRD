@@ -1221,6 +1221,23 @@ def _normalize_template_table_semantics(markdown: str) -> str:
         body = body.replace("**User Story (System** **Focus)**", "**User Story (System Focus)**")
         body = body.replace("**Functional** **Requirement (FR)**", "**Functional Requirement (FR)**")
 
+        # Keep the three persisted user-story fields readable inside their
+        # Markdown table cell. Pandoc emits the LaTeX ``\\newline`` markers as
+        # hard breaks, while the heading cleanup above intentionally flattens
+        # hard breaks. Re-instate paragraph spacing only for story data rows.
+        readable_lines = []
+        for line in body.splitlines():
+            if (
+                line.lstrip().startswith("|")
+                and "As a " in line
+                and "I want to " in line
+                and "So that " in line
+            ):
+                line = re.sub(r"\s+I want to\s+", "<br><br>I want to ", line, count=1)
+                line = re.sub(r"\s+So that\s+", "<br><br>So that ", line, count=1)
+            readable_lines.append(line)
+        body = "\n".join(readable_lines)
+
         # The nested LaTeX scope block has no direct GFM equivalent. Pandoc
         # flattens it into unrelated rows, so rebuild it as one clear table.
         # A stored Markdown document may already contain that table after a
