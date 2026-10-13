@@ -30,6 +30,12 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.txt
+      - name: Install document conversion tools
+        run: sudo apt-get update && sudo apt-get install -y pandoc
+      - name: Set up Tectonic
+        uses: wtfjoke/setup-tectonic@v4
+      - name: Verify document conversion tools
+        run: pandoc --version && tectonic --version
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements.txt
       - name: Check database schema drift
