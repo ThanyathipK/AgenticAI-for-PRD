@@ -104,8 +104,6 @@ test('authRegister posts the JSON RegisterRequest body', async () => {
   });
 });
 
-// ---- GET /api/auth/config --------------------------------------------------
-test('authConfig reads the public capabilities probe without a token', async () => {
 // ---- GET /api/auth/me / POST /api/auth/logout ------------------------------
 test('authMe and authLogout send the Bearer token the backend verifies', async () => {
   const getCalls = stubGet({ id: 'u1', email: 'ba@bank.com' });
@@ -171,6 +169,9 @@ test('authInitials derives the sidebar avatar initials', () => {
   assert.equal(authInitials({ full_name: '', email: 'ba@bank.com' }), 'BA');
   assert.equal(authInitials({ full_name: '', email: '' }), '?');
 });
+
+// ---- GET /api/auth/config --------------------------------------------------
+test('authConfig reads the public capabilities probe without a token', async () => {
   const calls = stubGet({ signup_enabled: true, token_expiration_minutes: 60 });
 
   const config = await api.authConfig();
