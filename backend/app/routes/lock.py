@@ -376,6 +376,10 @@ async def confirm_action(
     #               supplied in the draft. Committed by the request's get_db on success.
     previous_state = await RequirementStateRepository.get_by_project_id(project_id, session)
     requirement_merge = action.get("workflow_stage") != "COMPLETED"
+    changed_artifacts = []
+    cascade_plan = None
+    cascade_job_id = None
+    cascade_status = "not_required"
     updates_to_persist = dict(proposed_changes)
     if requirement_merge:
         # Older pending actions contain ``version_number`` from the time that
@@ -388,6 +392,20 @@ async def confirm_action(
             previous_revision + 1,
         )
     persisted_state = await RequirementStateRepository.save_or_update(project_id, updates_to_persist, session)
+    if requirement_merge:
+        from app.dependency_graph_service import detect_changed_artifacts, mark_dependents_for_review
+
+        changed_artifacts = detect_changed_artifacts(previous_state, persisted_state)
+        if changed_artifacts:
+            # A changed source invalidates its previous audit verdict and every
+            # linked PRD section. Sections are reset to draft before the scoped
+            # automatic regeneration job rewrites writable dependants.
+            persisted_state = await RequirementStateRepository.save_or_update(
+                project_id,
+                {"validation_status": "pending"},
+                session,
+            )
+            cascade_plan = await mark_dependents_for_review(project_id, changed_artifacts, session)
 
     # Architect output is staged without touching the section/version stores.
     # Materialize its sections only at this confirmation boundary so Cancel
@@ -475,17 +493,67 @@ async def confirm_action(
     # 4. Delete the pending action
     await PendingActionRepository.delete(action_id, project_id, session)
 
+    # A confirmed parent change automatically continues down the hierarchy.
+    # ACs were revalidated in the Gatherer draft; now queue the Architect for
+    # only the linked, writable PRD sections (and an existing diagram). Running
+    # this in the durable job queue keeps Save responsive and makes the work
+    # recoverable after a process restart. Protected sections remain draft and
+    # are deliberately not rewritten.
+    should_regenerate_document = bool(
+        cascade_plan
+        and (
+            cascade_plan.get("regenerate_prd_sections")
+            or (
+                cascade_plan.get("regenerate_diagrams")
+                and (persisted_state.get("generated_diagrams") or "").strip()
+            )
+        )
+    )
+    if should_regenerate_document:
+        # Persist the confirmed hierarchy before touching the independent job
+        # queue. In particular, create_job may roll back its own transaction on
+        # a uniqueness race; that must never undo the user's confirmed Save.
+        await session.commit()
+        try:
+            from app.generation_job_service import create_job, launch_job
+
+            cascade_job = await create_job(
+                project_id,
+                current_user.id,
+                "regeneration",
+                {"changed_artifacts": changed_artifacts, "confirm": True, "automatic": True},
+                session,
+            )
+            cascade_job_id = cascade_job["id"]
+            cascade_status = "queued"
+            await session.commit()
+            launch_job(cascade_job_id)
+        except ValueError as exc:
+            # Another model job already owns this project. Keep the dependency
+            # flags/draft section statuses so the cascade remains visible and
+            # can be retried after that job finishes.
+            cascade_status = "deferred"
+            logger.warning(
+                "[MERGE CONFIRM] Automatic downstream regeneration deferred for project %s: %s",
+                project_id,
+                exc,
+            )
+
     # CONFIRM 3.3.9 — Real-time fan-out: other clients (and this one, debounced)
     #               re-read the project state (EVENTS flow).
     await event_manager.publish(project_id, "merge_confirmed", {
         "project_id": project_id,
         "action_id": action_id,
+        "cascade_job_id": cascade_job_id,
+        "cascade_status": cascade_status,
     })
 
     logger.info(f"[MERGE CONFIRM] Merge confirmed and persisted for project {project_id}")
     return {
         "status": "confirmed",
-        "requirement_state": persisted_state
+        "requirement_state": persisted_state,
+        "cascade_job_id": cascade_job_id,
+        "cascade_status": cascade_status,
     }
 
 

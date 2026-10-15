@@ -83,7 +83,7 @@ export function StructuredSectionEditor({ value, onChange }: StructuredSectionEd
           value={value}
           onChange={(event) => onChange(event.target.value)}
           rows={10}
-          className="w-full text-sm font-sans text-slate-800 bg-white border border-outline rounded-[10px] p-4 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all resize-y custom-scrollbar min-h-[180px]"
+          className="w-full text-sm font-sans text-slate-800 bg-white border border-outline rounded-[10px] p-4 focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all resize-y custom-scrollbar min-h-[180px]"
           placeholder="Enter section content"
         />
       </div>
@@ -138,7 +138,7 @@ export function StructuredSectionEditor({ value, onChange }: StructuredSectionEd
                         onChange={(event) => updateCell(lineIndex, 1, event.target.value)}
                         rows={Math.max(1, displayValue(cells[1]).split('\n').length)}
                         aria-label={cleanLabel(cells[0]) || headers[1] || `Value ${rowIndex + 1}`}
-                        className="min-h-[38px] w-full resize-y rounded-lg border border-slate-200 bg-[#fcfbf9] px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
+                        className="min-h-[38px] w-full resize-y rounded-lg border border-slate-200 bg-[#fcfbf9] px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/15"
                         placeholder={`Enter ${cleanLabel(cells[0]) || 'value'}`}
                       />
                     </div>
@@ -153,7 +153,7 @@ export function StructuredSectionEditor({ value, onChange }: StructuredSectionEd
                           value={displayValue(cell)}
                           onChange={(event) => updateCell(lineIndex, cellIndex, event.target.value)}
                           rows={2}
-                          className="mt-1.5 min-h-[58px] w-full resize-y rounded-lg border border-slate-200 bg-[#fcfbf9] px-2.5 py-2 text-sm font-normal normal-case tracking-normal text-slate-800 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
+                          className="mt-1.5 min-h-[58px] w-full resize-y rounded-lg border border-slate-200 bg-[#fcfbf9] px-2.5 py-2 text-sm font-normal normal-case tracking-normal text-slate-800 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/15"
                         />
                       </label>
                     ))}

@@ -156,6 +156,68 @@ async def test_create_job_rejects_second_active_job_for_project(job_db):
 
 
 @pytest.mark.asyncio
+async def test_user_job_supersedes_interrupted_automatic_cascade(job_db):
+    factory, user_id, project_id = job_db
+    async with factory() as session:
+        automatic = await jobs.create_job(
+            project_id,
+            user_id,
+            "regeneration",
+            {"changed_artifacts": [], "confirm": True, "automatic": True},
+            session,
+        )
+        await session.commit()
+
+        interrupted = await session.get(GenerationJobModel, uuid.UUID(automatic["id"]))
+        interrupted.status = "queued"
+        interrupted.progress_stage = "interrupted_by_shutdown"
+        await session.commit()
+
+        replacement = await jobs.create_job(
+            project_id,
+            user_id,
+            "architect",
+            {"project_id": project_id},
+            session,
+        )
+        await session.commit()
+
+        await session.refresh(interrupted)
+        assert interrupted.status == "cancelled"
+        assert interrupted.cancel_requested is True
+        assert interrupted.progress_stage == "superseded_by_user_request"
+        assert interrupted.completed_at is not None
+        assert replacement["job_type"] == "architect"
+        assert replacement["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_automatic_job_does_not_supersede_interrupted_automatic_cascade(job_db):
+    factory, user_id, project_id = job_db
+    async with factory() as session:
+        first = await jobs.create_job(
+            project_id,
+            user_id,
+            "regeneration",
+            {"changed_artifacts": [], "confirm": True, "automatic": True},
+            session,
+        )
+        await session.commit()
+        interrupted = await session.get(GenerationJobModel, uuid.UUID(first["id"]))
+        interrupted.progress_stage = "interrupted_by_shutdown"
+        await session.commit()
+
+        with pytest.raises(ValueError, match="already has an active regeneration job"):
+            await jobs.create_job(
+                project_id,
+                user_id,
+                "regeneration",
+                {"changed_artifacts": [], "confirm": True, "automatic": True},
+                session,
+            )
+
+
+@pytest.mark.asyncio
 async def test_run_job_honours_cancellation_requested_before_execution(job_db, monkeypatch):
     factory, user_id, project_id = job_db
     job_id = await _new_job(factory, user_id, project_id)

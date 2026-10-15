@@ -66,7 +66,32 @@ async def create_job(project_id: str, user_id: str, job_type: str, payload: dict
         ).limit(1)
     )
     if existing is not None:
-        raise ValueError(f"Project already has an active {existing.job_type} job ({existing.id}).")
+        existing_payload = existing.request_payload if isinstance(existing.request_payload, dict) else {}
+        interrupted_automatic_cascade = (
+            existing.job_type == "regeneration"
+            and bool(existing_payload.get("automatic"))
+            and existing.status == "queued"
+            and existing.progress_stage == "interrupted_by_shutdown"
+            and not bool(payload.get("automatic"))
+        )
+        if interrupted_automatic_cascade:
+            # A restart race can occur when the new process performs its startup
+            # recovery scan just before the old process marks an interrupted
+            # automatic cascade as queued. That orphan must not permanently
+            # block an explicit user action. Supersede only this narrow stale
+            # state; genuinely queued/running user jobs retain the 409 guard.
+            existing.status = "cancelled"
+            existing.progress_stage = "superseded_by_user_request"
+            existing.cancel_requested = True
+            existing.completed_at = datetime.now(timezone.utc)
+            await session.flush()
+            logger.info(
+                "[JOB][%s][SUPERSEDED] Interrupted automatic cascade replaced by user-requested %s job",
+                existing.id,
+                job_type,
+            )
+        else:
+            raise ValueError(f"Project already has an active {existing.job_type} job ({existing.id}).")
     job = GenerationJobModel(
         project_id=uuid.UUID(str(project_id)),
         requested_by_user_id=uuid.UUID(str(user_id)),
@@ -153,7 +178,7 @@ async def _run_job(job_id: str) -> None:
             job_id, job.job_type, job.project_id,
         )
         try:
-            if job.job_type in {"architect", "auditor"}:
+            if job.job_type in {"architect", "auditor", "regeneration"}:
                 job.progress_stage = "waiting_for_local_model"
                 await session.commit()
                 logger.info("[JOB][%s][MODEL_SLOT][WAIT] Waiting for local-model capacity", job_id)
@@ -172,6 +197,14 @@ async def _run_job(job_id: str) -> None:
             job.result_payload = result
             job.completed_at = datetime.now(timezone.utc)
             await session.commit()
+            if job.job_type == "regeneration":
+                from app.event_manager import event_manager
+
+                await event_manager.publish(str(job.project_id), "cascade_regeneration_completed", {
+                    "project_id": str(job.project_id),
+                    "job_id": job_id,
+                    "status": "completed",
+                })
             logger.info(
                 "[JOB][%s][COMPLETE][DONE] type=%s elapsed_ms=%.1f",
                 job_id, job.job_type, (time.perf_counter() - started) * 1000,

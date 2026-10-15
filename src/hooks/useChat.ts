@@ -253,7 +253,16 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
       //            falls into the agent branches instead.
       const detectedIntent = data.detected_intent || 'GENERAL_CHAT';
 
-      if (detectedIntent === 'GENERAL_CHAT') {
+      if (data.no_changes === true) {
+        store.setSyncStatus('No changes were made');
+        store.setCurrentAgentNode(null);
+        store.setMessages(prev => [...prev, {
+          id: `no-change-${Date.now()}`,
+          role: 'assistant',
+          content: data.message || 'The requested item was not found. No changes were made.',
+          timestamp: nowTime(),
+        }]);
+      } else if (detectedIntent === 'GENERAL_CHAT') {
         // Do NOT modify requirements, user stories, version history, or any project artifacts
         store.setSyncStatus('Synced with Supabase Cloud');
         store.setCurrentAgentNode(null);

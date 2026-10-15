@@ -322,6 +322,26 @@ def test_glossary_rows_filled_from_narrative():
     assert "National Credit Bureau" in body
 
 
+def test_glossary_text_from_gatherer_is_normalized_safely():
+    body = fill_template_body(
+        project_id="p1", project_name="P", version=1,
+        data=DATA,
+        narrative={"glossary": "1. TPS: Transactions per second\n2. malformed entry\n3. PII - Personally identifiable information"},
+    )
+    assert "TPS" in body and "Transactions per second" in body
+    assert "PII" in body and "Personally identifiable information" in body
+    assert "malformed entry" not in body
+
+
+def test_malformed_glossary_never_fails_prd_generation():
+    body = fill_template_body(
+        project_id="p1", project_name="P", version=1,
+        data=DATA,
+        narrative={"glossary": ["missing definition", ["only one"], {"term": "Missing"}]},
+    )
+    assert "###" not in body  # still the LaTeX template body, generated successfully
+
+
 def test_business_overview_grows_with_content():
     """Tables are dynamic (longtable): long actor/goal lists must be fully
     rendered, not compacted - the wrapping paragraph columns and page-

@@ -5,8 +5,14 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.dependency_graph_service import build_regeneration_plan, execute_regeneration, rebuild_dependency_graph
-from app.models import PRDDocumentModel, ProjectModel, RegenerationRunModel, RequirementStateModel, UserModel
+from app.dependency_graph_service import (
+    build_regeneration_plan,
+    detect_changed_artifacts,
+    execute_regeneration,
+    mark_dependents_for_review,
+    rebuild_dependency_graph,
+)
+from app.models import AcceptanceCriteriaModel, PRDDocumentModel, ProjectModel, RegenerationRunModel, RequirementStateModel, UserModel
 from app.prd_section_service import sync_sections_from_prd
 from app.repositories.prd_section import PRDSectionRepository
 from app.repositories.requirement_state import RequirementStateRepository
@@ -110,6 +116,33 @@ async def test_plan_rejects_unknown_artifact_type(db_session, graph_project):
             [{"artifact_type": "database", "artifact_key": "payments"}],
             db_session,
         )
+
+
+@pytest.mark.asyncio
+async def test_story_change_invalidates_criteria_and_linked_sections(db_session, graph_project):
+    before = await RequirementStateRepository.get_by_project_id(graph_project, db_session)
+    product = await PRDSectionRepository.get_model_by_key("product_scope", graph_project, db_session)
+    product.review_status = "approved"
+    await db_session.flush()
+
+    changed = dict(before["requirements"][0]["user_stories"][0])
+    changed["i_want_to"] = "approve or reject a transfer"
+    after = await RequirementStateRepository.save_or_update(graph_project, {
+        "requirements": [{
+            **before["requirements"][0],
+            "user_stories": [changed],
+        }],
+    }, db_session)
+
+    criterion = (await db_session.execute(select(AcceptanceCriteriaModel))).scalar_one()
+    assert criterion.change_type == "review_required"
+
+    changed_artifacts = detect_changed_artifacts(before, after)
+    assert {item["artifact_key"] for item in changed_artifacts} == {"US-001"}
+    plan = await mark_dependents_for_review(graph_project, changed_artifacts, db_session)
+    assert plan is not None
+    assert "product_scope" in plan["regenerate_prd_sections"]
+    assert product.review_status == "draft"
 
 
 @pytest.mark.asyncio

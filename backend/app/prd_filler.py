@@ -707,8 +707,39 @@ _GLOSSARY_GRID_RE = re.compile(
 )
 
 
-def _fill_glossary_rows(body: str, narrative: Optional[Dict[str, str]]) -> str:
-    entries = (narrative or {}).get("glossary")
+def _normalize_glossary_entries(value: Any) -> List[tuple[str, str]]:
+    """Accept model/manual glossary shapes without letting bad data break PRD generation."""
+    if not value:
+        return []
+    if isinstance(value, dict):
+        candidates = list(value.items())
+    elif isinstance(value, str):
+        candidates = [line for line in value.splitlines() if line.strip()]
+    elif isinstance(value, (list, tuple)):
+        candidates = list(value)
+    else:
+        return []
+
+    entries: List[tuple[str, str]] = []
+    for candidate in candidates:
+        term = definition = ""
+        if isinstance(candidate, dict):
+            term = str(candidate.get("term") or candidate.get("name") or "").strip()
+            definition = str(candidate.get("definition") or candidate.get("description") or "").strip()
+        elif isinstance(candidate, (list, tuple)) and len(candidate) >= 2:
+            term, definition = str(candidate[0]).strip(), str(candidate[1]).strip()
+        elif isinstance(candidate, str):
+            text = re.sub(r"^\s*\d+[.)]\s*", "", candidate).strip()
+            match = re.match(r"^([^:–—]+?)\s*(?::|\s[-–—]\s)\s*(.+)$", text)
+            if match:
+                term, definition = match.group(1).strip(), match.group(2).strip()
+        if term and definition and term.upper() != "TBD" and definition.upper() != "TBD":
+            entries.append((term, definition))
+    return entries
+
+
+def _fill_glossary_rows(body: str, narrative: Optional[Dict[str, Any]]) -> str:
+    entries = _normalize_glossary_entries((narrative or {}).get("glossary"))
     if not entries:
         return body
     rows = []

@@ -8,6 +8,10 @@ Your job is to analyze the user's input message and classify it into EXACTLY ONE
 4. REQUIREMENT: Feature requests, additions, modifications, updates, deletions, or new specification details for software requirements (e.g., "Add login.", "Modify transfer limit.", "Remove QR Payment.", "Requirement should support OTP", "Create a new reporting module").
 </workflow_types>
 
+Important distinction:
+- "Create PRD" or "Generate PRD" is a COMMAND because it generates from requirements already saved in the project.
+- A message headed "New project requirements:", "Requirement brief:", "Gather the following requirements:", or "Add the following requirements:" is REQUIREMENT and must go through the Gatherer.
+
 <system_constraints>
 - You MUST output your response 100% strictly in JSON format matching the schema provided below.
 - Do not include any standard AI introductory or trailing pleasantries.

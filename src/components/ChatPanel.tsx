@@ -403,7 +403,7 @@ export function ChatPanel({ state }: { state: ProjectState }) {
           </p>
         )}
 
-        <div className="flex items-end gap-2 bg-white rounded-[16px] pl-2 pr-1.5 py-1.5 border border-[#e8e2d9] shadow-[0_2px_4px_rgba(0,0,0,0.02)] focus-within:border-primary/50 transition-all">
+        <div className="flex items-end gap-2 bg-white rounded-[16px] pl-2 pr-1.5 py-1.5 border border-[#e8e2d9] shadow-[0_2px_4px_rgba(0,0,0,0.02)] hover:border-primary focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20 transition-all">
           <Tooltip
             label={projectId ? 'Attach file (.docx / .pdf / .md / .txt)' : 'Create or select a project first'}
             side="top"

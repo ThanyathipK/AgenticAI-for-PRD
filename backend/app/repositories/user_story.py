@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.lock_service import LockService
-from app.models import RequirementModel, UserStoryModel
+from app.models import AcceptanceCriteriaModel, RequirementModel, UserStoryModel
 from app.repositories.base import as_uuid, serialize_user_story
 from app.requirement_codes import UNASSIGNED_REQUIREMENT_CODE
 
@@ -18,6 +18,23 @@ logger = logging.getLogger(__name__)
 
 class UserStoryRepository:
     """Handles Agile User Stories of the project."""
+
+    @staticmethod
+    async def _mark_criteria_for_review(story_id: uuid.UUID, session: AsyncSession) -> None:
+        """Invalidate unchanged child criteria after parent behaviour changes."""
+        result = await session.execute(
+            select(AcceptanceCriteriaModel).where(
+                AcceptanceCriteriaModel.user_story_id == story_id,
+                AcceptanceCriteriaModel.status == "active",
+            )
+        )
+        for criterion in result.scalars().all():
+            if criterion.is_locked:
+                continue
+            if criterion.change_type != "review_required":
+                criterion.version += 1
+            criterion.change_type = "review_required"
+            criterion.last_modified_by = "dependency_propagation"
 
     @staticmethod
     async def generate_unique_ticket_code(project_id: uuid.UUID, session: AsyncSession) -> str:
@@ -96,6 +113,13 @@ class UserStoryRepository:
                 story,
                 message=f"User Story {story.ticket_code} is locked by {story.locked_by or 'unknown'}. Unlock it before modifying."
             )
+            content_changed = any([
+                story.ticket_code != ticket_code,
+                story.story_title != story_title,
+                "as_a" in data and story.as_a != data.get("as_a"),
+                "i_want_to" in data and story.i_want_to != data.get("i_want_to"),
+                "so_that" in data and story.so_that != data.get("so_that"),
+            ])
             # Update existing story
             story.ticket_code = ticket_code
             story.story_title = story_title
@@ -107,6 +131,8 @@ class UserStoryRepository:
             story.version = data.get("version", story.version)
             story.last_modified_by = data.get("last_modified_by", story.last_modified_by)
             story.change_type = data.get("change_type", story.change_type)
+            if content_changed:
+                await UserStoryRepository._mark_criteria_for_review(story.id, session)
             await session.flush()
         else:
             # Create a brand new story
@@ -207,6 +233,10 @@ class UserStoryRepository:
                 story,
                 message=f"User Story {story.ticket_code} is locked by {story.locked_by or 'unknown'}. Unlock it before modifying."
             )
+            content_changed = any(
+                field in updates and getattr(story, field) != updates[field]
+                for field in ("ticket_code", "story_title", "as_a", "i_want_to", "so_that")
+            )
             if "ticket_code" in updates:
                 story.ticket_code = updates["ticket_code"]
             if "story_title" in updates:
@@ -225,6 +255,8 @@ class UserStoryRepository:
                 story.last_modified_by = updates["last_modified_by"]
             if "change_type" in updates:
                 story.change_type = updates["change_type"]
+            if content_changed:
+                await UserStoryRepository._mark_criteria_for_review(story.id, session)
             await session.flush()
             await session.refresh(story)
             return serialize_user_story(story, pid)

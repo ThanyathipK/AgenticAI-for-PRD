@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 import time
 from typing import Dict, Any, List
@@ -603,6 +604,7 @@ async def _process_requirements_pipeline(
             project_id=str(request.project_id),
             role="user",
             message=request.raw_input.strip(),
+            session=session,
             workflow_state=request.target_agent or "gatherer",
             intent="PENDING_DETECTION"
         )
@@ -652,6 +654,65 @@ async def _process_requirements_pipeline(
         "[WORKFLOW][%s][DETECT_INTENT][DONE] intent=%s confidence=%.3f",
         run_id, detected_intent, intent_confidence,
     )
+
+    # An explicit story ID is authoritative. If the user asks to update/delete
+    # an ID that does not exist, stop before the matcher/LLM and do not create a
+    # meaningless pending merge containing the unchanged board.
+    if detected_intent in {"UPDATE_REQUIREMENT", "DELETE_REQUIREMENT"}:
+        from app.merge_service import normalize_ticket_code
+        from app.requirement_codes import extract_requirement_codes, normalize_requirement_code
+        from app.semantic_service import extract_story_ticket_codes
+
+        requested_story_codes = extract_story_ticket_codes(request.raw_input or "")
+        existing_story_codes = {
+            normalize_ticket_code(story.get("ticket_code"))
+            for story in ((req_state or {}).get("user_stories") or [])
+            if isinstance(story, dict) and story.get("ticket_code")
+        }
+        requested_requirement_codes = extract_requirement_codes(request.raw_input or "")
+        existing_requirement_codes = {
+            normalize_requirement_code(requirement.get("requirement_code"))
+            for requirement in ((req_state or {}).get("requirements") or [])
+            if isinstance(requirement, dict) and requirement.get("requirement_code")
+        }
+        missing_story_codes = [
+            code for code in requested_story_codes if code not in existing_story_codes
+        ]
+        missing_requirement_codes = [
+            code for code in requested_requirement_codes if code not in existing_requirement_codes
+        ]
+        missing_codes = missing_story_codes + missing_requirement_codes
+        if missing_codes:
+            if missing_requirement_codes and not missing_story_codes:
+                available = ", ".join(sorted(existing_requirement_codes)) or "none"
+                available_label = "requirement IDs"
+            elif missing_story_codes and not missing_requirement_codes:
+                available = ", ".join(sorted(existing_story_codes)) or "none"
+                available_label = "user story IDs"
+            else:
+                available = ", ".join(sorted(existing_requirement_codes | existing_story_codes)) or "none"
+                available_label = "requirement and user story IDs"
+            response_text = (
+                f"I couldn't apply that change because {', '.join(missing_codes)} "
+                f"does not exist in this project. Available {available_label}: {available}. "
+                "No changes were made."
+            )
+            await ConversationMessageRepository.save_message(
+                project_id=str(request.project_id),
+                role="assistant",
+                message=response_text,
+                session=session,
+                workflow_state="no_change",
+                intent=detected_intent,
+            )
+            return {
+                "status": "no_change",
+                "detected_intent": detected_intent,
+                "message": response_text,
+                "pending_merge": False,
+                "pending_action_id": None,
+                "no_changes": True,
+            }
 
     # ==========================================
     # CHAT 2.3 — GENERAL_CHAT short-circuit: the chat flow's backend branch. Runs
@@ -718,6 +779,7 @@ async def _process_requirements_pipeline(
                     project_id=str(request.project_id),
                     role="assistant",
                     message=response_text,
+                    session=session,
                     # CHAT 2.3.3 — Repository WRITE of the assistant turn; FAIL SOFT
                     #             (the reply is already computed, so a failed insert
                     #             is logged loudly rather than losing the answer).
@@ -910,6 +972,17 @@ async def _process_requirements_pipeline(
             req_state["user_stories"] = reqs.get("user_stories", [])
             req_state["acceptance_criteria"] = all_ac
 
+    # Snapshot only the requirement-source fields before the workflow. Agent
+    # nodes mutate their state dictionaries in place, so a deep copy is needed
+    # to distinguish a real proposal from a clarification/no-op result.
+    requirement_source_fields = (
+        "requirements", "business_goals", "actors", "user_stories",
+        "acceptance_criteria", "prd_narrative",
+    )
+    requirement_state_before_workflow = {
+        field: copy.deepcopy(req_state.get(field)) for field in requirement_source_fields
+    }
+
     # Formulate initial state corresponding to AgentState TypedDict
     knowledge_documents = []
     if request.target_agent == "auditor":
@@ -989,6 +1062,10 @@ async def _process_requirements_pipeline(
 
         # Read updated centralized RequirementState from final graph output
         req_state = final_state.get("requirement_state", req_state)
+        requirement_content_changed = any(
+            req_state.get(field) != requirement_state_before_workflow.get(field)
+            for field in requirement_source_fields
+        )
 
         # Update workflow state after run
         if request.target_agent == "gatherer" or current_state == "GATHERING":
@@ -1056,6 +1133,7 @@ async def _process_requirements_pipeline(
                 {
                     "generated_prd": final_prd,
                     "generated_diagrams": req_state.get("generated_diagrams", ""),
+                    "prd_narrative": req_state.get("prd_narrative", {}),
                     "current_workflow_state": "COMPLETED",
                 },
                 session,
@@ -1102,7 +1180,12 @@ async def _process_requirements_pipeline(
             final_state["audit_result"]["clarification_questions"] = saved_audit_state.get("clarification_questions", [])
             audit_auto_persisted = True
             logger.info("Auditor result persisted directly for project %s; no merge confirmation required", request.project_id)
-        elif not architect_auto_persisted and not audit_operational_error and not stale_result:
+        elif (
+            not architect_auto_persisted
+            and not audit_operational_error
+            and not stale_result
+            and requirement_content_changed
+        ):
             pending_action = await PendingActionRepository.create(
                 project_id=request.project_id,
                 data={
@@ -1122,6 +1205,11 @@ async def _process_requirements_pipeline(
                 "[WORKFLOW][%s][STAGE_MERGE][DONE] pending_action=%s",
                 run_id, pending_action_id,
             )
+        elif not architect_auto_persisted and not audit_operational_error and not stale_result:
+            logger.info(
+                "[WORKFLOW][%s][NO_CHANGE] Requirement content is unchanged; no pending action created.",
+                run_id,
+            )
         elif audit_operational_error:
             logger.warning("Auditor operational failure: no pending action created for project %s", request.project_id)
         else:
@@ -1131,11 +1219,27 @@ async def _process_requirements_pipeline(
         # STEP 5: Persist assistant response for non-GENERAL_CHAT intents
         # ==========================================
         agent_message = final_state.get("agent_message", "")
-        if request.project_id and agent_message:
+        no_changes = (
+            request.target_agent in {"gatherer", "delete_requirement"}
+            and not requirement_content_changed
+            and pending_action_id is None
+        )
+        if no_changes and not agent_message:
+            unresolved_questions = req_state.get("clarification_questions") or []
+            latest_question = next(
+                (str(item.get("question_text") or "").strip() for item in reversed(unresolved_questions) if isinstance(item, dict)),
+                "",
+            )
+            agent_message = latest_question or (
+                "I couldn't find an applicable requirement change in that request. "
+                "No changes were made. Please check the user story ID and try again."
+            )
+        if request.project_id and agent_message and not no_changes:
             await ConversationMessageRepository.save_message(
                 project_id=str(request.project_id),
                 role="assistant",
                 message=agent_message,
+                session=session,
                 workflow_state=req_state.get("current_workflow_state", request.target_agent or "gatherer"),
                 intent=detected_intent
             )
@@ -1209,8 +1313,9 @@ async def _process_requirements_pipeline(
             "prd_markdown": req_state.get("generated_prd", ""),
             "mermaid_diagram": req_state.get("generated_diagrams", ""),
             "message": agent_message,
-            "pending_merge": not audit_operational_error and not stale_result and not audit_auto_persisted and not architect_auto_persisted,
+            "pending_merge": pending_action_id is not None,
             "pending_action_id": pending_action_id,
+            "no_changes": no_changes,
             "stale_result": stale_result,
             "audit_auto_persisted": audit_auto_persisted,
         }

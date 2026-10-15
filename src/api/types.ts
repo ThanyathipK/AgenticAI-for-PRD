@@ -301,6 +301,7 @@ export interface StoryImpact {
   changed_fields: string[];
   criteria_added: number;
   criteria_removed: number;
+  criteria_review_required: number;
 }
 
 /** A PRD section whose content references an affected code. */
@@ -330,6 +331,7 @@ export interface ImpactSummary {
   stories_removed: number;
   criteria_added: number;
   criteria_removed: number;
+  criteria_review_required: number;
   sections_impacted: number;
   sections_impacted_locked: number;
   diagrams_impacted: number;
@@ -426,6 +428,7 @@ export interface ProcessRequirementsResponse {
   message?: string | null;
   pending_merge?: boolean | null;
   pending_action_id?: string | null;
+  no_changes?: boolean;
   stale_result?: boolean | null;
   conversation_history?: ConversationMessagePayload[];
   [key: string]: unknown;
@@ -475,6 +478,8 @@ export interface HealthPayload {
 export interface ConfirmActionResponse {
   status: string;
   requirement_state?: RequirementStatePayload;
+  cascade_job_id?: string | null;
+  cascade_status?: 'queued' | 'not_required' | 'deferred' | string | null;
 }
 
 export interface ActionStatusResponse {
@@ -679,6 +684,7 @@ export interface TraceabilityStory {
   i_want_to?: string | null;
   so_that?: string | null;
   acceptance_criteria: string[];
+  criteria_needing_review: string[];
   is_locked: boolean;
 }
 
@@ -714,6 +720,7 @@ export interface TraceabilityCoverage {
   requirements_without_diagram: string[];
   stories_without_criteria: string[];
   stories_without_prd_sections: string[];
+  criteria_needing_review: string[];
   stale_section_references: StaleCodeReference[];
   stale_diagram_references: StaleCodeReference[];
 }
@@ -865,4 +872,6 @@ export interface AuthMessageResponse {
  *  and enforced server-side by POST /api/auth/register). */
 export const AUTH_ROLES = [
   'Technical Product Owner',
+  'Business Analyst',
+  'Product Owner',
 ] as const;

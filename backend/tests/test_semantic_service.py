@@ -44,6 +44,8 @@ from app.semantic_service import (
     normalize_recommended_action,
     normalize_semantic_changes,
     normalize_target_reference,
+    extract_explicit_story_references,
+    extract_story_ticket_codes,
     resolve_target_story,
 )
 
@@ -73,6 +75,12 @@ US_003 = {
 }
 
 STORIES = [copy.deepcopy(US_001), copy.deepcopy(US_002), copy.deepcopy(US_003)]
+
+
+def test_explicit_story_ids_are_resolved_from_common_chat_spellings():
+    assert extract_explicit_story_references("change #us 1 please", STORIES) == ["US-001"]
+    assert extract_explicit_story_references("change US-999 please", STORIES) == []
+    assert extract_story_ticket_codes("change US-999 and us 1") == ["US-999", "US-001"]
 
 
 def make_change(**overrides):
@@ -432,6 +440,18 @@ async def test_detect_semantic_changes_flags_a_hallucinated_target_for_clarifica
 
 
 @pytest.mark.asyncio
+async def test_explicit_user_id_overrides_an_incorrect_inferred_target(monkeypatch):
+    _patch_llm(monkeypatch, {"changes": [make_change(target_requirement_id="US-003")]})
+
+    changes = await semantic_service.detect_semantic_changes(
+        "Change us 1 so refunds require an OTP",
+        STORIES,
+    )
+
+    assert changes[0]["target_requirement_id"] == "US-001"
+
+
+@pytest.mark.asyncio
 async def test_detect_semantic_changes_empty_answer_becomes_explicit_no_change(monkeypatch):
     _patch_llm(monkeypatch, {"changes": []})
 
@@ -560,3 +580,32 @@ def test_prompt_and_code_vocabularies_stay_in_sync():
     for action in SEMANTIC_ACTIONS:
         assert f'"{action}"' in prompt
     assert '"MERGE"' not in prompt
+
+
+@pytest.mark.asyncio
+async def test_explicit_requirement_brief_routes_to_gatherer_without_calling_model(monkeypatch):
+    async def should_not_call(*args, **kwargs):
+        raise AssertionError("deterministic PRD-brief routing should bypass the model")
+
+    monkeypatch.setattr(semantic_service, "invoke_llm_structured", should_not_call)
+    message = """Requirement brief:
+Build a secure mobile-banking refund service.
+Customers submit refund requests using the original transaction ID and officers approve or reject them.
+The API must support 100 TPS, p95 below 500 ms, 99.9% availability, encryption, and audit logging.
+Leave uncertain facts TBD."""
+
+    workflow = await semantic_service.classify_workflow(message)
+    intent = await semantic_service.detect_requirement_intent(message, [])
+
+    assert workflow["workflow"] == "REQUIREMENT"
+    assert intent["intent"] == "CREATE_REQUIREMENT"
+
+
+@pytest.mark.asyncio
+async def test_create_prd_is_document_command_not_gatherer_trigger(monkeypatch):
+    async def should_not_call(*args, **kwargs):
+        raise AssertionError("deterministic PRD command routing should bypass the model")
+
+    monkeypatch.setattr(semantic_service, "invoke_llm_structured", should_not_call)
+    result = await semantic_service.classify_workflow("Create a complete PRD")
+    assert result["workflow"] == "COMMAND"

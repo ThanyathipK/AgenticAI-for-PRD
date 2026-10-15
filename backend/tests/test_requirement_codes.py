@@ -16,10 +16,18 @@ from app.requirement_codes import (
     REQUIREMENT_CODE_PREFIX,
     UNASSIGNED_REQUIREMENT_CODE,
     default_requirement_code,
+    extract_requirement_codes,
     format_requirement_code,
     next_requirement_code,
     normalize_requirement_code,
 )
+
+
+def test_extract_requirement_codes_normalizes_common_chat_spellings():
+    assert extract_requirement_codes("Change req1 and #REQ_002, not REQ 1 twice") == [
+        "REQ-001",
+        "REQ-002",
+    ]
 
 
 def test_first_requirement_code_is_derived_not_hardcoded():

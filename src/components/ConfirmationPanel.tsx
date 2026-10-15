@@ -96,6 +96,7 @@ function ImpactAnalysisSection({
     if (summary.stories_removed) chips.push({ label: `−${summary.stories_removed} story removed`, tone: 'bg-red-50 text-red-700 border-red-200' });
     if (summary.criteria_added) chips.push({ label: `+${summary.criteria_added} criteria`, tone: 'bg-emerald-50 text-emerald-700 border-emerald-200' });
     if (summary.criteria_removed) chips.push({ label: `−${summary.criteria_removed} criteria`, tone: 'bg-red-50 text-red-700 border-red-200' });
+    if (summary.criteria_review_required) chips.push({ label: `${summary.criteria_review_required} criteria need review`, tone: 'bg-amber-50 text-amber-700 border-amber-200' });
     if (summary.sections_impacted) chips.push({ label: `${summary.sections_impacted} PRD section${summary.sections_impacted > 1 ? 's' : ''} impacted`, tone: 'bg-amber-50 text-amber-700 border-amber-200' });
     if (summary.diagrams_impacted) chips.push({ label: `${summary.diagrams_impacted} diagram${summary.diagrams_impacted > 1 ? 's' : ''} impacted`, tone: 'bg-amber-50 text-amber-700 border-amber-200' });
   }
@@ -164,6 +165,9 @@ function ImpactAnalysisSection({
                     )}
                     {s.criteria_removed > 0 && (
                       <span className="text-[10px] font-mono text-red-600 font-bold">−{s.criteria_removed} criteria</span>
+                    )}
+                    {s.criteria_review_required > 0 && (
+                      <span className="text-[10px] font-mono text-amber-700 font-bold">{s.criteria_review_required} need review</span>
                     )}
                   </li>
                 ))}

@@ -224,6 +224,22 @@ async def test_matrix_links_requirements_stories_criteria(db_session, seeded_pro
 
 
 @pytest.mark.asyncio
+async def test_matrix_surfaces_criteria_invalidated_by_story_change(db_session, seeded_project):
+    await seed_full_project(db_session, seeded_project)
+    criterion = (await db_session.execute(
+        select(AcceptanceCriteriaModel).where(AcceptanceCriteriaModel.criteria_text.like("Given a valid QR%"))
+    )).scalar_one()
+    criterion.change_type = "review_required"
+    await db_session.flush()
+
+    matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+    row = next(r for r in matrix["rows"] if r["requirement"]["requirement_code"] == "REQ-001")
+    story = next(s for s in row["user_stories"] if s["ticket_code"] == "US-001")
+    assert story["criteria_needing_review"] == [criterion.criteria_text]
+    assert matrix["coverage"]["criteria_needing_review"] == ["US-001"]
+
+
+@pytest.mark.asyncio
 async def test_prd_section_and_diagram_links(db_session, seeded_project):
     await seed_full_project(db_session, seeded_project)
 

@@ -25,6 +25,7 @@ question) instead of silently mutating — or silently skipping — the wrong
 requirement.
 """
 import logging
+import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from langchain_core.prompts import PromptTemplate
@@ -284,6 +285,38 @@ def normalize_target_reference(value: Any) -> Optional[str]:
     # Not ticket-code shaped: keep it verbatim so it can still be matched as a
     # story title against the backlog.
     return text
+
+
+def extract_explicit_story_references(
+    text: Any,
+    stories: Optional[Iterable[Dict[str, Any]]] = None,
+) -> List[str]:
+    """Return canonical, existing story IDs explicitly written in user text."""
+    known = build_story_target_index(stories)
+    found: List[str] = []
+    for match in re.finditer(
+        r"(?<![A-Z0-9])#?US[\s_-]*(\d{1,6})(?!\d)",
+        str(text or ""),
+        re.IGNORECASE,
+    ):
+        code = normalize_ticket_code(f"US-{match.group(1)}")
+        if code in known and code not in found:
+            found.append(code)
+    return found
+
+
+def extract_story_ticket_codes(text: Any) -> List[str]:
+    """Extract every explicitly written story code, including unknown ones."""
+    found: List[str] = []
+    for match in re.finditer(
+        r"(?<![A-Z0-9])#?US[\s_-]*(\d{1,6})(?!\d)",
+        str(text or ""),
+        re.IGNORECASE,
+    ):
+        code = normalize_ticket_code(f"US-{match.group(1)}")
+        if code not in found:
+            found.append(code)
+    return found
 
 
 def build_story_target_index(stories: Optional[Iterable[Dict[str, Any]]] = None) -> Dict[str, str]:
@@ -597,7 +630,18 @@ async def detect_semantic_changes(
     #             targets against the REAL backlog (unverifiable targets are
     #             downgraded), resolves contradictory actions, de-duplicates and
     #             computes the confidence the caller gates on (GATHERING 2.4).
-    changes = normalize_semantic_changes(result.get("changes") or [], stories)
+    raw_changes = [dict(item) for item in (result.get("changes") or []) if isinstance(item, dict)]
+    explicit_targets = extract_explicit_story_references(raw_input, stories)
+    if len(explicit_targets) == 1:
+        # An ID written by the user is stronger evidence than an inferred LLM
+        # target. Apply it to every target-requiring change in this single-ID
+        # message before canonical validation. Multi-ID messages remain with
+        # the model because each change still needs its own mapping.
+        explicit_target = explicit_targets[0]
+        for entry in raw_changes:
+            if normalize_change_type(entry.get("change_type")) in TARGET_REQUIRED_CHANGE_TYPES:
+                entry["target_requirement_id"] = explicit_target
+    changes = normalize_semantic_changes(raw_changes, stories)
     logger.info(
         "Detected %d semantic change(s): %s",
         len(changes),
@@ -645,6 +689,20 @@ async def detect_requirement_intent(raw_input: str, current_stories: Optional[Li
             "intent": "GENERAL_CHAT",
             "confidence": 1.0,
             "reason": "Empty input defaulted to GENERAL_CHAT."
+        }
+
+    normalized_input = str(raw_input).strip().lower()
+    requirement_brief_markers = (
+        "new project requirements:",
+        "requirement brief:",
+        "gather the following requirements:",
+        "add the following requirements:",
+    )
+    if any(marker in normalized_input for marker in requirement_brief_markers):
+        return {
+            "intent": "CREATE_REQUIREMENT",
+            "confidence": 0.99,
+            "reason": "The message supplies new product specifications to gather before PRD generation.",
         }
         
     logger.info(f"Detecting requirement intent for message: '{raw_input[:100]}'")
@@ -1050,6 +1108,25 @@ async def classify_workflow(raw_input: str) -> Dict[str, Any]:
         }
 
     clean_input = str(raw_input).strip()
+    lower_input = clean_input.lower()
+    requirement_brief_markers = (
+        "new project requirements:",
+        "requirement brief:",
+        "gather the following requirements:",
+        "add the following requirements:",
+    )
+    if any(marker in lower_input for marker in requirement_brief_markers):
+        return {
+            "workflow": "REQUIREMENT",
+            "confidence": 0.99,
+            "reason": "The message contains new product specifications that must be gathered before generating a PRD.",
+        }
+    if re.match(r"^(?:create|generate)(?:\s+a|\s+the)?(?:\s+complete)?\s+prd\b", lower_input):
+        return {
+            "workflow": "COMMAND",
+            "confidence": 0.99,
+            "reason": "The user explicitly requested PRD document generation from saved requirements.",
+        }
     logger.info(f"Routing workflow classification for input: '{clean_input[:100]}'")
 
     # ROUTING 3.2 — Prompt assembly from prompts/router.md (workflow taxonomy:

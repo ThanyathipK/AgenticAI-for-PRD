@@ -114,6 +114,7 @@ async def build_project_health(project_id: str, session: AsyncSession) -> dict[s
     issue("unresolved_questions", "Unresolved clarification questions", unresolved, "requirements", "blocking")
     issue("missing_stories", "Requirements without stories", len(coverage["requirements_without_stories"]), "traceability")
     issue("missing_criteria", "Stories without acceptance criteria", len(coverage["stories_without_criteria"]), "traceability")
+    issue("criteria_review", "Acceptance criteria requiring review", len(coverage.get("criteria_needing_review", [])), "traceability")
     issue("missing_sections", "Requirements without PRD coverage", len(coverage["requirements_without_prd_sections"]), "traceability")
     issue("missing_diagrams", "Requirements without diagram coverage", len(coverage["requirements_without_diagram"]), "traceability")
     issue("stale_references", "Stale PRD or diagram references", len(coverage["stale_section_references"]) + len(coverage["stale_diagram_references"]), "traceability")

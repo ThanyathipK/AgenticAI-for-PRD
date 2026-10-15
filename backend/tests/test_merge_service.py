@@ -92,6 +92,10 @@ class TestNormalizeTicketCode:
     def test_lowercase_is_normalized_to_upper(self):
         assert normalize_ticket_code("us-1") == "US-001"
 
+    @pytest.mark.parametrize("typed", ["us1", "US 1", "#US-001", "us_001"])
+    def test_common_chat_spellings_are_canonicalized(self, typed):
+        assert normalize_ticket_code(typed) == "US-001"
+
     def test_pads_to_three_digits(self):
         assert normalize_ticket_code("US-9") == "US-009"
         assert normalize_ticket_code("US-42") == "US-042"
@@ -177,6 +181,45 @@ class TestMergeUserStories:
         assert updated["status"] == "active"
         assert updated["story_title"] == "User Login v2"
         assert updated["i_want_to"] == "log in with biometrics"
+        assert updated["acceptance_criteria"] == [
+            "Login validates credentials",
+            "Failed login shows error",
+            "Supports biometrics",
+        ]
+
+    def test_behavior_change_replaces_obsolete_acceptance_criteria(self, existing_stories):
+        incoming = [make_incoming(
+            i_want_to="log in with biometrics",
+            acceptance_criteria=[
+                "Given biometrics are enrolled, When I authenticate, Then access is granted",
+                "Given biometrics fail, When I retry, Then the system denies access",
+            ],
+        )]
+
+        merged, report = merge_user_stories_with_report(existing_stories, incoming)
+
+        updated = next(story for story in merged if story["id"] == "s1")
+        assert updated["acceptance_criteria"] == incoming[0]["acceptance_criteria"]
+        assert "Login validates credentials" not in updated["acceptance_criteria"]
+        assert report["US-001"]["acceptance_criteria"]["removed"] == 2
+
+    def test_unchanged_story_still_union_merges_additional_criterion(self, existing_stories):
+        incoming = [make_incoming(
+            acceptance_criteria=[
+                "Login validates credentials",
+                "Failed login shows error",
+                "Session is audited",
+            ],
+        )]
+
+        merged = merge_user_stories(existing_stories, incoming)
+
+        updated = next(story for story in merged if story["id"] == "s1")
+        assert updated["acceptance_criteria"] == [
+            "Login validates credentials",
+            "Failed login shows error",
+            "Session is audited",
+        ]
 
     def test_identical_incoming_keeps_change_type_unchanged(self, existing_stories):
         incoming = [make_incoming()]

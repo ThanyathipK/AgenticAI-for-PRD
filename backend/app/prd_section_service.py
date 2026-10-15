@@ -373,6 +373,34 @@ def prd_is_sectioned_markdown(document: str) -> bool:
     return len(keys & CANONICAL_KEYS) >= 7
 
 
+def prd_has_renderable_operational_sections(document: str) -> bool:
+    """Whether the two operational tail sections contain rendered content.
+
+    Older section seeds could leave ``tech_ops`` and ``appendix`` as heading-only
+    placeholders.  Such a document still looks "sectioned" to the architect's
+    reuse guard, so it was returned forever instead of being rebuilt from the
+    official template.  A template rebuild is safe here: it supplies only the
+    labelled ``TBD`` fields and does not invent technical facts or risks.
+    """
+    source = document
+    try:
+        from app.latex_service import is_markdown_prd, prd_to_markdown
+        if source and not is_markdown_prd(source):
+            source = prd_to_markdown(source)
+    except Exception:
+        return False
+    parts = {part["section_key"]: part.get("content", "") for part in split_markdown_sections(source)}
+    for key in ("tech_ops", "appendix"):
+        content = parts.get(key, "")
+        # Remove the section heading, page-break marker and whitespace. Anything
+        # left (normally the deterministic table) is visible user content.
+        body = re.sub(r"^#{2,3}\s+.*?(?:\n|$)", "", content.strip(), count=1)
+        body = re.sub(r"(?m)^\\newpage\s*$", "", body).strip()
+        if not body:
+            return False
+    return True
+
+
 # PRD-SECTION 3.7 — Assemble the full document from the stored parts (4.1 → 3.4). This
 #             is the single source of truth used by a manual edit (2.2), a revert (2.3),
 #             the whole-document restore (VERSION 2.5) and the export path.

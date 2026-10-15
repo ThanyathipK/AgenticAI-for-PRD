@@ -438,5 +438,9 @@ async def extract_requirements_from_text(
         },
         description=f"document chunk {chunk_index}/{chunk_count}",
         format_instructions=format_instructions,
+        # Keep document extraction on the same constrained-output path as the
+        # interactive gatherer; otherwise local reasoning models can return an
+        # empty response or a copy of the schema during JSON repair.
+        native_json_schema=True,
     )
     return result

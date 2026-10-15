@@ -281,7 +281,7 @@ const STORY: UserStory = {
 test('formatUserStoriesToMarkdown: empty list renders the placeholder', () => {
   assert.equal(
     formatUserStoriesToMarkdown([]),
-    '## 3. Scope of Requirements (User Stories)\nNo user stories registered yet.',
+    '## 3. Scope of Requirements (User Stories)\n\nNo user stories registered yet.',
   );
 });
 
@@ -289,20 +289,16 @@ test('formatUserStoriesToMarkdown: renders stories with acceptance criteria', ()
   assert.equal(
     formatUserStoriesToMarkdown([STORY]),
     '## 3. Scope of Requirements (User Stories)\n' +
-      '\n### US-001: User login\n' +
-      '**As a** registered user\n' +
-      '**I want to** log in securely\n' +
-      '**So that** my data stays private\n\n' +
-      '**Acceptance Criteria:**\n' +
-      '- Shows an error on bad password\n' +
-      '- Redirects to dashboard\n',
+      '\n|  | **User Story (System Focus)** | **Functional Requirement (FR)** | **Acceptance Criteria** |\n' +
+      '| --- | --- | --- | --- |\n' +
+      '|  | As a registered user<br><br>I want to log in securely<br><br>So that my data stays private | FR 1.1: log in securely | AC 1.1: Shows an error on bad password<br>AC 1.2: Redirects to dashboard |\n',
   );
 });
 
-test('formatUserStoriesToMarkdown: omits the criteria block when none exist', () => {
+test('formatUserStoriesToMarkdown: renders TBD for missing acceptance criteria', () => {
   const md = formatUserStoriesToMarkdown([{ ...STORY, acceptance_criteria: [] }]);
-  assert.ok(!md.includes('Acceptance Criteria'));
-  assert.ok(md.includes('### US-001: User login'));
+  assert.ok(md.includes('**Acceptance Criteria**'));
+  assert.ok(md.includes('| FR 1.1: log in securely | TBD |'));
 });
 
 // ----------------------------------------------------------------------------

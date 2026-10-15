@@ -511,6 +511,7 @@ class RequirementStateModel(Base):
     actors = Column(JSON, nullable=False, default=list)
     user_stories = Column(JSON, nullable=False, default=list)
     acceptance_criteria = Column(JSON, nullable=False, default=list)
+    prd_narrative = Column(JSON, nullable=False, default=dict)
     clarification_questions = Column(JSON, nullable=False, default=list)
     validation_status = Column(String(50), nullable=False, default="pending")
     generated_prd = Column(Text, nullable=False, default="")

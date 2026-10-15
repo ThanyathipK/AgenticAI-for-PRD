@@ -8,6 +8,14 @@ import { getSafeSectionTitle, getSafeSectionContent } from '../utils/markdown';
 import { parseAndRenderMarkdown } from './MarkdownRenderer';
 import { StructuredSectionEditor } from './StructuredSectionEditor';
 
+const isHeadingOnlySection = (content: string) => {
+  const body = content
+    .replace(/^#{2,3}\s+.*?(?:\n|$)/, '')
+    .replace(/^\\newpage\s*$/gm, '')
+    .trim();
+  return body.length === 0;
+};
+
 export function PRDEditor({ state }: { state: ProjectState }) {
   const {
     prdMarkdown,
@@ -144,7 +152,11 @@ export function PRDEditor({ state }: { state: ProjectState }) {
                     </div>
                   ) : (
                     <div className="prose prose-slate max-w-none pb-4 min-w-0 break-words">
-                      {parseAndRenderMarkdown(safeContent)}
+                      {isHeadingOnlySection(safeContent) ? (
+                        <p className="my-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">
+                          No confirmed details yet. This section is intentionally left empty until validated information is available.
+                        </p>
+                      ) : parseAndRenderMarkdown(safeContent)}
                     </div>
                   )}
                 </div>

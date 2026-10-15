@@ -20,7 +20,7 @@ interface NewProjectModalProps {
    * or to a user-facing error message — e.g. the backend's duplicate-name
    * conflict — which is rendered inline below the input.
    */
-  /** When `skipIntake` is true, create and open a blank project from its name alone. */
+  /** When `skipIntake` is true, create an empty project with its required cover details. */
   onCreate: (name: string, intake: ProjectIntake, skipIntake?: boolean) => Promise<string | null>;
   onClose: () => void;
 }
@@ -69,6 +69,10 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
   const handleSubmit = async (skipIntake = false) => {
     const trimmed = name.trim();
     if (!trimmed || isCreating) return;
+    if (!pmoNo.trim() || !author.trim()) {
+      setError('PMO No. and Author are required.');
+      return;
+    }
     setIsCreating(true);
     setError(null);
     try {
@@ -116,38 +120,43 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
           </div>
         </div>
 
-        <input
-          ref={inputRef}
-          type="text"
-          value={name}
-          onChange={(e) => {
-            setName(e.target.value);
-            if (error) setError(null);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleSubmit();
-          }}
-          placeholder="e.g. Smart Budget Planner"
-          maxLength={50}
-          aria-invalid={!!error}
-          className={`w-full h-[42px] bg-[#faf9f7] border rounded-[10px] px-3 text-sm text-on-surface placeholder:text-on-surface-variant/35 focus:outline-none transition-colors ${
-            error
-              ? 'border-red-400 focus:border-red-500'
-              : 'border-outline focus:border-primary'
-          }`}
-        />
+        <label className="block text-xs font-semibold text-on-surface">
+          Project Name <span className="font-normal text-red-600">(Required)</span>
+          <input
+            ref={inputRef}
+            type="text"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (error) setError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleSubmit();
+            }}
+            placeholder="Example: Smart Budget Planner"
+            maxLength={50}
+            required
+            aria-required="true"
+            aria-invalid={!!error}
+            className={`mt-1.5 w-full h-[42px] bg-[#faf9f7] border rounded-[10px] px-3 text-sm font-normal text-on-surface placeholder:font-normal placeholder:text-on-surface-variant/35 focus:outline-none transition-colors ${
+              error
+                ? 'border-red-400 focus:border-red-500'
+                : 'border-outline focus:border-orange-500'
+            }`}
+          />
+        </label>
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="text-xs font-semibold text-on-surface">
-            PMO No. <span className="font-normal text-on-surface-variant">(optional)</span>
-            <input value={pmoNo} onChange={(e) => setPmoNo(e.target.value)} placeholder="e.g. PMO-2026-001" maxLength={80} className="mt-1.5 w-full h-[42px] bg-[#faf9f7] border border-outline rounded-[10px] px-3 text-sm focus:outline-none focus:border-primary" />
+            PMO No. <span className="font-normal text-red-600">(Required)</span>
+            <input value={pmoNo} onChange={(e) => { setPmoNo(e.target.value); if (error) setError(null); }} placeholder="Example: PMO-2026-001" maxLength={80} required aria-required="true" className="mt-1.5 w-full h-[42px] bg-[#faf9f7] border border-outline rounded-[10px] px-3 text-sm font-normal placeholder:font-normal focus:outline-none focus:border-orange-500" />
           </label>
           <label className="text-xs font-semibold text-on-surface">
-            Author <span className="font-normal text-on-surface-variant">(optional)</span>
-            <input value={author} onChange={(e) => setAuthor(e.target.value)} placeholder="Name" maxLength={200} className="mt-1.5 w-full h-[42px] bg-[#faf9f7] border border-outline rounded-[10px] px-3 text-sm focus:outline-none focus:border-primary" />
+            Author <span className="font-normal text-red-600">(Required)</span>
+            <input value={author} onChange={(e) => { setAuthor(e.target.value); if (error) setError(null); }} placeholder="Example: Author name" maxLength={200} required aria-required="true" className="mt-1.5 w-full h-[42px] bg-[#faf9f7] border border-outline rounded-[10px] px-3 text-sm font-normal placeholder:font-normal focus:outline-none focus:border-orange-500" />
           </label>
         </div>
-        <fieldset className="mt-4"><legend className="text-xs font-bold text-on-surface">Stakeholders by role</legend><div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">{STAKEHOLDER_ROLES.map(role => <label key={role} className="text-xs font-semibold text-on-surface">{role}<input value={stakeholders[role] ?? ''} onChange={(e) => setStakeholders(prev => ({ ...prev, [role]: e.target.value }))} placeholder="Name or team" maxLength={200} className="mt-1.5 w-full h-[38px] bg-[#faf9f7] border border-outline rounded-[10px] px-3 text-sm focus:outline-none focus:border-primary" /></label>)}</div></fieldset>
-        <fieldset className="mt-4"><legend className="text-xs font-bold text-on-surface">1. Business &amp; Strategic Overview</legend><div className="mt-2 space-y-3">{BUSINESS_TOPICS.map(topic => <label key={topic} className="block text-xs font-semibold text-on-surface">{topic}<textarea value={businessTopics[topic] ?? ''} onChange={(e) => setBusinessTopics(prev => ({ ...prev, [topic]: e.target.value }))} placeholder={`Describe ${topic.toLowerCase()}`} rows={2} maxLength={2000} className="mt-1.5 w-full resize-y bg-[#faf9f7] border border-outline rounded-[10px] px-3 py-2 text-sm focus:outline-none focus:border-primary" /></label>)}</div></fieldset>
+        <fieldset className="mt-4"><legend className="text-xs font-bold text-on-surface">Stakeholders by role</legend><div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">{STAKEHOLDER_ROLES.map(role => <label key={role} className="text-xs font-semibold text-on-surface">{role}<input value={stakeholders[role] ?? ''} onChange={(e) => setStakeholders(prev => ({ ...prev, [role]: e.target.value }))} placeholder="Name or team" maxLength={200} className="mt-1.5 w-full h-[38px] bg-[#faf9f7] border border-outline rounded-[10px] px-3 text-sm font-normal placeholder:font-normal focus:outline-none focus:border-orange-500" /></label>)}</div></fieldset>
+        <fieldset className="mt-4"><legend className="text-xs font-bold text-on-surface">1. Business &amp; Strategic Overview</legend><div className="mt-2 space-y-3">{BUSINESS_TOPICS.map(topic => <label key={topic} className="block text-xs font-semibold text-on-surface">{topic}<textarea value={businessTopics[topic] ?? ''} onChange={(e) => setBusinessTopics(prev => ({ ...prev, [topic]: e.target.value }))} placeholder={`Describe ${topic.toLowerCase()}`} rows={2} maxLength={2000} className="mt-1.5 w-full resize-y bg-[#faf9f7] border border-outline rounded-[10px] px-3 py-2 text-sm font-normal placeholder:font-normal focus:outline-none focus:border-orange-500" /></label>)}</div></fieldset>
         {error && (
           <p role="alert" className="mt-2 text-[11px] font-medium text-red-600 leading-snug">
             {error}
@@ -164,14 +173,14 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
           </button>
           <button
             onClick={() => handleSubmit(true)}
-            disabled={!name.trim() || isCreating}
+            disabled={!name.trim() || !pmoNo.trim() || !author.trim() || isCreating}
             className="px-4 py-2 rounded-[10px] bg-white border border-primary text-primary hover:bg-primary/5 transition-colors text-xs font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isCreating ? 'Creating...' : 'Skip & Create Empty'}
           </button>
           <button
             onClick={() => handleSubmit()}
-            disabled={!name.trim() || !businessTopics['Introduction & Executive Summary']?.trim() || isCreating}
+            disabled={!name.trim() || !pmoNo.trim() || !author.trim() || !businessTopics['Introduction & Executive Summary']?.trim() || isCreating}
             className="px-4 py-2 rounded-[10px] bg-primary text-on-primary hover:brightness-110 active:scale-[0.99] transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100"
           >
             <Plus className="w-3.5 h-3.5" />

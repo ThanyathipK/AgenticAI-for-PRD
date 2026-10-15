@@ -11,9 +11,9 @@ ones WITHOUT overwriting existing data:
 
 - Keep unchanged stories        -> ``change_type="unchanged"``, ``status="active"``
 - Update modified stories       -> ``change_type="updated"``,   ``status="active"``
-  (field-level: empty incoming values keep the persisted data; acceptance
-  criteria are union-merged via :func:`merge_acceptance_criteria`, never
-  wholesale-replaced)
+  (field-level: empty incoming values keep the persisted data; when story
+  behaviour changes, the incoming acceptance criteria are treated as the
+  complete revalidated set so obsolete criteria do not survive)
 - Insert brand-new stories      -> ``change_type="created"``,  ``status="active"``
 - Archive deleted stories       -> ``change_type="archived"``, ``status="archived"``
 - Protected stories (locked / human-edited, via ``protected_ids``) are never
@@ -30,6 +30,7 @@ workflow.
 """
 import difflib
 import json
+import re
 from typing import Dict, Any, List, Optional, Set, Tuple
 
 
@@ -40,10 +41,12 @@ def normalize_ticket_code(code: Optional[str]) -> str:
     if not code:
         return ""
     code = str(code).strip().upper()
-    if code.startswith("US-"):
-        num_part = code[3:]
-        if num_part.isdigit():
-            return f"US-{int(num_part):03d}"
+    # Accept common chat spellings while requiring the whole value to be an
+    # identifier. This keeps free-form titles out of the ID path but makes
+    # ``us1``, ``US 1``, ``#US-001`` and ``us_001`` equivalent.
+    match = re.fullmatch(r"#?\s*US[\s_-]*(\d+)\s*", code)
+    if match:
+        return f"US-{int(match.group(1)):03d}"
     return code
 
 
@@ -166,14 +169,17 @@ def merge_acceptance_criteria(
 def merge_story_fields(
     matched: Dict[str, Any],
     inc: Dict[str, Any],
+    *,
+    replace_acceptance_criteria: bool = False,
 ) -> Tuple[Dict[str, Any], List[str], Dict[str, int]]:
     """
     Incremental FIELD-LEVEL merge for an already-matched story.
 
     The incoming story wins ONLY the fields it actually provides (non-empty);
     empty incoming values keep the persisted data. Acceptance criteria are
-    union-merged via :func:`merge_acceptance_criteria` instead of being
-    wholesale-replaced.
+    union-merged for an unaffected story, but a behaviour-changing update uses
+    the incoming list as the complete revalidated set. This is what allows the
+    hierarchy cascade to remove criteria that no longer describe the story.
 
     Returns ``(updated_story, changed_fields, ac_report)`` where
     ``changed_fields`` lists the story fields whose persisted value changed.
@@ -188,9 +194,21 @@ def merge_story_fields(
             updated[field] = i_val
             changed_fields.append(field)
 
-    old_ac = matched.get("acceptance_criteria", [])
-    new_ac = inc.get("acceptance_criteria") if "acceptance_criteria" in inc else old_ac
-    merged_ac, ac_report = merge_acceptance_criteria(old_ac, new_ac)
+    old_ac = list(matched.get("acceptance_criteria", []) or [])
+    has_incoming_ac = "acceptance_criteria" in inc and inc.get("acceptance_criteria") is not None
+    new_ac = list(inc.get("acceptance_criteria") or []) if has_incoming_ac else old_ac
+    if replace_acceptance_criteria and has_incoming_ac and new_ac:
+        merged_ac = new_ac
+        old_normalized = {_normalize_ac_text(item) for item in old_ac}
+        new_normalized = {_normalize_ac_text(item) for item in new_ac}
+        ac_report = {
+            "kept": len(old_normalized & new_normalized),
+            "updated": 0,
+            "added": len(new_normalized - old_normalized),
+            "removed": len(old_normalized - new_normalized),
+        }
+    else:
+        merged_ac, ac_report = merge_acceptance_criteria(old_ac, new_ac)
     if merged_ac != old_ac:
         updated["acceptance_criteria"] = merged_ac
         changed_fields.append("acceptance_criteria")
@@ -420,7 +438,16 @@ def merge_user_stories_with_report(
 
             # Incremental field merge: only what the incoming story actually
             # says is applied; empty incoming values keep persisted data.
-            updated_story, changed_fields, ac_report = merge_story_fields(matched, inc)
+            core_behavior_changed = any(
+                (inc.get(field) or "").strip()
+                and (inc.get(field) or "").strip() != (matched.get(field) or "").strip()
+                for field in MERGED_STORY_FIELDS
+            )
+            updated_story, changed_fields, ac_report = merge_story_fields(
+                matched,
+                inc,
+                replace_acceptance_criteria=(rec_act == "UPDATE" or core_behavior_changed),
+            )
 
             # Ticket-code policy: keep the matched story's code unless the
             # incoming one is a real code that is unclaimed (or claimed by the

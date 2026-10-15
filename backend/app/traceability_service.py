@@ -71,7 +71,7 @@ class TraceabilityService:
         )
         active_stories = [s for s in story_res.scalars().all() if (s.status or "active") == "active"]
 
-        ac_by_story: Dict[Any, List[str]] = {}
+        ac_by_story: Dict[Any, List[AcceptanceCriteriaModel]] = {}
         if requirements:
             ac_res = await session.execute(
                 select(AcceptanceCriteriaModel, UserStoryModel.id)
@@ -80,7 +80,7 @@ class TraceabilityService:
             )
             for ac, story_id in ac_res.all():
                 if (ac.status or "active") == "active":
-                    ac_by_story.setdefault(story_id, []).append(ac.criteria_text)
+                    ac_by_story.setdefault(story_id, []).append(ac)
 
         sections = await PRDSectionRepository.get_by_project(project_id, session)
         prds = await PRDDocumentRepository.get_by_project(project_id, session)
@@ -100,7 +100,7 @@ def _assemble(
     requirements: List[RequirementModel],
     epic_names: Dict[Any, str],
     stories: List[UserStoryModel],
-    ac_by_story: Dict[Any, List[str]],
+    ac_by_story: Dict[Any, List[AcceptanceCriteriaModel]],
     sections: List[Dict[str, Any]],
     prds: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -144,6 +144,7 @@ def _assemble(
     requirements_without_diagram: List[str] = []
     stories_without_criteria: List[str] = []
     stories_without_sections: List[str] = []
+    criteria_needing_review: List[str] = []
 
     for req in requirements:
         code = (req.requirement_code or "").upper()
@@ -152,7 +153,21 @@ def _assemble(
         story_entries: List[Dict[str, Any]] = []
         for story in req_stories:
             story_code = (story.ticket_code or "").upper()
-            criteria = ac_by_story.get(story.id, [])
+            criterion_rows = ac_by_story.get(story.id, [])
+            criteria = [criterion.criteria_text for criterion in criterion_rows]
+            needs_review = [
+                criterion.criteria_text
+                for criterion in criterion_rows
+                if criterion.change_type == "review_required"
+                or (
+                    bool(criterion.is_locked)
+                    and story.updated_at is not None
+                    and criterion.updated_at is not None
+                    and story.updated_at > criterion.updated_at
+                )
+            ]
+            if needs_review:
+                criteria_needing_review.append(story_code)
             if not criteria:
                 stories_without_criteria.append(story_code)
             if not (section_links.get(story_code) or section_links.get(code)):
@@ -166,6 +181,7 @@ def _assemble(
                     "i_want_to": story.i_want_to,
                     "so_that": story.so_that,
                     "acceptance_criteria": criteria,
+                    "criteria_needing_review": needs_review,
                     "is_locked": bool(story.is_locked),
                 }
             )
@@ -220,6 +236,7 @@ def _assemble(
         "requirements_without_diagram": requirements_without_diagram,
         "stories_without_criteria": stories_without_criteria,
         "stories_without_prd_sections": stories_without_sections,
+        "criteria_needing_review": sorted(set(criteria_needing_review)),
         "stale_section_references": [
             {"code": code, "section_keys": sorted(keys)}
             for code, keys in sorted(stale_section_refs.items())

@@ -9,7 +9,8 @@ import uuid
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ArtifactDependencyModel, RegenerationRunModel, RequirementStateModel
+from app.models import ArtifactDependencyModel, PRDSectionModel, RegenerationRunModel, RequirementStateModel
+from app.merge_service import normalize_ticket_code
 from app.repositories.prd_section import PRDSectionRepository
 from app.repositories.requirement_state import RequirementStateRepository
 from app.traceability_service import extract_codes
@@ -32,6 +33,92 @@ def _active_items(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict) and item.get("status", "active") != "archived"]
+
+
+def detect_changed_artifacts(
+    before: dict[str, Any] | None,
+    after: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    """Find changed requirement/story identities between two saved-state shapes."""
+    before = before or {}
+    after = after or {}
+
+    def artifact_maps(state: dict[str, Any]) -> tuple[dict[str, tuple[Any, ...]], dict[str, tuple[Any, ...]]]:
+        requirements: dict[str, tuple[Any, ...]] = {}
+        stories: dict[str, tuple[Any, ...]] = {}
+        nested_story_codes: set[str] = set()
+        for requirement in _active_items(state.get("requirements")):
+            req_code = str(requirement.get("requirement_code") or "").strip().upper()
+            if req_code:
+                requirements[req_code] = (
+                    str(requirement.get("title") or "").strip(),
+                    str(requirement.get("description") or "").strip(),
+                )
+            for story in _active_items(requirement.get("user_stories")):
+                story_code = normalize_ticket_code(story.get("ticket_code"))
+                if not story_code:
+                    continue
+                nested_story_codes.add(story_code)
+                stories[story_code] = (
+                    str(story.get("story_title") or "").strip(),
+                    str(story.get("as_a") or "").strip(),
+                    str(story.get("i_want_to") or "").strip(),
+                    str(story.get("so_that") or "").strip(),
+                    tuple(str(item).strip() for item in (story.get("acceptance_criteria") or [])),
+                    req_code,
+                )
+        for story in _active_items(state.get("user_stories")):
+            story_code = normalize_ticket_code(story.get("ticket_code"))
+            if not story_code or story_code in nested_story_codes:
+                continue
+            stories[story_code] = (
+                str(story.get("story_title") or "").strip(),
+                str(story.get("as_a") or "").strip(),
+                str(story.get("i_want_to") or "").strip(),
+                str(story.get("so_that") or "").strip(),
+                tuple(str(item).strip() for item in (story.get("acceptance_criteria") or [])),
+                "",
+            )
+        return requirements, stories
+
+    before_requirements, before_stories = artifact_maps(before)
+    after_requirements, after_stories = artifact_maps(after)
+    changed: list[dict[str, str]] = []
+    for code in sorted(set(before_requirements) | set(after_requirements)):
+        if before_requirements.get(code) != after_requirements.get(code):
+            changed.append(_artifact_ref("requirement", code))
+    for code in sorted(set(before_stories) | set(after_stories)):
+        if before_stories.get(code) != after_stories.get(code):
+            changed.append(_artifact_ref("user_story", code))
+    return changed
+
+
+async def mark_dependents_for_review(
+    project_id: str,
+    changed_artifacts: list[dict[str, str]],
+    session: AsyncSession,
+) -> dict[str, Any] | None:
+    """Reset linked PRD sections to draft and persist the refreshed graph.
+
+    Content is not guessed or silently rewritten. The dependency plan records
+    the complete downstream scope, while each linked section is made visibly
+    reviewable (including locked/human-owned sections).
+    """
+    if not changed_artifacts:
+        return None
+    plan = await build_regeneration_plan(project_id, changed_artifacts, session)
+    section_keys = set(plan["regenerate_prd_sections"]) | set(plan["skipped_prd_sections"])
+    if section_keys:
+        result = await session.execute(
+            select(PRDSectionModel).where(
+                PRDSectionModel.project_id == uuid.UUID(str(project_id)),
+                PRDSectionModel.section_key.in_(section_keys),
+            )
+        )
+        for section in result.scalars().all():
+            section.review_status = "draft"
+        await session.flush()
+    return plan
 
 
 async def rebuild_dependency_graph(project_id: str, session: AsyncSession) -> dict[str, Any]:

@@ -85,6 +85,14 @@ class GatheredRequirements(BaseModel):
     epic_name: str = Field(..., description="Unified theme of all extracted stories")
     version: int = Field(default=1, description="Incremental version counter")
     requirements: List[RequirementItem] = Field(..., description="Multiple requirements with their user stories")
+    prd_narrative: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description=(
+            "Explicit PRD supporting facts keyed by non_functional, tps_volume, growth, "
+            "launch_plan, open_questions, assumptions, glossary, or related_documents. "
+            "Each value contains value, confidence, and source."
+        ),
+    )
 
 
 class MermaidDiagramResult(BaseModel):
@@ -428,6 +436,7 @@ class RequirementStateResponse(BaseModel):
     actors: List[Union[str, ActorItem]] = Field(default_factory=list, description="System actor definitions.")
     user_stories: List[UserStoryDetail] = Field(default_factory=list, description="Flattened list of active user stories.")
     acceptance_criteria: List[Union[str, AcceptanceCriterionItem]] = Field(default_factory=list, description="Flattened list of acceptance criteria.")
+    prd_narrative: Dict[str, Any] = Field(default_factory=dict, description="Confidence-scored supporting facts for PRD sections 08 and 09.")
     clarification_questions: List[ClarificationQuestionDetail] = Field(default_factory=list, description="Open/resolved clarification questions.")
     validation_status: str = Field("pending", description="Compliance validation status: 'pending', 'valid' or 'invalid'.")
     generated_prd: str = Field("", description="Markdown PRD content.")
@@ -543,6 +552,8 @@ class ConfirmActionResponse(BaseModel):
     """Payload returned after a pending action is confirmed and persisted."""
     status: str = Field(..., description="Always 'confirmed' on success.")
     requirement_state: RequirementStateResponse = Field(..., description="The merged requirement state that was persisted.")
+    cascade_job_id: Optional[str] = Field(None, description="Background job regenerating affected downstream PRD artifacts.")
+    cascade_status: Optional[str] = Field(None, description="Downstream cascade state: queued, not_required, or deferred.")
 
 
 class ActionStatusResponse(BaseModel):
@@ -571,6 +582,7 @@ class StoryImpact(BaseModel):
     changed_fields: List[str] = Field(default_factory=list, description="Narrative fields that differ.")
     criteria_added: int = Field(0, description="Acceptance-criteria lines the merge ADDS.")
     criteria_removed: int = Field(0, description="Acceptance-criteria lines the merge REMOVES.")
+    criteria_review_required: int = Field(0, description="Carried-forward criteria invalidated by changed story behavior.")
 
 
 class ImpactedSection(BaseModel):
@@ -599,6 +611,7 @@ class ImpactSummary(BaseModel):
     stories_removed: int = 0
     criteria_added: int = 0
     criteria_removed: int = 0
+    criteria_review_required: int = 0
     sections_impacted: int = 0
     sections_impacted_locked: int = 0
     diagrams_impacted: int = 0
@@ -807,6 +820,7 @@ class ProcessRequirementsResponse(BaseModel):
     message: Optional[str] = Field(None, description="Assistant/agent message text.")
     pending_merge: Optional[bool] = Field(None, description="True when a pending merge action awaits confirmation.")
     pending_action_id: Optional[str] = Field(None, description="Pending-action UUID string awaiting confirmation.")
+    no_changes: bool = Field(False, description="True when no artifact changed and no merge confirmation is needed.")
 
 
 # ==========================================
@@ -1022,6 +1036,7 @@ class TraceabilityStory(BaseModel):
     i_want_to: Optional[str] = Field(None, description="Requested action/task.")
     so_that: Optional[str] = Field(None, description="Business benefit/outcome.")
     acceptance_criteria: List[str] = Field(default_factory=list, description="Criteria bodies linked to this story.")
+    criteria_needing_review: List[str] = Field(default_factory=list, description="Criteria invalidated by a parent story change.")
     is_locked: bool = Field(False, description="Whether the story is locked.")
 
 
@@ -1066,6 +1081,7 @@ class TraceabilityCoverage(BaseModel):
     requirements_without_diagram: List[str] = Field(default_factory=list, description="Requirement codes referenced by no diagram.")
     stories_without_criteria: List[str] = Field(default_factory=list, description="Ticket codes without acceptance criteria.")
     stories_without_prd_sections: List[str] = Field(default_factory=list, description="Ticket codes referenced by no PRD section.")
+    criteria_needing_review: List[str] = Field(default_factory=list, description="Ticket codes whose criteria require review after a story change.")
     stale_section_references: List[StaleCodeReference] = Field(default_factory=list, description="Codes referenced by PRD sections but unknown to the project.")
     stale_diagram_references: List[StaleCodeReference] = Field(default_factory=list, description="Codes referenced by diagrams but unknown to the project.")
 

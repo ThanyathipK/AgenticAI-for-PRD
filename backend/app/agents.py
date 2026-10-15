@@ -24,13 +24,17 @@ from app.merge_service import (
     normalize_ticket_code,
     normalize_title,
 )
-from app.prd_section_service import prd_is_sectioned_markdown
+from app.prd_section_service import (
+    prd_has_renderable_operational_sections,
+    prd_is_sectioned_markdown,
+)
 from app.requirement_codes import (
     # Requirement numbering is canonicalized in ONE place so no module ever
     # hardcodes a literal code such as ``"REQ-001"``.
     default_requirement_code as _default_requirement_code,
     next_requirement_code as _generate_next_requirement_code,
     normalize_requirement_code as _normalize_requirement_code,
+    extract_requirement_codes as _extract_requirement_codes,
 )
 from app.semantic_service import (
     SEMANTIC_LOW_CONFIDENCE_THRESHOLD,
@@ -53,6 +57,11 @@ logger = logging.getLogger("app.agents")
 diagram_llm = build_llm(max_tokens=4096)
 # Keep generation bounded; incomplete responses fail without staging a verdict.
 auditor_llm = build_llm(max_tokens=4096)
+# Requirement briefs can legitimately produce several stories plus the section
+# 08/09 narrative object. The shared 3000-token client truncated that JSON at
+# exactly 2999 completion tokens, so the Gatherer gets a dedicated budget that
+# still fits beneath the configured 8192-token context with its normal prompt.
+gatherer_llm = build_llm(max_tokens=4800)
 ACTIVE_AUDIT_CHECKLIST = load_active_audit_checklist()
 
 AUDITOR_FORMAT_INSTRUCTIONS = """Return one compact JSON object with exactly these top-level keys:
@@ -83,6 +92,7 @@ class RequirementState(TypedDict):
     actors: list
     user_stories: list
     acceptance_criteria: list
+    prd_narrative: dict
     clarification_questions: list
     validation_status: str
     generated_prd: str
@@ -157,6 +167,7 @@ async def get_or_init_requirement_state(project_id: str, session: Optional[Async
             "actors": [],
             "user_stories": [],
             "acceptance_criteria": [],
+            "prd_narrative": {},
             "clarification_questions": [],
             "validation_status": "pending",
             "generated_prd": "",
@@ -349,7 +360,32 @@ async def requirement_matcher_node(state: AgentState) -> Dict[str, Any]:
     # MATCHING 1.4 — Service call (MATCHING 2.x): the LLM picks the target story for
     #             this message out of the project's existing backlog, then 2.5.x
     #             validates that target against the real ticket codes.
-    match_result = await match_requirement(raw_input, detected_intent, existing_stories)
+    existing_requirements = [
+        requirement for requirement in (req_state.get("requirements") or [])
+        if isinstance(requirement, dict)
+    ]
+    requirements_by_code = {
+        _normalize_requirement_code(requirement.get("requirement_code")): requirement
+        for requirement in existing_requirements
+        if _normalize_requirement_code(requirement.get("requirement_code"))
+    }
+    explicit_parent_codes = [
+        code for code in _extract_requirement_codes(raw_input)
+        if code in requirements_by_code
+    ]
+    if len(explicit_parent_codes) == 1 and detected_intent in {"UPDATE_REQUIREMENT", "DELETE_REQUIREMENT"}:
+        parent_code = explicit_parent_codes[0]
+        match_result = {
+            "matched_requirement_id": None,
+            "parent_requirement_code": parent_code,
+            "confidence": 1.0,
+            "reason": f"The user explicitly targeted parent requirement {parent_code}.",
+            "action": "UPDATE" if detected_intent == "UPDATE_REQUIREMENT" else "DELETE",
+            "status": "MATCHED",
+            "candidates": [parent_code],
+        }
+    else:
+        match_result = await match_requirement(raw_input, detected_intent, existing_stories)
     matcher_status = str(match_result.get("status", "MATCHED")).upper()
     matcher_confidence = float(match_result.get("confidence", 1.0))
     reason = match_result.get("reason", "")
@@ -646,6 +682,62 @@ def _resolve_epic_name(req_state: Dict[str, Any], llm_epic_name: str, raw_input:
     if existing_epic_name and not is_placeholder and not _user_requests_epic_rename(raw_input):
         return existing_epic_name
     return llm_epic_name or existing_epic_name or "Structured Requirements Draft"
+
+
+def _extract_explicit_prd_narrative(raw_input: str) -> Dict[str, Dict[str, Any]]:
+    """Retain facts under explicit section 08/09 headings without inference."""
+    heading_keys = {
+        "technical requirements": "technical",
+        "non-functional requirements": "technical",
+        "non functional requirements": "technical",
+        "rollout plan": "launch_plan",
+        "launch plan": "launch_plan",
+        "assumptions": "assumptions",
+        "open questions and risks": "open_questions",
+        "open questions & risks": "open_questions",
+        "open questions": "open_questions",
+        "risks": "open_questions",
+        "related documents": "related_documents",
+        "glossary": "glossary",
+    }
+    buckets: Dict[str, List[str]] = {}
+    current: Optional[str] = None
+    for raw_line in str(raw_input or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        possible_heading = re.sub(r"^#{1,6}\s*", "", line).rstrip(":").strip().lower()
+        if possible_heading in heading_keys:
+            current = heading_keys[possible_heading]
+            continue
+        if line.endswith(":") and not re.match(r"^[-*+]\s+", line):
+            current = None
+            continue
+        if current is None:
+            continue
+        item = re.sub(r"^[-*+]\s+", "", line).strip()
+        item = re.sub(r"^\d+[.)]\s+", "", item).strip()
+        if not item:
+            continue
+        key = current
+        if current == "technical":
+            lowered = item.lower()
+            if re.search(r"\b(?:tps|transactions? per second|requests? per (?:month|day|hour)|customer volume)\b", lowered):
+                key = "tps_volume"
+            elif re.search(r"\b(?:growth|yoy|year[- ]over[- ]year)\b", lowered):
+                key = "growth"
+            else:
+                key = "non_functional"
+        buckets.setdefault(key, []).append(item)
+
+    return {
+        key: {
+            "value": "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1)),
+            "confidence": 1.0,
+            "source": "explicit_user_input",
+        }
+        for key, items in buckets.items() if items
+    }
 
 
 # GATHERING 3.8 — Draft sanitizer applied to EVERY incoming story (called inside the
@@ -1085,7 +1177,26 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
     # GATHERING 2.2 — Deterministic change detection (GATHERING 5.x) over the
     #             UNLOCKED stories only: locked stories are human-verified and must
     #             never even be proposed for mutation.
-    semantic_recs = await detect_semantic_changes(raw_input, unlocked_user_stories)
+    parent_requirement_code = _normalize_requirement_code(
+        requirement_match.get("parent_requirement_code")
+    )
+    parent_requirement = next(
+        (
+            requirement for requirement in (req_state.get("requirements") or [])
+            if isinstance(requirement, dict)
+            and _normalize_requirement_code(requirement.get("requirement_code")) == parent_requirement_code
+        ),
+        None,
+    )
+    if parent_requirement and detected_intent == "UPDATE_REQUIREMENT":
+        # A parent-level edit is authoritative for its whole subtree. The
+        # Gatherer evaluates the whole subtree through the explicit parent
+        # guidance below. Do not emit forced UPDATE recommendations for every
+        # child: that would increment unaffected stories and invalidate their
+        # criteria even when the model correctly preserved them unchanged.
+        semantic_recs = []
+    else:
+        semantic_recs = await detect_semantic_changes(raw_input, unlocked_user_stories)
     # GATHERING 2.3 — Matcher reconciliation: the matcher's single verdict (MATCHING
     #             3.1/3.2) is MERGED into the semantic recommendations instead of
     #             replacing them, so "change story X AND add something new" keeps both
@@ -1188,9 +1299,28 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
     requirements = req_state.get("requirements", [])
     existing_epic = requirements[0].get("title", "") if requirements else ""
     context_lines = []
+    locked_story_codes = {
+        normalize_ticket_code(story.get("ticket_code"))
+        for story in locked_user_stories
+        if normalize_ticket_code(story.get("ticket_code"))
+    }
     if existing_epic:
         context_lines.append(f"CURRENT ACTIVE EPIC: {existing_epic}\n(Note: DO NOT change this Epic Name unless the user explicitly requests to change or rename the epic)\n")
-    context_lines.extend(format_story_context_lines(unlocked_user_stories))
+    for requirement in requirements:
+        if not isinstance(requirement, dict):
+            continue
+        req_code = _normalize_requirement_code(requirement.get("requirement_code"))
+        context_lines.append(
+            f"REQUIREMENT {req_code}: {requirement.get('title', '')}\n"
+            f"Description: {requirement.get('description', '')}"
+        )
+        mutable_children = [
+            story for story in (requirement.get("user_stories") or [])
+            if isinstance(story, dict)
+            and not story.get("is_locked", False)
+            and normalize_ticket_code(story.get("ticket_code")) not in locked_story_codes
+        ]
+        context_lines.extend(format_story_context_lines(mutable_children))
     if locked_user_stories:
         # Locked stories ARE rendered (with an explicit marker) so the model can
         # see them and avoid re-creating them as duplicates. They are protected
@@ -1218,6 +1348,13 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
         requirement_match=requirement_match,
         has_existing_stories=bool(existing_user_stories),
     )
+    if parent_requirement:
+        intent_guidance += (
+            f"\nThe user explicitly targeted parent requirement {parent_requirement_code}. "
+            "Evaluate every child story under that requirement against the parent change. "
+            "Rewrite only affected stories and return a complete revalidated acceptance-criteria "
+            "set for each affected story; preserve unaffected and locked children exactly."
+        )
 
     # Format semantic recommendations
     recs_str = json.dumps(semantic_recs, indent=2)
@@ -1254,7 +1391,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
         #             helper (raw JSON → with_structured_output) returning
         #             GatheredRequirements. LM Studio via llm_factory (CHAT 6.1).
         result = await invoke_llm_structured(
-            llm,
+            gatherer_llm,
             prompt_template,
             GatheredRequirements,
             variables={
@@ -1267,6 +1404,11 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
             },
             description="gatherer",
             format_instructions=format_instructions,
+            # Qwen may otherwise spend the complete response budget without
+            # producing an answer (or echo the repair schema).  Constrain the
+            # original generation so its response is an instance of the
+            # contract, rather than relying on a second, lossy repair prompt.
+            native_json_schema=True,
         )
         logger.info("Successfully obtained structured output.")
     except Exception as e2:
@@ -1279,7 +1421,10 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
     #             requirements from an unparseable model answer is worse than an
     #             explicit error (contrast GATHERING 1.4/1.6, which are safe no-ops).
     if parsing_error:
-        raise ValueError(
+        # This is an inference/output failure, not a malformed HTTP request or
+        # an application bug.  The route maps RuntimeError to the retryable
+        # 503 response that preserves the previously saved project state.
+        raise RuntimeError(
             f"The Gatherer agent failed to parse raw input into structured JSON requirements. "
             f"Details: {parsing_error}. Please revise your input description or schema constraints."
         )
@@ -1443,10 +1588,20 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
         req_code = _normalize_requirement_code(req.get("requirement_code"))
         if not req_code or req_code in req_groups:
             continue
+        incoming_meta = llm_group_meta.get(req_code) or {}
         req_groups[req_code] = {
             "requirement_code": req_code,
-            "title": req.get("title") or f"Requirement {req_code}",
-            "description": req.get("description") or "",
+            # Existing requirement identity is stable, but its content may be
+            # revised by the hierarchy cascade. The Gatherer prompt requires
+            # unaffected groups to be reproduced exactly, so accepting the
+            # matching group's non-empty metadata applies intentional parent
+            # edits without renumbering or moving its child stories.
+            "title": incoming_meta.get("title") or req.get("title") or f"Requirement {req_code}",
+            "description": (
+                incoming_meta.get("description")
+                if incoming_meta.get("description")
+                else req.get("description") or ""
+            ),
             "user_stories": [],
             "_is_existing": True,
         }
@@ -1513,6 +1668,16 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
     req_state["requirements"] = final_requirements
     req_state["user_stories"] = all_active_stories
     req_state["acceptance_criteria"] = collect_acceptance_criteria(all_active_stories)
+    model_narrative = result.get("prd_narrative")
+    extracted_narrative = {
+        **(model_narrative if isinstance(model_narrative, dict) else {}),
+        **_extract_explicit_prd_narrative(raw_input),
+    }
+    if extracted_narrative:
+        req_state["prd_narrative"] = {
+            **(req_state.get("prd_narrative") or {}),
+            **extracted_narrative,
+        }
 
 
     # ===============================================
@@ -1553,7 +1718,8 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
         "epic_name": epic_name,
         "version": req_state.get("version_number", 1),
         "user_stories": req_state.get("user_stories", []),
-        "requirements": req_state.get("requirements", [])
+        "requirements": req_state.get("requirements", []),
+        "prd_narrative": req_state.get("prd_narrative", {}),
     }
 
     # GATHERING 4.5 — Return contract back to the pipeline: the merged (still
@@ -2172,6 +2338,93 @@ async def auditor_node(state: AgentState) -> Dict[str, Any]:
             "agent_message": "The local model returned no usable audit JSON. No validation result was applied.",
         }
 
+def _prd_narrative_from_validated_audit(requirement_state: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract only supported, high-confidence audit detail for the PRD tail."""
+    threshold = 0.70
+    technical_terms = ("technical", "performance", "security", "availability",
+                       "reliability", "operational", "integration", "privacy")
+    non_functional: List[str] = []
+    open_questions: List[str] = []
+
+    for finding in requirement_state.get("audit_findings") or []:
+        if not isinstance(finding, dict):
+            continue
+        try:
+            confidence = float(finding.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence < threshold or finding.get("evidence_status") != "supported":
+            continue
+        recommendation = finding.get("recommendation") or {}
+        summary = recommendation.get("summary") if isinstance(recommendation, dict) else ""
+        text = str(summary or finding.get("description") or "").strip()
+        if not text:
+            continue
+        if any(term in str(finding.get("category") or "").lower() for term in technical_terms):
+            non_functional.append(text)
+        if str(finding.get("impact") or "").lower() in {"blocking", "warning"}:
+            open_questions.append(text)
+
+    narrative: Dict[str, Any] = {}
+    if non_functional:
+        narrative["non_functional"] = "\n".join(
+            f"{index}. {item}" for index, item in enumerate(dict.fromkeys(non_functional), start=1)
+        )
+    if open_questions:
+        narrative["open_questions"] = "\n".join(
+            f"{index}. {item}" for index, item in enumerate(dict.fromkeys(open_questions), start=1)
+        )
+    return narrative
+
+
+def _prd_narrative_from_explicit_input(requirement_state: Dict[str, Any]) -> Dict[str, Any]:
+    """Flatten explicitly gathered PRD facts, keeping only confidence >= 0.70."""
+    narrative: Dict[str, Any] = {}
+    allowed = {
+        "non_functional", "tps_volume", "growth", "launch_plan",
+        "open_questions", "assumptions", "glossary", "related_documents",
+    }
+    for key, field in (requirement_state.get("prd_narrative") or {}).items():
+        if key not in allowed or not isinstance(field, dict):
+            continue
+        try:
+            confidence = float(field.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        value = field.get("value")
+        if isinstance(value, list):
+            value = "\n".join(
+                f"{index}. {item}" for index, item in enumerate(value, start=1) if item
+            )
+        if confidence >= 0.70 and value:
+            narrative[key] = value
+    return narrative
+
+
+def _prd_needs_narrative_refresh(requirement_state: Dict[str, Any], existing_prd: str) -> bool:
+    """True when confirmed section 08/09 facts are absent from the stored PRD."""
+    confirmed = _prd_narrative_from_explicit_input(requirement_state)
+    if not confirmed:
+        return False
+    try:
+        from app.latex_service import prd_to_markdown
+        from app.prd_filler import extract_manual_export_fields
+        rendered = extract_manual_export_fields(prd_to_markdown(existing_prd)).get("narrative", {})
+    except Exception:
+        return True
+    for key, value in confirmed.items():
+        current = rendered.get(key)
+        if not current or str(current).strip().upper() == "TBD":
+            return True
+        expected_text = re.sub(r"\s+", " ", str(value)).strip().lower()
+        current_text = re.sub(r"\s+", " ", str(current)).strip().lower()
+        # A saved field may have numbering/line-break normalization, so a
+        # stable leading fragment is enough to establish that it was rendered.
+        if expected_text[:48] and expected_text[:48] not in current_text:
+            return True
+    return False
+
+
 # ARCHITECT 2.0 — Architect node (graph position: ROUTING 1.2 for
 #             target_agent="architect", ROUTING 4.1 for a COMMAND, or the on-demand
 #             ARCHITECT 1.2 request). Turns the validated requirement board into the
@@ -2201,6 +2454,25 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
     regeneration_scope = state.get("regeneration_scope") or None
     force_prd_rebuild = bool(state.get("force_prd_rebuild"))
     req_state = await get_or_init_requirement_state(project_id, session=db_session, current_version=state.get("current_version", 1))
+    # Backfill projects whose technical scenario was submitted before
+    # ``prd_narrative`` existed. Conversation turns are authoritative user
+    # input; the deterministic extractor accepts only explicitly labelled
+    # blocks, so this does not infer new commitments from casual chat.
+    if not req_state.get("prd_narrative"):
+        try:
+            history = await ConversationMessageRepository.get_conversation_history(
+                project_id, session=db_session, limit=100,
+            )
+        except ValueError:
+            # Unit/in-process callers may use symbolic project ids. Production
+            # routes validate UUIDs before entering the graph.
+            history = []
+        recovered: Dict[str, Dict[str, Any]] = {}
+        for message in history:
+            if message.get("role") == "user":
+                recovered.update(_extract_explicit_prd_narrative(message.get("message", "")))
+        if recovered:
+            req_state["prd_narrative"] = recovered
     
     # A Generate PRD preview is read-only with respect to requirements. The
     # canonical server state loaded above is authoritative; client snapshots
@@ -2330,8 +2602,15 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
         and existing_prd
         and existing_diagrams
         and (
-            _prd_follows_krungsri_template(existing_prd)
-            or prd_is_sectioned_markdown(existing_prd)
+            (
+                _prd_follows_krungsri_template(existing_prd)
+                or prd_is_sectioned_markdown(existing_prd)
+            )
+            # A heading-only technical/appendix part is an incomplete legacy
+            # scaffold, not a completed PRD. Rebuild it into labelled TBD
+            # fields; unknown facts remain unknown rather than being guessed.
+            and prd_has_renderable_operational_sections(existing_prd)
+            and not _prd_needs_narrative_refresh(req_state, existing_prd)
         )
     ):
         logger.info("Architect Node: All user stories are unchanged. Reusing existing PRD and diagrams without LLM invocation.")
@@ -2380,6 +2659,7 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
     from app.prd_filler import (
         PENDING_VERSION_LABEL,
         extract_intake_fields,
+        extract_manual_export_fields,
         fill_template_body,
         format_project_status,
         version_history_sentence,
@@ -2443,7 +2723,20 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
     # ARCHITECT 3.3 — The fill itself (3.1 helper): cover page, stakeholders, version
     #             history, reviews, business overview, scope tables, technical appendix
     #             and glossary, from `data` + the version summary.
-    saved_intake = extract_intake_fields(req_state.get("generated_prd", ""))
+    previous_prd = req_state.get("generated_prd", "")
+    saved_intake = extract_intake_fields(previous_prd)
+    # Manual content has priority. Otherwise use only supported audit findings
+    # at >= 0.70 confidence; unknown operational facts stay TBD.
+    saved_narrative = extract_manual_export_fields(previous_prd).get("narrative", {})
+    narrative = {
+        key: value for key, value in saved_narrative.items()
+        if value and value != "TBD"
+    }
+    narrative = {
+        **_prd_narrative_from_validated_audit(req_state),
+        **_prd_narrative_from_explicit_input(req_state),
+        **narrative,
+    }
     generated_prd = fill_template_body(
         project_id=project_id,
         project_name=req_state.get("project_name", "") or "",
@@ -2454,6 +2747,7 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
         business_topics=saved_intake.get("business_topics"),
         version=req_state["version_number"],
         data=data,
+        narrative=narrative,
         version_summary=current_version_summary,
         version_history=version_history_summaries,
         # The cover + Version History version is the LEDGER's semver, resolved

@@ -933,11 +933,6 @@ export default function Dashboard() {
           // with the empty template after the intake had saved.
           const result = await handleCreateProject(name, { select: false });
           if (result.error || !result.projectId) return result.error || 'Failed to create the project.';
-          if (skipIntake) {
-            setProjectId(result.projectId);
-            setActiveView('workspace');
-            return null;
-          }
           try {
             await seedPrdIntake(result.projectId, name, intake);
           } catch {
@@ -945,6 +940,7 @@ export default function Dashboard() {
           }
           setProjectId(result.projectId);
           setActiveView('workspace');
+          if (skipIntake) return null;
           // Selection now starts the one authoritative project load. Defer the
           // Gatherer until that load has read the same stitched version that
           // the PRD preview renders.

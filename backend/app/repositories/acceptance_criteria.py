@@ -144,6 +144,7 @@ class AcceptanceCriteriaRepository:
                 ac,
                 message=f"Acceptance Criteria is locked by {ac.locked_by or 'unknown'}. Unlock it before modifying."
             )
+            criteria_changed = "criteria_text" in updates and ac.criteria_text != updates["criteria_text"]
             if "criteria_text" in updates:
                 ac.criteria_text = updates["criteria_text"]
             if "user_story_id" in updates:
@@ -157,6 +158,10 @@ class AcceptanceCriteriaRepository:
                 ac.last_modified_by = updates["last_modified_by"]
             if "change_type" in updates:
                 ac.change_type = updates["change_type"]
+            elif criteria_changed:
+                # Editing the criterion is the act that resolves a dependency
+                # review raised by a parent-story change.
+                ac.change_type = "updated"
             await session.flush()
             await session.refresh(ac)
 

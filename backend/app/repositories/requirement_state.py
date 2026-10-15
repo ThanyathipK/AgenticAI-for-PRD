@@ -218,6 +218,7 @@ class RequirementStateRepository:
             "actors": model.actors,
             "user_stories": all_user_stories if all_user_stories else [],
             "acceptance_criteria": all_acceptance_criteria if all_acceptance_criteria else [],
+            "prd_narrative": model.prd_narrative or {},
             "clarification_questions": cqs if cqs else [],
             "validation_status": model.validation_status,
             "passed_checks": latest_audit.get("passed_checks", []),
@@ -275,6 +276,7 @@ class RequirementStateRepository:
                 actors=updates.get("actors", []),
                 user_stories=[],
                 acceptance_criteria=[],
+                prd_narrative=updates.get("prd_narrative", {}),
                 clarification_questions=[],
                 validation_status=updates.get("validation_status", "pending"),
                 generated_prd="",
@@ -302,6 +304,8 @@ class RequirementStateRepository:
                 model.business_goals = updates["business_goals"]
             if "actors" in updates and updates["actors"] is not None:
                 model.actors = updates["actors"]
+            if "prd_narrative" in updates and updates["prd_narrative"] is not None:
+                model.prd_narrative = updates["prd_narrative"]
 
             # Only clear JSON blob fields that are being re-derived from relation tables.
             # This avoids wasteful clearing and prevents data loss if re-derivation fails mid-way.
@@ -492,6 +496,7 @@ class RequirementStateRepository:
                 for story in stories:
                     ticket_code = story.get("ticket_code")
                     story_title = story.get("story_title", "Untitled Story")
+                    story_content_changed = False
 
                     # Check match
                     db_story = None
@@ -539,6 +544,8 @@ class RequirementStateRepository:
                             continue
                         else:
                             story_modified = title_changed or as_a_changed or i_want_to_changed or so_that_changed
+
+                        story_content_changed = story_modified or was_archived
 
                         if story_modified or was_archived:
                             db_story.story_title = story_title
@@ -590,7 +597,18 @@ class RequirementStateRepository:
                         for db_ac in db_ac_list:
                             if db_ac.id not in matched_db_ac and db_ac.status == "active" and db_ac.criteria_text == text_val:
                                 if not db_ac.is_locked:
-                                    db_ac.change_type = "unchanged"
+                                    if story_content_changed:
+                                        # The criterion text was merely carried
+                                        # forward while its parent behaviour
+                                        # changed. Do not pretend it was
+                                        # validated: keep the content and flag
+                                        # it for an explicit downstream review.
+                                        if db_ac.change_type != "review_required":
+                                            db_ac.version = db_ac.version + 1
+                                        db_ac.change_type = "review_required"
+                                        db_ac.last_modified_by = "dependency_propagation"
+                                    elif db_ac.change_type != "review_required":
+                                        db_ac.change_type = "unchanged"
                                 matched_db_ac.add(db_ac.id)
                                 matched_incoming_indices.add(i)
                                 break

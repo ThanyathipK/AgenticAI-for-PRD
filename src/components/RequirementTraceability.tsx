@@ -100,6 +100,11 @@ const RowCard: React.FC<{ row: TraceabilityRow }> = ({ row }) => {
                   {story.acceptance_criteria.map((ac, idx) => (
                     <li key={idx} className="text-[10.5px] text-on-surface-variant leading-snug list-disc ml-2">
                       {ac}
+                      {story.criteria_needing_review?.includes(ac) && (
+                        <span className="ml-1.5 rounded border border-amber-300 bg-amber-50 px-1 py-0.5 text-[9px] font-bold uppercase text-amber-700">
+                          Review required
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -295,6 +300,7 @@ export const RequirementTraceability: React.FC<RequirementTraceabilityProps> = (
   const gapCount =
     coverage.requirements_without_stories.length +
     coverage.stories_without_criteria.length +
+    coverage.criteria_needing_review.length +
     coverage.requirements_without_prd_sections.length +
     coverage.requirements_without_diagram.length +
     coverage.stale_section_references.length +
@@ -429,6 +435,12 @@ export const RequirementTraceability: React.FC<RequirementTraceabilityProps> = (
               <div className="space-y-1">
                 <span className="font-semibold text-on-surface">Stories without acceptance criteria:</span>
                 <div className="flex flex-wrap gap-1.5">{gapChips(coverage.stories_without_criteria)}</div>
+              </div>
+            )}
+            {coverage.criteria_needing_review.length > 0 && (
+              <div className="space-y-1">
+                <span className="font-semibold text-on-surface">Stories with criteria requiring review:</span>
+                <div className="flex flex-wrap gap-1.5">{gapChips(coverage.criteria_needing_review)}</div>
               </div>
             )}
             {coverage.requirements_without_prd_sections.length > 0 && (

@@ -660,6 +660,16 @@ async def update_project_requirement_state(
     #                re-derived when requirements/stories/AC lists are supplied).
     previous_state = await RequirementStateRepository.get_by_project_id(project_id, session)
     state = await RequirementStateRepository.save_or_update(project_id, updates, session)
+    from app.dependency_graph_service import detect_changed_artifacts, mark_dependents_for_review
+
+    changed_artifacts = detect_changed_artifacts(previous_state, state)
+    if changed_artifacts:
+        state = await RequirementStateRepository.save_or_update(
+            project_id,
+            {"validation_status": "pending"},
+            session,
+        )
+        await mark_dependents_for_review(project_id, changed_artifacts, session)
     if governed_state_changed(previous_state, updates):
         await mark_revised_if_approved(
             project_id,

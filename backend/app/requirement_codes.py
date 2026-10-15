@@ -22,7 +22,7 @@ Nothing in the codebase should hardcode a literal code such as ``"REQ-001"``:
 #   7.4 next_requirement_code — code after the highest used one; used by GATHERING
 #       3.6/3.7 and by the document-extraction draft builder
 import re
-from typing import Any, Iterable
+from typing import Any, Iterable, List
 
 # ``REQ-001``: prefix + zero-padded 3-digit number.
 REQUIREMENT_CODE_PREFIX = "REQ"
@@ -54,6 +54,20 @@ def normalize_requirement_code(code: Any) -> str:
     """Canonicalize an LLM/DB requirement code to ``REQ-NNN`` (``''`` if invalid)."""
     match = _REQUIREMENT_CODE_RE.match(str(code or "").strip())
     return format_requirement_code(int(match.group(1))) if match else ""
+
+
+def extract_requirement_codes(text: Any) -> List[str]:
+    """Extract canonical ``REQ-###`` identifiers explicitly written in text."""
+    found: List[str] = []
+    for match in re.finditer(
+        r"(?<![A-Z0-9])#?REQ[\s_-]*(\d{1,6})(?!\d)",
+        str(text or ""),
+        re.IGNORECASE,
+    ):
+        code = format_requirement_code(int(match.group(1)))
+        if code not in found:
+            found.append(code)
+    return found
 
 
 # GATHERING 7.3 — Index-based default: index 0 IS the first code of the project, which

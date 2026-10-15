@@ -174,7 +174,14 @@ def diff_stories(
 
     kind_order = {CHANGE_CREATED: 0, CHANGE_UPDATED: 1, CHANGE_REMOVED: 2, CHANGE_UNCHANGED: 3}
 
-    def _record(story: Dict[str, Any], kind: str, changed_fields: List[str], added: int, removed: int) -> None:
+    def _record(
+        story: Dict[str, Any],
+        kind: str,
+        changed_fields: List[str],
+        added: int,
+        removed: int,
+        review_required: int = 0,
+    ) -> None:
         code = normalize_ticket_code(story.get("ticket_code"))
         changes.append({
             "ticket_code": code,
@@ -184,6 +191,7 @@ def diff_stories(
             "changed_fields": changed_fields,
             "criteria_added": added,
             "criteria_removed": removed,
+            "criteria_review_required": review_required,
         })
 
     # 1. Proposed stories matched by ticket code.
@@ -225,11 +233,19 @@ def diff_stories(
         prop_ac = _norm_criteria(story.get("acceptance_criteria"))
         criteria_added = len(prop_ac - cur_ac)
         criteria_removed = len(cur_ac - prop_ac)
+        criteria_review_required = len(cur_ac & prop_ac) if changed_fields else 0
         if changed_fields or criteria_added or criteria_removed:
             affected.add(code)
             if criteria_added and "acceptance_criteria" not in changed_fields:
                 changed_fields.append("acceptance_criteria")
-            _record(story, CHANGE_UPDATED, changed_fields, criteria_added, criteria_removed)
+            _record(
+                story,
+                CHANGE_UPDATED,
+                changed_fields,
+                criteria_added,
+                criteria_removed,
+                criteria_review_required,
+            )
         else:
             _record(story, CHANGE_UNCHANGED, [], 0, 0)
 
@@ -361,6 +377,7 @@ class ImpactService:
 
         criteria_added = sum(s.get("criteria_added", 0) for s in story_changes)
         criteria_removed = sum(s.get("criteria_removed", 0) for s in story_changes)
+        criteria_review_required = sum(s.get("criteria_review_required", 0) for s in story_changes)
         summary = {
             "requirements_created": sum(1 for r in requirement_changes if r["change_kind"] == CHANGE_CREATED),
             "requirements_updated": sum(1 for r in requirement_changes if r["change_kind"] == CHANGE_UPDATED),
@@ -370,6 +387,7 @@ class ImpactService:
             "stories_removed": sum(1 for s in story_changes if s["change_kind"] == CHANGE_REMOVED),
             "criteria_added": criteria_added,
             "criteria_removed": criteria_removed,
+            "criteria_review_required": criteria_review_required,
             "sections_impacted": len(impacted_sections),
             "sections_impacted_locked": sum(1 for s in impacted_sections if s.get("is_locked")),
             "diagrams_impacted": len(impacted_diagrams),

@@ -40,6 +40,7 @@ from app.prd_section_service import (
     assemble_document_markdown,
     ensure_sections_seeded,
     merge_edited_section,
+    prd_has_renderable_operational_sections,
     prd_is_sectioned_markdown,
     split_markdown_sections,
     stitch_markdown,
@@ -167,6 +168,18 @@ def _section_content(document: str, section_key: str) -> str:
         p["content"] for p in split_markdown_sections(document)
         if p["section_key"] == section_key
     )
+
+
+def test_heading_only_operational_parts_are_not_reusable():
+    incomplete = _markdown_prd().replace(
+        "|Non-Functional Requirements|1. Performance|", ""
+    ).replace("|Open Questions & Risks|1.||", "")
+    assert prd_is_sectioned_markdown(incomplete)
+    assert not prd_has_renderable_operational_sections(incomplete)
+
+
+def test_populated_operational_parts_are_reusable():
+    assert prd_has_renderable_operational_sections(_markdown_prd())
 
 
 @pytest.mark.asyncio

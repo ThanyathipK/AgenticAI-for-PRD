@@ -132,6 +132,28 @@ def _story_codes_by_requirement(requirements):
 
 
 @pytest.mark.asyncio
+async def test_matcher_resolves_explicit_parent_requirement_without_story_guess(monkeypatch):
+    _patch(monkeypatch, REQ_STATE, llm_result={})
+
+    async def story_matcher_must_not_run(*_args, **_kwargs):
+        raise AssertionError("explicit REQ IDs must bypass story-level inference")
+
+    monkeypatch.setattr(agents, "match_requirement", story_matcher_must_not_run)
+    result = await agents.requirement_matcher_node({
+        "project_id": "p1",
+        "raw_input": "Change req 1 to require manager approval",
+        "detected_intent": "UPDATE_REQUIREMENT",
+        "intent_confidence": 0.99,
+        "current_version": 5,
+    })
+
+    match = result["requirement_match"]
+    assert match["parent_requirement_code"] == "REQ-001"
+    assert match["confidence"] == 1.0
+    assert match["status"] == "MATCHED"
+
+
+@pytest.mark.asyncio
 async def test_multi_requirement_output_does_not_duplicate_existing_stories(monkeypatch):
     """The old node ran one merge PER LLM requirement over the whole backlog,
     duplicating every existing story into every requirement group."""
@@ -827,6 +849,30 @@ async def test_intent_confidence_from_state_reaches_the_prompt(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_gatherer_requests_native_json_schema(monkeypatch):
+    """The initial extraction is constrained, avoiding schema-echo repairs."""
+    llm_result = {
+        "epic_name": "Refund Portal",
+        "requirements": [{
+            "requirement_code": "REQ-001",
+            "title": "Refund Request Submission",
+            "user_stories": [copy.deepcopy(US_001)],
+        }],
+    }
+    _saved, llm_calls = _patch(monkeypatch, REQ_STATE, llm_result=llm_result)
+
+    await agents.gatherer_node({
+        "project_id": "p1",
+        "raw_input": "update the refund form",
+        "detected_intent": "UPDATE_REQUIREMENT",
+        "current_version": 5,
+        "structured_requirements": {},
+    })
+
+    assert llm_calls[0]["native_json_schema"] is True
+
+
+@pytest.mark.asyncio
 async def test_locked_stories_are_flagged_in_the_prompt_context(monkeypatch):
     """The prompt tells the model to preserve locked stories - so they must
     actually appear in <current_project_context> with a LOCKED marker."""
@@ -966,6 +1012,53 @@ async def test_matcher_and_detected_changes_reach_the_prompt_together(monkeypatc
     recommendations = llm_calls[0]["variables"]["recommendations"]
     assert '"US-002"' in recommendations        # matcher-derived UPDATE
     assert "NEW_REQUIREMENT" in recommendations  # detected INSERT survived
+
+
+@pytest.mark.asyncio
+async def test_explicit_parent_requirement_cascades_into_story_and_criteria(monkeypatch):
+    revised_story = {
+        **copy.deepcopy(US_001),
+        "i_want_to": "submit a refund request with manager approval",
+        "acceptance_criteria": [
+            "Given a valid request, When it is submitted, Then manager approval is required",
+            "Given approval is denied, When the customer checks, Then the rejection is displayed",
+        ],
+    }
+    llm_result = {
+        "epic_name": "Refund Portal",
+        "requirements": [{
+            "requirement_code": "REQ-001",
+            "title": "Manager-approved Refund Submission",
+            "description": "Refund submissions require manager approval.",
+            "user_stories": [revised_story, copy.deepcopy(US_002)],
+        }],
+    }
+    _saved, llm_calls = _patch(monkeypatch, REQ_STATE, llm_result=llm_result)
+
+    result = await agents.gatherer_node({
+        "project_id": "p1",
+        "raw_input": "Change REQ-001 so every refund needs manager approval",
+        "detected_intent": "UPDATE_REQUIREMENT",
+        "current_version": 5,
+        "structured_requirements": {},
+        "requirement_match": {
+            "matched_requirement_id": None,
+            "parent_requirement_code": "REQ-001",
+            "action": "UPDATE",
+            "confidence": 1.0,
+        },
+    })
+
+    requirement = next(
+        item for item in result["requirement_state"]["requirements"]
+        if item["requirement_code"] == "REQ-001"
+    )
+    story = next(item for item in requirement["user_stories"] if item["ticket_code"] == "US-001")
+    assert requirement["title"] == "Manager-approved Refund Submission"
+    assert story["i_want_to"] == "submit a refund request with manager approval"
+    assert story["acceptance_criteria"] == revised_story["acceptance_criteria"]
+    assert US_001["acceptance_criteria"][0] not in story["acceptance_criteria"]
+    assert "explicitly targeted parent requirement REQ-001" in llm_calls[0]["variables"]["intent_guidance"]
 
 
 @pytest.mark.asyncio
