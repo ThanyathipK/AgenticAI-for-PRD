@@ -155,7 +155,17 @@ class Settings(BaseSettings):
     # One concurrent generation avoids swapping several 9B contexts on a 16GB Mac.
     LLM_BACKGROUND_JOB_TIMEOUT_SECONDS: float = 660.0
     LLM_MAX_CONCURRENT_HEAVY_JOBS: int = 1
-    AUDITOR_MAX_PASSES: int = 4
+    # Sequential, context-safe passes permitted for one audit. Eight allows a
+    # normal project-wide + individual-policy evidence set on an 8k local model
+    # while still bounding latency and inference work.
+    AUDITOR_MAX_PASSES: int = 8
+    # Keep this equal to (or below) the context length configured when the model
+    # is loaded in LM Studio. MAX_CONTEXT_TOKENS may be raised for other flows,
+    # but doing so must not make the Auditor assume the local model is larger.
+    AUDITOR_CONTEXT_TOKENS: int = 8192
+    # Completion tokens also occupy the model context window. The Auditor uses
+    # this value both for the client and when calculating its input allowance.
+    AUDITOR_OUTPUT_TOKENS: int = 3000
     # Qwen3.x models are REASONING models: they first emit a long `reasoning_content`
     # chain-of-thought and only then the real answer. With a bounded max_tokens the
     # model can exhaust the whole budget thinking and return an EMPTY `content`

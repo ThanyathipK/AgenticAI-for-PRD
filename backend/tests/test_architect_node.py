@@ -281,3 +281,89 @@ async def test_architect_preview_preserves_all_canonical_requirement_groups(monk
     requirements = result["requirement_state"]["requirements"]
     assert [r["requirement_code"] for r in requirements] == ["REQ-001", "REQ-002"]
     assert requirements[1]["user_stories"][0]["ticket_code"] == "US-002"
+
+
+@pytest.mark.asyncio
+async def test_architect_skips_lm_when_every_scoped_section_is_locked(monkeypatch):
+    state = copy.deepcopy(REQ_STATE)
+    state["generated_prd"] = "# Existing governed PRD"
+    state["generated_diagrams"] = "flowchart TD\n  OLD[Preserved]"
+    _patch(monkeypatch, state)
+
+    async def locked_sections(*_args, **_kwargs):
+        return [{
+            "section_key": "product_scope",
+            "title": "2. Product Scope & Functional Requirements",
+            "ai_generatable": True,
+            "is_locked": True,
+        }]
+
+    async def forbidden_diagram(*_args, **_kwargs):
+        raise AssertionError("LM Studio must not run when every requested section is locked")
+
+    monkeypatch.setattr(agents.PRDSectionRepository, "get_by_project", locked_sections)
+    monkeypatch.setattr(agents, "_generate_flow_diagram", forbidden_diagram)
+
+    result = await agents.architect_node({
+        "project_id": "p1",
+        "current_version": 2,
+        "structured_requirements": {},
+        "db_session": object(),
+        "stage_artifacts_only": True,
+        "regeneration_scope": {
+            "section_keys": ["product_scope"],
+            "regenerate_diagram": True,
+        },
+    })
+
+    assert result["prd_markdown"] == "# Existing governed PRD"
+    assert result["mermaid_diagram"] == "flowchart TD\n  OLD[Preserved]"
+    assert result["diagram_regenerated"] is False
+    assert result["skipped_locked_prd_sections"] == [
+        "2. Product Scope & Functional Requirements (product_scope)"
+    ]
+    assert "—" not in result["agent_message"]
+    assert "Not regenerated because they are locked" in result["agent_message"]
+
+
+@pytest.mark.asyncio
+async def test_architect_preserves_locked_tech_section_and_skips_diagram_lm(monkeypatch):
+    state = copy.deepcopy(REQ_STATE)
+    state["generated_diagrams"] = "flowchart TD\n  OLD[Preserved]"
+    _patch(monkeypatch, state)
+
+    async def sections(*_args, **_kwargs):
+        return [
+            {
+                "section_key": "product_scope",
+                "title": "2. Product Scope & Functional Requirements",
+                "ai_generatable": True,
+                "is_locked": False,
+            },
+            {
+                "section_key": "tech_ops",
+                "title": "3. Technical & Operational Considerations",
+                "ai_generatable": True,
+                "is_locked": True,
+            },
+        ]
+
+    async def forbidden_diagram(*_args, **_kwargs):
+        raise AssertionError("locked tech section must prevent diagram LM generation")
+
+    monkeypatch.setattr(agents.PRDSectionRepository, "get_by_project", sections)
+    monkeypatch.setattr(agents, "_generate_flow_diagram", forbidden_diagram)
+
+    result = await agents.architect_node({
+        "project_id": "p1",
+        "current_version": 2,
+        "structured_requirements": {},
+        "db_session": object(),
+        "stage_artifacts_only": True,
+    })
+
+    assert result["prd_markdown"]
+    assert result["mermaid_diagram"] == "flowchart TD\n  OLD[Preserved]"
+    assert result["diagram_regenerated"] is False
+    assert "Technical & Operational Considerations" in result["agent_message"]
+    assert "existing content was preserved" in result["agent_message"]

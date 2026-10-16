@@ -385,6 +385,26 @@ class ClarificationQuestionDetail(BaseModel):
     user_answer: Optional[str] = Field(None, description="Stakeholder resolution text, if answered.")
     is_resolved: Optional[bool] = Field(None, description="Whether the question has been resolved.")
     source_references: List[Dict[str, Any]] = Field(default_factory=list, max_length=4, description="Knowledge-base evidence supporting the question.")
+    provenance: Dict[str, Any] = Field(
+        default_factory=lambda: {"type": "System analysis"},
+        description="Display-safe origin: Project file, Knowledge base, or System analysis.",
+    )
+    target_requirement_id: Optional[str] = Field(None, description="Requirement/story analyzed by the Auditor.")
+    requirement_context: Optional[str] = Field(None, max_length=4000, description="Relevant immutable requirement context captured with the question.")
+
+
+class ClarificationAnswerClassification(BaseModel):
+    question_id: str
+    classification: Literal["UPDATE", "ADD", "REMOVE", "NO_CHANGE", "FOLLOW_UP"]
+    target_requirement_id: Optional[str] = None
+    rationale: str = ""
+    follow_up_question: Optional[str] = None
+
+
+class ClarificationGathererBatch(BaseModel):
+    """One small, target-grouped Gatherer result."""
+    classifications: List[ClarificationAnswerClassification] = Field(default_factory=list)
+    proposed_requirements: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class RequirementDetail(BaseModel):

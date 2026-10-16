@@ -242,6 +242,47 @@ async def test_auditor_reuses_request_session_for_conversation_write(monkeypatch
     assert captured["session"] is request_session
 
 
+def test_auditor_context_budget_caps_larger_app_setting_and_splits_documents(monkeypatch):
+    """A 16k app setting must not overflow an LM Studio model loaded at 8k."""
+    from langchain_core.prompts import PromptTemplate
+    from app.input_validation import count_body_tokens
+    from app.prompt_loader import load_prompt
+
+    monkeypatch.setattr(agents.settings, "MAX_CONTEXT_TOKENS", 16384)
+    monkeypatch.setattr(agents.settings, "AUDITOR_CONTEXT_TOKENS", 8192)
+    monkeypatch.setattr(agents.settings, "AUDITOR_OUTPUT_TOKENS", 2400)
+    prompt = PromptTemplate(
+        template=load_prompt("auditor"),
+        input_variables=[
+            "structured_requirements", "current_version", "audit_scope",
+            "format_instructions", "audit_checklist",
+        ],
+    )
+    payload = {
+        "epic_name": "Payments",
+        "version": 1,
+        "user_stories": [],
+        "requirement_context": [],
+        "business_goals": [],
+        "actors": [],
+        "clarification_evidence": [],
+        "knowledge_base_documents": [{
+            "document_id": "doc-1",
+            "filename": "policy.md",
+            "content_markdown": ("Maker checker approval is mandatory.\n" * 1000),
+        }],
+    }
+
+    budget = agents._auditor_payload_token_budget(prompt, 1)
+    contexts = agents._build_auditor_contexts(payload, prompt, 1)
+
+    assert budget < 8192
+    assert len(contexts) > 1
+    assert len(contexts) <= agents.settings.AUDITOR_MAX_PASSES
+    assert all(count_body_tokens(context) <= budget for context in contexts)
+    assert all(context["knowledge_base_documents"][0]["document_id"] == "doc-1" for context in contexts)
+
+
 def test_merge_audit_passes_preserves_failures_and_source_references():
     source = {"document_id": "doc-1", "document_name": "policy.md", "section": "Security"}
     merged = agents._merge_audit_passes([

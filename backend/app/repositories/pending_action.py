@@ -56,6 +56,37 @@ class PendingActionRepository:
         actions = result.scalars().all()
         return [serialize_pending_action(a, full=True) for a in actions]
 
+    @staticmethod
+    async def discard_clarification_review_drafts(
+        project_id: str,
+        session: AsyncSession,
+        *,
+        keep_latest: bool,
+    ) -> List[str]:
+        """Discard redundant combined clarification-review drafts only.
+
+        These drafts are regenerated whenever a stakeholder submits answers;
+        retaining multiple copies creates duplicate confirmation windows and
+        makes it unclear which combined proposal is authoritative. Normal
+        Gatherer and document-extraction drafts are intentionally untouched.
+        """
+        pid = as_uuid(project_id)
+        rows = (await session.execute(
+            select(PendingActionModel).where(
+                PendingActionModel.project_id == pid,
+                PendingActionModel.status == "WAITING_CONFIRMATION",
+                PendingActionModel.workflow_stage == "clarification_gatherer_review",
+            ).order_by(PendingActionModel.created_at.desc())
+        )).scalars().all()
+        redundant = rows[1:] if keep_latest else rows
+        removed = []
+        for action in redundant:
+            removed.append(str(action.id))
+            await session.delete(action)
+        if redundant:
+            await session.flush()
+        return removed
+
     # CONFIRM 5.3 — DELETE one action, scoped by BOTH action id and project id (a
     #             cross-project id can never be removed). Used by 3.3.8 (applied),
     #             3.4 (discarded) and 3.3.4 (draft with no changes).

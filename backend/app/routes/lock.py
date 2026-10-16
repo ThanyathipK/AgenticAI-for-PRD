@@ -247,6 +247,14 @@ async def get_pending_actions(
     Returns:
         List[PendingActionResponse]: Pending actions for the project.
     """
+    # Older builds could create one clarification-review draft per answer/batch.
+    # Only the newest combined draft is meaningful; remove stale duplicates as
+    # part of the pending-review lifecycle while leaving every other draft type.
+    removed = await PendingActionRepository.discard_clarification_review_drafts(
+        project_id, session, keep_latest=True,
+    )
+    if removed:
+        logger.info("Discarded %d superseded clarification review draft(s) for project %s", len(removed), project_id)
     actions = await PendingActionRepository.get_by_project(project_id, session)
     return actions
 
@@ -475,6 +483,7 @@ async def confirm_action(
     #               supplied in the draft. Committed by the request's get_db on success.
     previous_state = await RequirementStateRepository.get_by_project_id(project_id, session)
     requirement_merge = action.get("workflow_stage") != "COMPLETED"
+    clarification_review_merge = action.get("workflow_stage") == "clarification_gatherer_review"
     changed_artifacts = []
     cascade_plan = None
     cascade_job_id = None
@@ -491,7 +500,7 @@ async def confirm_action(
             previous_revision + 1,
         )
     persisted_state = await RequirementStateRepository.save_or_update(project_id, updates_to_persist, session)
-    if requirement_merge:
+    if requirement_merge and not clarification_review_merge:
         from app.dependency_graph_service import detect_changed_artifacts, mark_dependents_for_review
 
         changed_artifacts = detect_changed_artifacts(previous_state, persisted_state)
@@ -592,7 +601,9 @@ async def confirm_action(
     # 4. Delete the pending action
     await PendingActionRepository.delete(action_id, project_id, session)
 
-    # A confirmed parent change automatically continues down the hierarchy.
+    # A normal confirmed parent change can continue down the hierarchy. A
+    # clarification-answer proposal deliberately does not: users must choose
+    # Validate Requirements and Generate PRD explicitly after reviewing it.
     # ACs were revalidated in the Gatherer draft; now queue the Architect for
     # only the linked, writable PRD sections (and an existing diagram). Running
     # this in the durable job queue keeps Save responsive and makes the work
@@ -608,7 +619,7 @@ async def confirm_action(
             )
         )
     )
-    if should_regenerate_document:
+    if should_regenerate_document and not clarification_review_merge:
         # Persist the confirmed hierarchy before touching the independent job
         # queue. In particular, create_job may roll back its own transaction on
         # a uniqueness race; that must never undo the user's confirmed Save.

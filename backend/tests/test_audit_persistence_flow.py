@@ -84,8 +84,9 @@ async def test_audit_auto_persistence_reload_and_failed_retry(client, db_session
     assert rerun.json()["pending_merge"] is False
     assert rerun.json()["audit_auto_persisted"] is True
     final = (await client.get(f"/api/project/{seeded_project}")).json()
-    assert final["audit_verdict"] == "pass"
+    assert final["audit_verdict"] == "needs_clarification"
     assert final["failed_checks"] == []
     assert final["audit_findings"] == []
-    assert final["clarification_questions"] == []
+    assert len(final["clarification_questions"]) == 1
+    assert final["clarification_questions"][0]["question_text"] == "Who approves?"
     assert await db_session.scalar(select(func.count()).select_from(AuditRunModel)) == 2

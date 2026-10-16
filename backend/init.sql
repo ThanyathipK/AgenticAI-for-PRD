@@ -271,6 +271,9 @@ CREATE TABLE clarification_questions (
     user_answer TEXT, -- Nullable until answered by Business Stakeholder
     is_resolved BOOLEAN NOT NULL DEFAULT FALSE,
     source_references JSONB NOT NULL DEFAULT '[]'::jsonb,
+    provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+    target_requirement_id VARCHAR(100),
+    requirement_context TEXT,
     is_locked BOOLEAN NOT NULL DEFAULT FALSE,
     locked_by VARCHAR(100),
     locked_at TIMESTAMPTZ,

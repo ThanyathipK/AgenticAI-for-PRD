@@ -309,6 +309,40 @@ async def test_delete_node_keeps_locked_story_and_tells_user_to_unlock(monkeypat
     assert result["requirement_state"]["user_stories"] == locked_state["user_stories"]
     assert "locked" in result["agent_message"].lower()
     assert "unlock" in result["agent_message"].lower()
+    assert result["lock_blocked"] is True
+
+
+@pytest.mark.asyncio
+async def test_update_match_to_locked_story_stops_before_semantic_or_llm(monkeypatch):
+    locked_state = copy.deepcopy(REQ_STATE)
+    for story in locked_state["user_stories"]:
+        if story["ticket_code"] == "US-002":
+            story["is_locked"] = True
+    for requirement in locked_state["requirements"]:
+        for story in requirement["user_stories"]:
+            if story["ticket_code"] == "US-002":
+                story["is_locked"] = True
+
+    _saved, llm_calls = _patch(monkeypatch, locked_state)
+
+    result = await agents.gatherer_node({
+        "project_id": "p1",
+        "raw_input": "Make tracking show settlement time",
+        "detected_intent": "UPDATE_REQUIREMENT",
+        "current_version": 5,
+        "structured_requirements": {},
+        "requirement_match": {
+            "matched_requirement_id": "US-002",
+            "confidence": 0.98,
+            "action": "UPDATE",
+            "status": "MATCHED",
+        },
+    })
+
+    assert result["lock_blocked"] is True
+    assert result["requirement_state"]["user_stories"] == locked_state["user_stories"]
+    assert "US-002 is locked" in result["agent_message"]
+    assert llm_calls == []
 
 
 @pytest.mark.asyncio

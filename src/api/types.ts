@@ -185,6 +185,14 @@ export interface ClarificationQuestionPayload {
   user_answer?: string | null;
   is_resolved?: boolean;
   source_references?: AuditSourceReferencePayload[];
+  provenance?: {
+    type: 'Project file' | 'Knowledge base' | 'System analysis';
+    document?: string | null;
+    section?: string | null;
+    analyzed_target?: string | null;
+  };
+  target_requirement_id?: string | null;
+  requirement_context?: string | null;
 }
 
 export interface AuditSourceReferencePayload {
@@ -192,6 +200,7 @@ export interface AuditSourceReferencePayload {
   document_name: string;
   section?: string | null;
   excerpt?: string | null;
+  source_type?: 'Project file' | 'Knowledge base' | null;
 }
 
 export interface AuditFindingPayload {
@@ -392,6 +401,16 @@ export interface RequirementStatePayload {
   version_number?: number;
   updated_at?: string | null;
   conversation_history?: ConversationMessagePayload[];
+  pending_action_id?: string | null;
+  pending_merge?: boolean;
+  clarification_answer_classifications?: Array<{
+    question_id: string;
+    classification: 'UPDATE' | 'ADD' | 'REMOVE' | 'NO_CHANGE' | 'FOLLOW_UP';
+    target_requirement_id?: string | null;
+    rationale?: string;
+    follow_up_question?: string | null;
+  }>;
+  proposal_generation_warning?: string | null;
 }
 
 // ----------------------------------------------------------------------------
@@ -430,6 +449,7 @@ export interface ProcessRequirementsResponse {
   pending_action_id?: string | null;
   no_changes?: boolean;
   stale_result?: boolean | null;
+  skipped_locked_prd_sections?: string[];
   conversation_history?: ConversationMessagePayload[];
   [key: string]: unknown;
 }

@@ -49,7 +49,7 @@ from app.schemas import (
     RequirementIntentDetectionResult,
     RequirementMatcherResult,
 )
-from app.agents import prd_workflow
+from app.agents import prd_workflow, gather_clarification_answer_batch
 from app.event_manager import event_manager
 from app.requirement_codes import default_requirement_code
 
@@ -372,8 +372,8 @@ async def post_audit_resolution_reply(
 @router.post("/api/clarification/submit", response_model=RequirementStateResponse, status_code=status.HTTP_200_OK)
 async def post_clarification_submit(payload: Dict[str, Any], current_user: AuthenticatedUser = Depends(get_current_user), session: AsyncSession = Depends(get_db)) -> RequirementStateResponse:
     """
-    Submits answers to clarification questions, runs Auditor compliance check,
-    and updates workflow state.
+    Saves clarification answers and asks the Gatherer for one combined,
+    reviewable requirement-change proposal. It never runs the Auditor.
 
     Args:
         payload: Dict containing ``project_id`` and a mapping of answers
@@ -415,6 +415,8 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
     # Stable question UUIDs are the primary contract. Keep q-<index> support for
     # older clients, but never depend on list position when an id is available.
     questions = req_state.get("clarification_questions", [])
+    submitted_envelopes = []
+    answered_by_fingerprint: Dict[tuple, str] = {}
     for idx, q in enumerate(questions):
         stable_key = str(q.get("id") or "")
         legacy_key = f"q-{idx}"
@@ -424,12 +426,117 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
         if isinstance(answer, str) and answer.strip():
             q["user_answer"] = answer.strip()
             q["is_resolved"] = True
+            answered_by_fingerprint[(
+                str(q.get("checklist_category") or ""),
+                str(q.get("question_text") or "").strip(),
+                str(q.get("target_requirement_id") or q.get("target_user_story_id") or ""),
+            )] = answer.strip()
+            submitted_envelopes.append({
+                "question_id": stable_key or legacy_key,
+                "question": q.get("question_text"),
+                "answer": answer.strip(),
+                "provenance": q.get("provenance") or {"type": "System analysis"},
+                "source_references": q.get("source_references") or [],
+                "target_requirement_id": q.get("target_requirement_id") or q.get("target_user_story_id"),
+                "target_user_story_id": q.get("target_user_story_id"),
+                "requirement_context": q.get("requirement_context"),
+            })
 
-    req_state["clarification_questions"] = questions
+    # Older releases could persist the same Auditor question under more than
+    # one audit anchor. A user answer explicitly resolves that same issue, so
+    # apply it to exact duplicates instead of leaving a visually identical row
+    # open after reload. Non-identical questions are never auto-resolved.
+    for q in questions:
+        fingerprint = (
+            str(q.get("checklist_category") or ""),
+            str(q.get("question_text") or "").strip(),
+            str(q.get("target_requirement_id") or q.get("target_user_story_id") or ""),
+        )
+        if not q.get("is_resolved", False) and fingerprint in answered_by_fingerprint:
+            q["user_answer"] = answered_by_fingerprint[fingerprint]
+            q["is_resolved"] = True
+
+    if not submitted_envelopes:
+        raise HTTPException(status_code=400, detail="At least one non-empty clarification answer is required")
+
+    # Keep LM Studio calls small and coherent: group by requirement/story/topic,
+    # then cap every call at four answer envelopes. Results are folded into one
+    # draft and therefore one explicit confirmation action.
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for item in submitted_envelopes:
+        group_key = str(item.get("target_requirement_id") or item.get("target_user_story_id") or "project")
+        grouped.setdefault(group_key, []).append(item)
+
+    current_requirements = copy.deepcopy(req_state.get("requirements") or [])
+    proposed_by_code = {
+        str(req.get("requirement_code")): req for req in current_requirements if isinstance(req, dict)
+    }
+    classifications: List[Dict[str, Any]] = []
+    follow_ups: List[Dict[str, Any]] = []
+    proposal_generation_warning = None
+    for group_items in grouped.values():
+        for start in range(0, len(group_items), 4):
+            batch = group_items[start:start + 4]
+            targets = {str(item.get("target_requirement_id") or "") for item in batch}
+            context = [
+                req for req in current_requirements
+                if str(req.get("requirement_code")) in targets
+                or any(str(story.get("ticket_code")) in targets for story in (req.get("user_stories") or []))
+            ] or current_requirements
+            try:
+                logger.info(
+                    "[CLARIFICATION][GATHERER][START] project=%s target=%s answers=%d",
+                    project_id, sorted(targets), len(batch),
+                )
+                batch_result = await gather_clarification_answer_batch(batch, context)
+                logger.info(
+                    "[CLARIFICATION][GATHERER][DONE] project=%s classifications=%d proposed_requirements=%d",
+                    project_id,
+                    len(batch_result.get("classifications") or []),
+                    len(batch_result.get("proposed_requirements") or []),
+                )
+            except Exception as exc:
+                # A local-model formatting failure must never discard stakeholder
+                # answers. Save them as audit evidence and stage a clearly marked
+                # no-change review rather than making the form look nonfunctional.
+                logger.exception("Clarification Gatherer batch failed; retaining submitted answers")
+                proposal_generation_warning = (
+                    "Answers were saved, but the Gatherer could not create a requirement-change draft. "
+                    "Review the saved answers and retry the proposal after LM Studio is available."
+                )
+                classifications.extend({
+                    "question_id": str(item["question_id"]),
+                    "classification": "NO_CHANGE",
+                    "target_requirement_id": item.get("target_requirement_id"),
+                    "rationale": "No requirement change was proposed because the Gatherer response was unavailable.",
+                } for item in batch)
+                continue
+            classifications.extend(batch_result.get("classifications") or [])
+            for req in batch_result.get("proposed_requirements") or []:
+                code = str(req.get("requirement_code") or "")
+                if code:
+                    proposed_by_code[code] = req
+            by_id = {str(item["question_id"]): item for item in batch}
+            for classification in batch_result.get("classifications") or []:
+                if classification.get("classification") == "FOLLOW_UP" and classification.get("follow_up_question"):
+                    original = by_id.get(str(classification.get("question_id")), {})
+                    follow_ups.append({
+                        "checklist_category": "Answer follow-up",
+                        "target_user_story_id": original.get("target_user_story_id"),
+                        "target_requirement_id": original.get("target_requirement_id"),
+                        "question_text": classification["follow_up_question"],
+                        "is_resolved": False,
+                        "user_answer": None,
+                        "source_references": original.get("source_references") or [],
+                        "provenance": original.get("provenance") or {"type": "System analysis"},
+                        "requirement_context": original.get("requirement_context"),
+                    })
+
+    req_state["clarification_questions"] = questions + follow_ups
 
     # Answers are evidence for a future audit, not proof that blocking findings
     # are fixed. Keep the project pending/invalid until a fresh Auditor run.
-    unresolved = [q for q in questions if not q.get("is_resolved", False)]
+    unresolved = [q for q in req_state["clarification_questions"] if not q.get("is_resolved", False)]
     req_state["validation_status"] = "invalid"
     req_state["current_workflow_state"] = "WAITING_CLARIFICATION" if unresolved else "AUDIT_PENDING"
 
@@ -438,12 +545,50 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
     #             this is the second write path besides CONFIRM 3.3 — unlike the AI
     #             merge it is user-authored data, so no pending action is needed.
     saved_state = await RequirementStateRepository.save_or_update(project_id, req_state, session)
+
+    from datetime import datetime, timedelta, timezone
+    proposal_state = copy.deepcopy(saved_state)
+    proposal_state["requirements"] = list(proposed_by_code.values())
+    proposal_state["user_stories"] = [
+        story for req in proposal_state["requirements"] for story in (req.get("user_stories") or [])
+    ]
+    proposal_state["acceptance_criteria"] = [
+        criterion for story in proposal_state["user_stories"]
+        for criterion in (story.get("acceptance_criteria") or [])
+    ]
+    proposal_state["clarification_answer_classifications"] = classifications
+    removed_drafts = await PendingActionRepository.discard_clarification_review_drafts(
+        project_id, session, keep_latest=False,
+    )
+    if removed_drafts:
+        logger.info(
+            "[CLARIFICATION][REVIEW] replaced %d older combined clarification draft(s) for project=%s",
+            len(removed_drafts), project_id,
+        )
+    pending_action = await PendingActionRepository.create(
+        project_id=project_id,
+        data={
+            "action_type": "MERGE",
+            "original_user_message": "Clarification answers",
+            "proposed_changes": proposal_state,
+            "workflow_stage": "clarification_gatherer_review",
+        },
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        session=session,
+    )
+    saved_state["pending_action_id"] = pending_action.get("id")
+    saved_state["pending_merge"] = True
+    saved_state["clarification_answer_classifications"] = classifications
+    if proposal_generation_warning:
+        saved_state["proposal_generation_warning"] = proposal_generation_warning
     # CLARIFY 3.7 — Real-time fan-out with the new verdict so other clients update
     #            their audit/clarification views (EVENTS flow).
     await event_manager.publish(project_id, "clarification_submitted", {
         "project_id": project_id,
         "validation_status": req_state.get("validation_status"),
         "current_workflow_state": req_state.get("current_workflow_state"),
+        "pending_action_id": pending_action.get("id"),
+        "proposal_generation_warning": proposal_generation_warning,
     })
     # CLARIFY 3.8 — Response = the saved state; CLARIFY 1.3 applies it (answers reset,
     #            agent node + audit verdict refreshed, project state re-loaded).
@@ -707,6 +852,62 @@ async def _process_requirements_pipeline(
             )
             return {
                 "status": "no_change",
+                "detected_intent": detected_intent,
+                "message": response_text,
+                "pending_merge": False,
+                "pending_action_id": None,
+                "no_changes": True,
+            }
+
+        # Locks are a precondition, not something discovered after an AI draft
+        # has already opened a Save/Merge window. Explicit REQ/US targets can be
+        # resolved deterministically here, before matcher or Gatherer work.
+        requirements_by_code = {
+            normalize_requirement_code(req.get("requirement_code")): req
+            for req in ((req_state or {}).get("requirements") or [])
+            if isinstance(req, dict) and req.get("requirement_code")
+        }
+        stories_by_code = {}
+        parent_by_story = {}
+        for requirement in requirements_by_code.values():
+            for story in requirement.get("user_stories") or []:
+                if isinstance(story, dict) and story.get("ticket_code"):
+                    code = normalize_ticket_code(story.get("ticket_code"))
+                    stories_by_code[code] = story
+                    parent_by_story[code] = requirement
+        blocked = []
+        for code in requested_requirement_codes:
+            requirement = requirements_by_code.get(code) or {}
+            locked_children = [
+                normalize_ticket_code(story.get("ticket_code"))
+                for story in (requirement.get("user_stories") or [])
+                if isinstance(story, dict) and story.get("is_locked")
+            ]
+            if requirement.get("is_locked") or (
+                detected_intent == "DELETE_REQUIREMENT" and locked_children
+            ):
+                blocked.append(code)
+        for code in requested_story_codes:
+            if (stories_by_code.get(code) or {}).get("is_locked") or (
+                parent_by_story.get(code) or {}
+            ).get("is_locked"):
+                blocked.append(code)
+        if blocked:
+            blocked = sorted(set(blocked))
+            response_text = (
+                f"No changes were made because {', '.join(blocked)} is locked. "
+                "Unlock it before trying to update or archive it."
+            )
+            await ConversationMessageRepository.save_message(
+                project_id=str(request.project_id),
+                role="assistant",
+                message=response_text,
+                session=session,
+                workflow_state="locked",
+                intent=detected_intent,
+            )
+            return {
+                "status": "locked",
                 "detected_intent": detected_intent,
                 "message": response_text,
                 "pending_merge": False,
@@ -1184,6 +1385,7 @@ async def _process_requirements_pipeline(
             not architect_auto_persisted
             and not audit_operational_error
             and not stale_result
+            and not final_state.get("lock_blocked")
             and requirement_content_changed
         ):
             pending_action_type = "ARCHIVE" if detected_intent == "DELETE_REQUIREMENT" else "MERGE"
@@ -1231,7 +1433,7 @@ async def _process_requirements_pipeline(
         agent_message = final_state.get("agent_message", "")
         no_changes = (
             request.target_agent in {"gatherer", "delete_requirement"}
-            and not requirement_content_changed
+            and (not requirement_content_changed or bool(final_state.get("lock_blocked")))
             and pending_action_id is None
         )
         if no_changes and not agent_message:
@@ -1244,7 +1446,7 @@ async def _process_requirements_pipeline(
                 "I couldn't find an applicable requirement change in that request. "
                 "No changes were made. Please check the user story ID and try again."
             )
-        if request.project_id and agent_message and not no_changes:
+        if request.project_id and agent_message and not no_changes and request.target_agent != "architect":
             await ConversationMessageRepository.save_message(
                 project_id=str(request.project_id),
                 role="assistant",
@@ -1332,6 +1534,7 @@ async def _process_requirements_pipeline(
             "no_changes": no_changes,
             "stale_result": stale_result,
             "audit_auto_persisted": audit_auto_persisted,
+            "skipped_locked_prd_sections": final_state.get("skipped_locked_prd_sections", []),
         }
     except HTTPException:
         # Preserve intentional 4xx responses (notably validation-context 413s)

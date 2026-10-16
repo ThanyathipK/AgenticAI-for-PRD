@@ -15,10 +15,20 @@ from app.models import (
     RequirementModel,
     UserStoryModel,
 )
-from app.repositories.base import as_uuid, dt_iso, serialize_clarification_question
+from app.repositories.base import (
+    as_uuid,
+    compact_requirement_context,
+    dt_iso,
+    serialize_clarification_question,
+)
 from app.requirement_codes import UNASSIGNED_REQUIREMENT_CODE
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_requirement_context(value: Any) -> Optional[str]:
+    """Normalize structured context for the database Text column."""
+    return compact_requirement_context(value)
 
 
 # AUDIT 4.x — Clarification-question persistence (clarification_questions table):
@@ -138,6 +148,9 @@ class ClarificationQuestionRepository:
             user_answer=data.get("user_answer"),
             is_resolved=data.get("is_resolved", False),
             source_references=data.get("source_references", []),
+            provenance=data.get("provenance") or {"type": "System analysis"},
+            target_requirement_id=data.get("target_requirement_id") or target_us,
+            requirement_context=_serialize_requirement_context(data.get("requirement_context")),
         )
         session.add(cq)
         await session.flush()
@@ -174,26 +187,48 @@ class ClarificationQuestionRepository:
     @staticmethod
     async def get_by_project(project_id: str, session: AsyncSession, requirement_id: Optional[uuid.UUID] = None) -> List[Dict[str, Any]]:
         pid = as_uuid(project_id)
-        if requirement_id is None:
-            stmt_req = select(RequirementModel).where(RequirementModel.project_id == pid).order_by(RequirementModel.version.desc())
-            res_req = await session.execute(stmt_req)
-            req = res_req.scalars().first()
-            if req:
-                requirement_id = req.id
-
         if requirement_id:
             stmt = select(ClarificationQuestionModel).join(
                 AuditResultModel, ClarificationQuestionModel.audit_result_id == AuditResultModel.id
             ).where(AuditResultModel.requirement_id == requirement_id)
         else:
+            # Project state must include every question regardless of which
+            # requirement became the persistence anchor for a particular audit
+            # run. Limiting this to the newest requirement made answered rows
+            # disappear while older, unresolved duplicates remained visible.
             stmt = select(ClarificationQuestionModel).join(
                 AuditResultModel, ClarificationQuestionModel.audit_result_id == AuditResultModel.id
             ).join(
                 RequirementModel, AuditResultModel.requirement_id == RequirementModel.id
-            ).where(RequirementModel.project_id == pid)
+            ).where(RequirementModel.project_id == pid).order_by(
+                ClarificationQuestionModel.created_at.asc()
+            )
 
         result = await session.execute(stmt)
         records = result.scalars().all()
+
+        # Repair only exact legacy duplicates: if the stakeholder has answered
+        # one copy of the same question, that answer applies to the same issue
+        # wherever an old audit anchor stored it. Distinct questions remain
+        # independently unresolved.
+        answered_duplicates: Dict[tuple, str] = {}
+        for cq in records:
+            fingerprint = (
+                cq.checklist_category,
+                str(cq.question_text).strip(),
+                str(cq.target_requirement_id or cq.target_user_story_id or ""),
+            )
+            if cq.is_resolved and cq.user_answer:
+                answered_duplicates[fingerprint] = cq.user_answer
+        for cq in records:
+            fingerprint = (
+                cq.checklist_category,
+                str(cq.question_text).strip(),
+                str(cq.target_requirement_id or cq.target_user_story_id or ""),
+            )
+            if not cq.is_resolved and fingerprint in answered_duplicates:
+                cq.user_answer = answered_duplicates[fingerprint]
+                cq.is_resolved = True
 
         out = []
         for cq in records:

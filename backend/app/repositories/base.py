@@ -7,6 +7,7 @@ that used to be duplicated across every repository class in the old
 shapes stay consistent and any future column additions only need to be
 updated here.
 """
+import json
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional, Union
@@ -29,6 +30,68 @@ from app.models import (
     SemanticMemoryModel,
     UserStoryModel,
 )
+
+
+def compact_requirement_context(value: Any, target: Optional[str] = None) -> Optional[str]:
+    """Return bounded, target-relevant JSON for a clarification question.
+
+    Older audits stored the complete requirement and every story on every
+    question. Besides wasting LLM context, those snapshots exceeded the API's
+    4,000-character response contract. This also repairs those legacy rows at
+    read time, without changing or dropping the question itself.
+    """
+    if value is None:
+        return None
+    parsed = value
+    if isinstance(value, str):
+        if len(value) <= 4000:
+            return value
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return value[:3997] + "..."
+    if not isinstance(parsed, dict):
+        text = json.dumps(parsed, ensure_ascii=False, default=str)
+        return text if len(text) <= 4000 else text[:3997] + "..."
+
+    compact = {
+        key: parsed.get(key)
+        for key in ("requirement_code", "title", "description")
+        if parsed.get(key) is not None
+    }
+    if isinstance(compact.get("description"), str):
+        compact["description"] = compact["description"][:1000]
+    stories = [story for story in (parsed.get("user_stories") or []) if isinstance(story, dict)]
+    selected = next(
+        (story for story in stories if str(story.get("ticket_code")) == str(target)),
+        None,
+    )
+    if selected:
+        compact["target_story"] = {
+            key: selected.get(key)
+            for key in ("ticket_code", "story_title", "as_a", "i_want_to", "so_that")
+            if selected.get(key) is not None
+        }
+        compact["target_story"]["acceptance_criteria"] = [
+            str(item)[:500] for item in (selected.get("acceptance_criteria") or [])[:5]
+        ]
+    elif stories:
+        compact["story_index"] = [
+            {
+                "ticket_code": story.get("ticket_code"),
+                "story_title": story.get("story_title"),
+            }
+            for story in stories[:20]
+        ]
+    text = json.dumps(compact, ensure_ascii=False, default=str)
+    if len(text) <= 4000:
+        return text
+    # Defensive fallback for unusually long titles/actors. Preserve valid JSON.
+    return json.dumps({
+        "requirement_code": compact.get("requirement_code"),
+        "title": str(compact.get("title") or "")[:500],
+        "context_summary": text[:3000],
+    }, ensure_ascii=False)
 
 
 def as_uuid(value: Union[str, uuid.UUID]) -> uuid.UUID:
@@ -188,6 +251,12 @@ def serialize_clarification_question(
         "user_answer": cq.user_answer,
         "is_resolved": cq.is_resolved,
         "source_references": cq.source_references or [],
+        "provenance": cq.provenance or {"type": "System analysis"},
+        "target_requirement_id": cq.target_requirement_id,
+        "requirement_context": compact_requirement_context(
+            cq.requirement_context,
+            cq.target_requirement_id or target_story_id,
+        ),
     }
 
 

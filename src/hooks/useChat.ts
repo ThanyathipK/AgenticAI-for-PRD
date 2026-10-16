@@ -702,11 +702,16 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
       store.setMessages(prev => [...prev, {
         id: `prd-generated-${Date.now()}`,
         role: 'assistant',
-        content: 'Enterprise PRD compiled successfully.\nThe Technical Product Owner Assistant has generated the formal PRD and interactive system flowchart in the preview panel.',
+        content: data.message || 'Enterprise PRD compiled successfully.\nThe Technical Product Owner Assistant has generated the formal PRD and interactive system flowchart in the preview panel.',
         timestamp: nowTime(),
       }]);
 
-      store.setSyncStatus('PRD and flowchart diagram updated.');
+      const skippedLockedSections = data.skipped_locked_prd_sections || [];
+      store.setSyncStatus(
+        skippedLockedSections.length > 0
+          ? `PRD updated. Locked sections preserved: ${skippedLockedSections.join(', ')}`
+          : 'PRD and flowchart diagram updated.'
+      );
       deps.setActiveTab('prd'); // switch tab automatically to PRD
     } catch (err) {
       // ARCHITECT 1.6 — Abort branch (Stop pressed): the generation was terminated
@@ -818,6 +823,11 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
     }
 
     try {
+      // Answer submission has its own Gatherer handoff. Expose it through the
+      // shared processing state so the inline form cannot look inert or submit
+      // the same answers twice while LM Studio is working.
+      store.setIsProcessing(true);
+      store.setCurrentAgentNode('gatherer_node');
       store.setSyncStatus('Submitting clarifications...');
       // CLARIFY 1.5 — API boundary: POST /api/clarification/submit (CLARIFY 2.1 /
       //             3.0) carrying the position-keyed answers (1.4). A failure leaves
@@ -855,16 +865,46 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
           }));
         }
         if (deps.projectId) await deps.loadProjectState(deps.projectId);
-        if (unresolvedQuestions.length > 0) {
-          store.setSyncStatus(`${unresolvedQuestions.length} clarification question(s) still unanswered.`);
+        if (res.pending_action_id) {
+          deps.setPendingActions(prev => {
+            const unrelated = prev.filter(action => action.workflow_stage !== 'clarification_gatherer_review');
+            return [...unrelated, {
+            id: res.pending_action_id!,
+            project_id: deps.projectId ?? '',
+            action_type: 'MERGE',
+            status: 'WAITING_CONFIRMATION',
+            proposed_changes: {},
+            original_user_message: 'Clarification answers',
+            workflow_stage: 'clarification_gatherer_review',
+            }];
+          });
+        }
+        const classifications = res.clarification_answer_classifications || [];
+        const classificationSummary = classifications.length
+          ? classifications.map(item => `${item.question_id}: ${item.classification}`).join(', ')
+          : 'No requirement change was proposed.';
+        store.setMessages(prev => [...prev, {
+          id: `clarification-gatherer-${Date.now()}`,
+          role: 'gatherer',
+          content: res.proposal_generation_warning
+            ? `Clarification answers were saved as audit evidence.\n\n${res.proposal_generation_warning}`
+            : `Clarification answers were sent to the Gatherer. A combined requirement-change proposal is ready for review and confirmation.\n\nClassifications: ${classificationSummary}`,
+          timestamp: nowTime(),
+        }]);
+        if (res.proposal_generation_warning) {
+          store.setSyncStatus(res.proposal_generation_warning);
+        } else if (unresolvedQuestions.length > 0) {
+          store.setSyncStatus(`${unresolvedQuestions.length} clarification question(s) remain open. Review the combined proposed changes.`);
         } else {
-          store.setSyncStatus('Clarifications saved. Re-running the technical audit...');
-          await handleValidateRequirements();
+          store.setSyncStatus('Answers saved. Review and confirm the proposed requirement changes; validation runs only when you click Validate Requirements.');
         }
       }
     } catch (err) {
       handleError('Failed to submit clarifications.', err);
       store.setSyncStatus('Failed to submit clarifications');
+    } finally {
+      store.setIsProcessing(false);
+      store.setCurrentAgentNode(null);
     }
   };
 

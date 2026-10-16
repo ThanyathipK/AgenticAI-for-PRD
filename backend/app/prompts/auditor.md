@@ -15,6 +15,8 @@ Rules:
 - Search project-level requirements and NFRs before claiming that every individual story lacks a cross-cutting control.
 - If applicability of a potentially important control is unknown, ask one concise clarification question rather than failing or inventing an answer.
 - Consolidate repetitive questions.
+- Questions from project uploads must carry `Project file` provenance with exact filename and section. Questions from approved reusable documents must carry `Knowledge base` provenance with document and section. Questions based only on requirement analysis must have no citation; the application labels them `System analysis` with the analyzed requirement/story.
+- Treat supplied resolved clarification answers as audit evidence. Do not assume an unanswered clarification is resolved merely because it is absent from this run's output.
 - Be concise and order findings by impact and severity. Preserve all distinct issues and necessary clarification questions; consolidate repetitions.
 - Keep all generated prose plain and direct. Do not add decorative symbols, emojis, generic AI introductions, unnecessary em dashes or arrows, excessive bold text, or excessive Markdown formatting.
 - Do not repeat the same issue for multiple stories when one project-level finding is accurate.

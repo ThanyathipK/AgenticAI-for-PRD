@@ -42,6 +42,14 @@ export interface ClarificationQuestion {
   user_answer?: string | null;
   is_resolved?: boolean;
   source_references?: import('../api/types').AuditSourceReferencePayload[];
+  provenance?: {
+    type: 'Project file' | 'Knowledge base' | 'System analysis';
+    document?: string | null;
+    section?: string | null;
+    analyzed_target?: string | null;
+  };
+  target_requirement_id?: string | null;
+  requirement_context?: string | null;
 }
 
 export interface AuditResult {

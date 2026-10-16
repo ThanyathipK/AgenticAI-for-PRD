@@ -302,10 +302,19 @@ export function ChatPanel({ state }: { state: ProjectState }) {
                             <p className="text-[12.5px] font-medium text-on-surface leading-tight break-words">
                               {q.question_text}
                             </p>
+                            <p className="text-[10px] text-on-surface-variant break-words">
+                              Source: {q.provenance?.type || (q.source_references?.length ? 'Project file' : 'System analysis')}
+                              {q.provenance?.document ? ` · ${q.provenance.document}` : ''}
+                              {q.provenance?.section ? ` · ${q.provenance.section}` : ''}
+                              {q.provenance?.type === 'System analysis' && (q.provenance.analyzed_target || q.target_requirement_id || q.target_user_story_id)
+                                ? ` · ${q.provenance.analyzed_target || q.target_requirement_id || q.target_user_story_id}`
+                                : ''}
+                            </p>
                             <input
                               type="text"
                               value={clarificationAnswers[answerKey] || ""}
                               onChange={(e) => handleUpdateAnswerValue(answerKey, e.target.value)}
+                              disabled={isProcessing}
                               placeholder="Type your answer"
                               className="w-full bg-white border border-outline rounded-lg px-3 py-1.5 text-xs text-on-surface focus:ring-1 focus:ring-primary/40 focus:border-primary placeholder:text-on-surface-variant/40 outline-none"
                             />
@@ -315,10 +324,15 @@ export function ChatPanel({ state }: { state: ProjectState }) {
 
                         <button
                           type="submit"
-                          className="w-full bg-primary hover:brightness-110 active:scale-[0.99] text-on-primary py-2 rounded-xl font-label-md text-xs hover:brightness-110 transition-all font-bold shadow-md shadow-primary/20 flex items-center justify-center gap-1.5"
+                          disabled={isProcessing}
+                          className={`w-full py-2 rounded-xl font-label-md text-xs transition-all font-bold shadow-md flex items-center justify-center gap-1.5 ${
+                            isProcessing
+                              ? 'bg-slate-400 text-white cursor-wait shadow-none'
+                              : 'bg-primary hover:brightness-110 active:scale-[0.99] text-on-primary shadow-primary/20'
+                          }`}
                         >
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>Save Answered Questions</span>
+                          {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                          <span>{isProcessing ? 'Sending to Gatherer…' : 'Save Answered Questions'}</span>
                         </button>
                       </form>
                     </motion.div>

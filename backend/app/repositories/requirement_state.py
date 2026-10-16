@@ -23,7 +23,7 @@ from app.models import (
 )
 from app.repositories.acceptance_criteria import AcceptanceCriteriaRepository
 from app.repositories.audit_result import AuditResultRepository
-from app.repositories.base import as_uuid
+from app.repositories.base import as_uuid, compact_requirement_context
 from app.repositories.clarification_question import ClarificationQuestionRepository
 from app.repositories.epic import EpicRepository
 from app.repositories.prd import PRDDocumentRepository, PRDVersionRepository
@@ -770,16 +770,17 @@ class RequirementStateRepository:
             )
 
         if "clarification_questions" in updates and updates["clarification_questions"] is not None:
+            existing_rows = []
             if first_active_req_id:
                 stmt_ar_ids = select(AuditResultModel.id).where(AuditResultModel.requirement_id == first_active_req_id)
                 res_ar_ids = await session.execute(stmt_ar_ids)
                 ar_ids = res_ar_ids.scalars().all()
                 if ar_ids:
-                    stmt_del_cq = delete(ClarificationQuestionModel).where(ClarificationQuestionModel.audit_result_id.in_(ar_ids))
-                    await session.execute(stmt_del_cq)
+                    existing_rows = (await session.execute(
+                        select(ClarificationQuestionModel).where(ClarificationQuestionModel.audit_result_id.in_(ar_ids))
+                    )).scalars().all()
             else:
-                # Document-only projects have no visible requirement. Remove
-                # questions through the project-scoped internal audit anchor.
+                # Document-only projects use the project-scoped internal audit anchor.
                 stmt_ar_ids = (
                     select(AuditResultModel.id)
                     .join(RequirementModel)
@@ -788,13 +789,33 @@ class RequirementStateRepository:
                 res_ar_ids = await session.execute(stmt_ar_ids)
                 ar_ids = res_ar_ids.scalars().all()
                 if ar_ids:
-                    await session.execute(
-                        delete(ClarificationQuestionModel).where(
-                            ClarificationQuestionModel.audit_result_id.in_(ar_ids)
-                        )
-                    )
+                    existing_rows = (await session.execute(
+                        select(ClarificationQuestionModel).where(ClarificationQuestionModel.audit_result_id.in_(ar_ids))
+                    )).scalars().all()
 
+            by_id = {str(row.id): row for row in existing_rows}
+            by_fingerprint = {
+                (row.checklist_category, str(row.question_text).strip(), str(row.target_requirement_id or "")): row
+                for row in existing_rows
+            }
             for cq in updates["clarification_questions"]:
+                fingerprint = (
+                    cq.get("checklist_category", "General"),
+                    str(cq.get("question_text", "")).strip(),
+                    str(cq.get("target_requirement_id") or cq.get("target_user_story_id") or ""),
+                )
+                existing = by_id.get(str(cq.get("id") or "")) or by_fingerprint.get(fingerprint)
+                if existing is not None:
+                    existing.user_answer = cq.get("user_answer")
+                    existing.is_resolved = bool(cq.get("is_resolved", False))
+                    existing.source_references = cq.get("source_references", [])
+                    existing.provenance = cq.get("provenance") or {"type": "System analysis"}
+                    existing.target_requirement_id = cq.get("target_requirement_id") or cq.get("target_user_story_id")
+                    existing.requirement_context = compact_requirement_context(
+                        cq.get("requirement_context"),
+                        cq.get("target_requirement_id") or cq.get("target_user_story_id"),
+                    )
+                    continue
                 await ClarificationQuestionRepository.create(str(project_id), {
                     "checklist_category": cq.get("checklist_category", "General"),
                     "target_user_story_id": cq.get("target_user_story_id"),
@@ -802,7 +823,14 @@ class RequirementStateRepository:
                     "user_answer": cq.get("user_answer"),
                     "is_resolved": cq.get("is_resolved", False),
                     "source_references": cq.get("source_references", []),
+                    "provenance": cq.get("provenance") or {"type": "System analysis"},
+                    "target_requirement_id": cq.get("target_requirement_id"),
+                    "requirement_context": cq.get("requirement_context"),
                 }, session, requirement_id=first_active_req_id)
+
+            # Rows absent from the incoming list are intentionally retained.
+            # In particular, an unanswered question cannot disappear merely
+            # because a later model run omitted it.
 
         # 4. Propagation for PRD & Diagrams
         if ("generated_prd" in updates and updates["generated_prd"] is not None) or ("generated_diagrams" in updates and updates["generated_diagrams"] is not None):
