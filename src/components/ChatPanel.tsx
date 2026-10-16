@@ -45,6 +45,7 @@ export function ChatPanel({ state }: { state: ProjectState }) {
     lmStudioModelLoaded,
     documents,
     canRunAgentActions,
+    agentActionsBlockedReason,
   } = state;
 
   // Clip-icon attach: uploads straight into the project knowledge base
@@ -83,6 +84,8 @@ export function ChatPanel({ state }: { state: ProjectState }) {
   const agentActionsDisabled = isLoading || isProcessing || !canRunAgentActions || llmUnavailable;
   const agentActionHint = !projectId
     ? 'Create or select a project first'
+    : agentActionsBlockedReason
+      ? agentActionsBlockedReason
     : !canRunAgentActions
       ? 'Add requirements via chat or upload a knowledge document first'
       : llmUnavailable

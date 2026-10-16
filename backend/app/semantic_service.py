@@ -778,11 +778,28 @@ async def detect_requirement_intent(raw_input: str, current_stories: Optional[Li
     #              at 0.80. Deliberately conservative: anything unrecognised stays a
     #              conversation rather than fabricating a requirement operation.
     lower_inp = raw_input.lower().strip()
+    delete_command = bool(
+        "no longer need" in lower_inp
+        or re.match(
+            r"^(?:please\s+)?(?:remove|delete|cancel|drop|discard|retire|archive)\b",
+            lower_inp,
+        )
+        or re.match(
+            r"^(?:can|could|would)\s+you\s+(?:please\s+)?(?:remove|delete|cancel|drop|discard|retire|archive)\b",
+            lower_inp,
+        )
+    )
     if lower_inp in ["hello", "hi", "thank you", "thanks", "good morning", "good afternoon", "good evening", "ok", "okay", "got it", "awesome", "great"]:
         return {
             "intent": "GENERAL_CHAT",
             "confidence": 0.95,
             "reason": "The user is providing a conversational greeting or pleasantry."
+        }
+    elif delete_command:
+        return {
+            "intent": "DELETE_REQUIREMENT",
+            "confidence": 0.85,
+            "reason": "The user is requesting to archive an existing requirement."
         }
     elif lower_inp.startswith("what") or lower_inp.startswith("explain") or lower_inp.startswith("how") or lower_inp.startswith("can you") or lower_inp.endswith("?"):
         return {
@@ -795,12 +812,6 @@ async def detect_requirement_intent(raw_input: str, current_stories: Optional[Li
             "intent": "CLARIFY_REQUIREMENT",
             "confidence": 0.85,
             "reason": "The user is requesting validation, audit, or clarification of requirements."
-        }
-    elif any(kw in lower_inp for kw in ["remove ", "delete ", "cancel ", "drop ", "no longer need", "discard ", "retire ", "archive "]):
-        return {
-            "intent": "DELETE_REQUIREMENT",
-            "confidence": 0.85,
-            "reason": "The user is requesting to remove or delete an existing requirement."
         }
     elif any(kw in lower_inp for kw in ["update ", "change ", "modify ", "adjust ", "revise ", "edit "]):
         return {

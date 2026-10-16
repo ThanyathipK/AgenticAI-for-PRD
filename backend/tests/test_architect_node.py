@@ -152,6 +152,32 @@ async def test_architect_raises_on_empty_dataset(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_scoped_regeneration_rewrites_prd_when_final_requirement_was_deleted(monkeypatch):
+    """The automatic delete cascade must produce an empty PRD, not fail."""
+    empty = copy.deepcopy(REQ_STATE)
+    empty["requirements"] = []
+    empty["user_stories"] = []
+    empty["generated_diagrams"] = "flowchart TD\n  OLD[Deleted requirement]"
+    _patch(monkeypatch, empty)
+
+    result = await agents.architect_node({
+        "project_id": "p1",
+        "current_version": 2,
+        "structured_requirements": {},
+        "stage_artifacts_only": True,
+        "regeneration_scope": {
+            "section_keys": ["product_scope"],
+            "regenerate_diagram": True,
+        },
+    })
+
+    assert result["prd_markdown"]
+    assert "\\section*{Stakeholders}" in result["prd_markdown"]
+    assert "REQ-001" not in result["prd_markdown"]
+    assert result["mermaid_diagram"] == ""
+
+
+@pytest.mark.asyncio
 async def test_architect_generates_from_requirement_without_user_stories(monkeypatch):
     """A valid requirement must not be mistaken for an empty project."""
     requirement_only = copy.deepcopy(REQ_STATE)

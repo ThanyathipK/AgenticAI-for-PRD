@@ -42,6 +42,7 @@ from app.semantic_service import (
     coerce_confidence,
     detect_requirement_intent,
     detect_semantic_changes,
+    extract_story_ticket_codes,
     match_requirement,
 )
 
@@ -121,6 +122,10 @@ class AgentState(TypedDict, total=False):
     requirement_state: RequirementState
     detected_intent: Optional[str]
     intent_confidence: Optional[float]
+    requirement_match: Optional[Dict[str, Any]]
+    archive_story_codes: List[str]
+    archive_requirement_codes: List[str]
+    archive_acceptance_criteria_ids: List[str]
     workflow_routing: Optional[dict]
     agent_message: Optional[str]
     # Full canonical text of successfully converted uploaded documents. It is
@@ -139,6 +144,120 @@ class AgentState(TypedDict, total=False):
     # pending action.  In that path the Architect may compute artifacts but
     # must not persist sections/version rows ahead of confirmation.
     stage_artifacts_only: bool
+
+
+def _bulk_archive_scope(raw_input: str) -> Optional[str]:
+    """Return an explicitly requested whole-project archive scope, if any."""
+    text = " ".join(str(raw_input or "").casefold().split())
+    if not re.search(r"\b(?:remove|delete|archive|retire|discard|drop)\b", text):
+        return None
+    if not re.search(r"\b(?:all|every|everything)\b", text):
+        return None
+    # This workflow archives requirements/stories, not individual criteria.
+    if re.search(r"\bacceptance\s+criteri(?:a|on)\b", text):
+        return None
+    if re.search(r"\b(?:requirements?|reqs?)\b", text):
+        return "ALL_REQUIREMENTS"
+    return "ALL_STORIES"
+
+
+_AC_REFERENCE_RE = re.compile(r"\bAC[\s_-]*(\d{1,4})\b", re.IGNORECASE)
+_AC_WORDING_RE = re.compile(r"\b(?:AC|acceptance\s+criteri(?:on|a))\b", re.IGNORECASE)
+_BARE_ARCHIVE_NUMBER_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:remove|delete|archive|retire|discard|drop)\s+#?0*(\d{1,4})\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _acceptance_criterion_label(story_code: str, ordinal: int) -> str:
+    """Return the stable, user-facing reference for a criterion in a story."""
+    return f"{story_code}-AC-{ordinal:03d}"
+
+
+def _resolve_acceptance_criteria_targets(
+    raw_input: str, existing_stories: List[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """Resolve explicit AC references without falling back to story-level deletion."""
+    if not _AC_WORDING_RE.search(str(raw_input or "")):
+        return None
+
+    stories_by_code = {
+        normalize_ticket_code(story.get("ticket_code")): story
+        for story in existing_stories
+        if isinstance(story, dict) and normalize_ticket_code(story.get("ticket_code"))
+    }
+    requested_story_codes = [
+        code for code in extract_story_ticket_codes(raw_input) if code in stories_by_code
+    ]
+    ordinals = [int(value) for value in _AC_REFERENCE_RE.findall(raw_input)]
+    candidates: List[Dict[str, Any]] = []
+
+    if ordinals:
+        story_codes = requested_story_codes or sorted(stories_by_code)
+        for story_code in story_codes:
+            criteria = stories_by_code[story_code].get("acceptance_criteria") or []
+            for ordinal in ordinals:
+                if 1 <= ordinal <= len(criteria):
+                    candidates.append({
+                        "story_code": story_code,
+                        "ordinal": ordinal,
+                        "text": str(criteria[ordinal - 1]),
+                        "label": _acceptance_criterion_label(story_code, ordinal),
+                    })
+
+    # A criterion's full text is also a safe, unique reference when pasted into
+    # the command. This supports “remove acceptance criterion: Given ...”.
+    if not candidates:
+        folded_input = " ".join(str(raw_input or "").casefold().split())
+        for story_code, story in stories_by_code.items():
+            for ordinal, criterion in enumerate(story.get("acceptance_criteria") or [], start=1):
+                folded_criterion = " ".join(str(criterion).casefold().split())
+                if folded_criterion and folded_criterion in folded_input:
+                    candidates.append({
+                        "story_code": story_code,
+                        "ordinal": ordinal,
+                        "text": str(criterion),
+                        "label": _acceptance_criterion_label(story_code, ordinal),
+                    })
+
+    unique = {item["label"]: item for item in candidates}
+    candidates = list(unique.values())
+    if len(candidates) == 1:
+        return {
+            "matched_requirement_id": candidates[0]["story_code"],
+            "acceptance_criteria_targets": candidates,
+            "confidence": 1.0,
+            "reason": f"The user explicitly targeted {candidates[0]['label']}.",
+            "action": "DELETE",
+            "status": "MATCHED",
+            "candidates": [candidates[0]["label"]],
+        }
+    if len(candidates) > 1:
+        labels = [item["label"] for item in candidates]
+        return {
+            "matched_requirement_id": None,
+            "acceptance_criteria_targets": [],
+            "confidence": 0.0,
+            "reason": (
+                "That acceptance-criterion number exists in more than one story. "
+                f"Specify the story too, for example {labels[0]}."
+            ),
+            "action": "CLARIFY",
+            "status": "AMBIGUOUS",
+            "candidates": labels,
+        }
+    return {
+        "matched_requirement_id": None,
+        "acceptance_criteria_targets": [],
+        "confidence": 0.0,
+        "reason": (
+            "I could not match that acceptance criterion. Use a reference such as "
+            "US-001-AC-001, or include the full criterion text."
+        ),
+        "action": "CLARIFY",
+        "status": "LOW_CONFIDENCE",
+        "candidates": [],
+    }
 
 async def get_or_init_requirement_state(project_id: str, session: Optional[AsyncSession] = None, current_version: int = 1) -> RequirementState:
     """
@@ -373,14 +492,104 @@ async def requirement_matcher_node(state: AgentState) -> Dict[str, Any]:
         code for code in _extract_requirement_codes(raw_input)
         if code in requirements_by_code
     ]
-    if len(explicit_parent_codes) == 1 and detected_intent in {"UPDATE_REQUIREMENT", "DELETE_REQUIREMENT"}:
+    existing_story_codes = {
+        normalize_ticket_code(story.get("ticket_code"))
+        for story in existing_stories
+        if isinstance(story, dict) and normalize_ticket_code(story.get("ticket_code"))
+    }
+    explicit_story_codes = [
+        code for code in extract_story_ticket_codes(raw_input)
+        if code in existing_story_codes
+    ]
+    bulk_archive_scope = _bulk_archive_scope(raw_input) if detected_intent == "DELETE_REQUIREMENT" else None
+    acceptance_criteria_match = (
+        _resolve_acceptance_criteria_targets(raw_input, existing_stories)
+        if detected_intent == "DELETE_REQUIREMENT" else None
+    )
+    bare_archive_match = _BARE_ARCHIVE_NUMBER_RE.match(raw_input or "")
+
+    if acceptance_criteria_match:
+        match_result = acceptance_criteria_match
+    elif detected_intent == "DELETE_REQUIREMENT" and bare_archive_match:
+        number = int(bare_archive_match.group(1))
+        possible_codes = [
+            code for code in (f"US-{number:03d}", f"REQ-{number:03d}")
+            if code in existing_story_codes or code in requirements_by_code
+        ]
+        if len(possible_codes) == 1 and possible_codes[0].startswith("US-"):
+            match_result = {
+                "matched_requirement_id": possible_codes[0],
+                "matched_requirement_ids": possible_codes,
+                "confidence": 1.0,
+                "reason": f"The number uniquely identifies {possible_codes[0]}.",
+                "action": "DELETE", "status": "MATCHED", "candidates": possible_codes,
+            }
+        elif len(possible_codes) == 1:
+            match_result = {
+                "matched_requirement_id": None,
+                "parent_requirement_code": possible_codes[0],
+                "parent_requirement_codes": possible_codes,
+                "confidence": 1.0,
+                "reason": f"The number uniquely identifies {possible_codes[0]}.",
+                "action": "DELETE", "status": "MATCHED", "candidates": possible_codes,
+            }
+        else:
+            match_result = {
+                "matched_requirement_id": None,
+                "confidence": 0.0,
+                "reason": (
+                    "The number alone does not identify whether you mean a parent "
+                    "requirement or a user story. Use REQ-001 or US-001."
+                ),
+                "action": "CLARIFY",
+                "status": "AMBIGUOUS" if possible_codes else "LOW_CONFIDENCE",
+                "candidates": possible_codes,
+            }
+    elif bulk_archive_scope:
+        match_result = {
+            "matched_requirement_id": None,
+            "matched_requirement_ids": (
+                sorted(existing_story_codes) if bulk_archive_scope == "ALL_STORIES" else []
+            ),
+            "parent_requirement_codes": (
+                sorted(requirements_by_code) if bulk_archive_scope == "ALL_REQUIREMENTS" else []
+            ),
+            "scope": bulk_archive_scope,
+            "confidence": 1.0,
+            "reason": "The user explicitly requested a project-wide archive.",
+            "action": "DELETE",
+            "status": "MATCHED",
+            "candidates": None,
+        }
+    elif detected_intent == "DELETE_REQUIREMENT" and explicit_story_codes:
+        match_result = {
+            "matched_requirement_id": explicit_story_codes[0],
+            "matched_requirement_ids": explicit_story_codes,
+            "confidence": 1.0,
+            "reason": "The user explicitly targeted the listed user story code(s).",
+            "action": "DELETE",
+            "status": "MATCHED",
+            "candidates": explicit_story_codes,
+        }
+    elif detected_intent == "DELETE_REQUIREMENT" and explicit_parent_codes:
+        match_result = {
+            "matched_requirement_id": None,
+            "parent_requirement_code": explicit_parent_codes[0],
+            "parent_requirement_codes": explicit_parent_codes,
+            "confidence": 1.0,
+            "reason": "The user explicitly targeted the listed parent requirement code(s).",
+            "action": "DELETE",
+            "status": "MATCHED",
+            "candidates": explicit_parent_codes,
+        }
+    elif len(explicit_parent_codes) == 1 and detected_intent == "UPDATE_REQUIREMENT":
         parent_code = explicit_parent_codes[0]
         match_result = {
             "matched_requirement_id": None,
             "parent_requirement_code": parent_code,
             "confidence": 1.0,
             "reason": f"The user explicitly targeted parent requirement {parent_code}.",
-            "action": "UPDATE" if detected_intent == "UPDATE_REQUIREMENT" else "DELETE",
+            "action": "UPDATE",
             "status": "MATCHED",
             "candidates": [parent_code],
         }
@@ -1739,159 +1948,308 @@ async def delete_requirement_node(state: AgentState) -> Dict[str, Any]:
     Handles DELETE_REQUIREMENT intent by archiving the matched requirement/user story.
     Reads the requirement_match from state to identify which story to archive.
     """
-    logger.info("Executing delete_requirement_node to archive requirements.")
+    logger.info("Executing delete_requirement_node to stage an archive preview.")
     project_id = state.get("project_id", "PROJ-UNKNOWN")
-    
-    # Use session from state if available, otherwise let function create one
     db_session = state.get("db_session")
-    req_state = await get_or_init_requirement_state(project_id, session=db_session, current_version=state.get("current_version", 1))
-    
-    # MATCHING 3.3 — Consumer #3 (DELETE flow): the archive target + its confidence
-    #             come straight from the matcher result; below 0.75 the node refuses
-    #             to archive anything and asks for confirmation instead.
-    # Get the requirement match result
+    req_state = await get_or_init_requirement_state(
+        project_id, session=db_session, current_version=state.get("current_version", 1)
+    )
     requirement_match = state.get("requirement_match") or {}
-    matched_req_id = requirement_match.get("matched_requirement_id")
+    matched_story_id = requirement_match.get("matched_requirement_id")
     match_confidence = float(requirement_match.get("confidence", 0.0))
     match_action = requirement_match.get("action", "DELETE")
-    
-    logger.info(f"[DELETE NODE] Matched requirement: {matched_req_id}, confidence: {match_confidence}, action: {match_action}")
-    
-    existing_stories = list(req_state.get("user_stories", []))
-    
-    if matched_req_id and match_confidence >= 0.75:
-        # Archive the specific matched story
-        archived_stories = []
-        matched_story_found = False
-        matched_story_locked = False
-        for story in existing_stories:
-            tc = story.get("ticket_code", "")
-            if tc and normalize_ticket_code(tc) == normalize_ticket_code(matched_req_id):
-                matched_story_found = True
-                # LOCK ENFORCEMENT: Never archive a locked user story
-                if story.get("is_locked", False):
-                    matched_story_locked = True
-                    logger.warning(
-                        f"[DELETE NODE] Skipping archive of locked user story {tc} "
-                        f"(locked_by={story.get('locked_by', 'unknown')}). AI removal blocked."
-                    )
-                    archived_stories.append(story)
-                else:
-                    archived_story = dict(story)
-                    archived_story["status"] = "archived"
-                    archived_story["change_type"] = "archived"
-                    archived_stories.append(archived_story)
-                    logger.info(f"[DELETE NODE] Archiving story: {tc}")
-            else:
-                archived_stories.append(story)
-        
-        # LOCK ENFORCEMENT: If the matched story is locked, block the deletion entirely
-        if matched_story_found and matched_story_locked:
-            lock_msg = (
-                f"Cannot delete locked requirement.\n"
-                f"Requirement `{matched_req_id}` is locked and cannot be deleted. "
-                f"Unlock it before deleting."
+    acceptance_criteria_targets = [
+        target for target in (requirement_match.get("acceptance_criteria_targets") or [])
+        if isinstance(target, dict)
+    ]
+
+    existing_stories = [s for s in (req_state.get("user_stories") or []) if isinstance(s, dict)]
+    requirements = [r for r in (req_state.get("requirements") or []) if isinstance(r, dict)]
+
+    target_story_codes = {
+        normalize_ticket_code(code)
+        for code in (requirement_match.get("matched_requirement_ids") or [])
+        if normalize_ticket_code(code)
+    }
+    if not acceptance_criteria_targets and matched_story_id and normalize_ticket_code(matched_story_id):
+        target_story_codes.add(normalize_ticket_code(matched_story_id))
+    target_requirement_codes = {
+        _normalize_requirement_code(code)
+        for code in (requirement_match.get("parent_requirement_codes") or [])
+        if _normalize_requirement_code(code)
+    }
+    parent_code = _normalize_requirement_code(requirement_match.get("parent_requirement_code"))
+    if parent_code:
+        target_requirement_codes.add(parent_code)
+
+    if match_confidence >= 0.75 and (
+        target_story_codes or target_requirement_codes or acceptance_criteria_targets
+    ):
+        stories_by_code = {
+            normalize_ticket_code(story.get("ticket_code")): story
+            for story in existing_stories
+            if normalize_ticket_code(story.get("ticket_code"))
+        }
+        requirement_by_story: Dict[str, Dict[str, Any]] = {}
+        requirements_by_code: Dict[str, Dict[str, Any]] = {}
+        for requirement in requirements:
+            req_code = _normalize_requirement_code(requirement.get("requirement_code"))
+            if req_code:
+                requirements_by_code[req_code] = requirement
+            for story in requirement.get("user_stories") or []:
+                if isinstance(story, dict):
+                    code = normalize_ticket_code(story.get("ticket_code"))
+                    if code:
+                        requirement_by_story[code] = requirement
+
+        codes_to_check = set(target_story_codes)
+        codes_to_check.update(
+            normalize_ticket_code(target.get("story_code"))
+            for target in acceptance_criteria_targets
+            if normalize_ticket_code(target.get("story_code"))
+        )
+        for req_code in target_requirement_codes:
+            for story in (requirements_by_code.get(req_code) or {}).get("user_stories", []):
+                if isinstance(story, dict):
+                    code = normalize_ticket_code(story.get("ticket_code"))
+                    if code:
+                        codes_to_check.add(code)
+
+        # Criteria locks are not embedded in the flattened story payload, so
+        # inspect them explicitly before offering an archive confirmation.
+        locked_criteria_by_story: Dict[str, List[str]] = {}
+        criterion_rows_by_key: Dict[tuple[str, str], tuple[str, bool]] = {}
+        if db_session is not None and codes_to_check:
+            from sqlalchemy import String, cast, func, select
+            from app.models import AcceptanceCriteriaModel, UserStoryModel
+
+            locked_rows = await db_session.execute(
+                select(UserStoryModel.ticket_code, AcceptanceCriteriaModel.locked_by)
+                .join(
+                    AcceptanceCriteriaModel,
+                    cast(AcceptanceCriteriaModel.user_story_id, String)
+                    == cast(UserStoryModel.id, String),
+                )
+                .where(
+                    cast(UserStoryModel.project_id, String) == str(project_id),
+                    UserStoryModel.ticket_code.in_(codes_to_check),
+                    func.lower(AcceptanceCriteriaModel.status) == "active",
+                    AcceptanceCriteriaModel.is_locked.is_(True),
+                )
             )
-            logger.warning(f"[DELETE NODE] Blocked deletion of locked requirement {matched_req_id}.")
+            for ticket_code, locked_by in locked_rows.all():
+                locked_criteria_by_story.setdefault(normalize_ticket_code(ticket_code), []).append(
+                    str(locked_by or "unknown")
+                )
+
+            if acceptance_criteria_targets:
+                criterion_rows = await db_session.execute(
+                    select(
+                        UserStoryModel.ticket_code,
+                        AcceptanceCriteriaModel.id,
+                        AcceptanceCriteriaModel.criteria_text,
+                        AcceptanceCriteriaModel.is_locked,
+                    )
+                    .join(
+                        AcceptanceCriteriaModel,
+                        cast(AcceptanceCriteriaModel.user_story_id, String)
+                        == cast(UserStoryModel.id, String),
+                    )
+                    .where(
+                        cast(UserStoryModel.project_id, String) == str(project_id),
+                        UserStoryModel.ticket_code.in_(codes_to_check),
+                        func.lower(AcceptanceCriteriaModel.status) == "active",
+                    )
+                )
+                for ticket_code, criterion_id, criterion_text, is_locked in criterion_rows.all():
+                    criterion_rows_by_key[(
+                        normalize_ticket_code(ticket_code),
+                        " ".join(str(criterion_text).split()),
+                    )] = (str(criterion_id), bool(is_locked))
+
+        blocked: List[str] = []
+        archive_requirement_codes: set[str] = set()
+        archive_story_codes: set[str] = set()
+        archive_criteria_keys: set[tuple[str, str]] = set()
+        archive_acceptance_criteria_ids: set[str] = set()
+
+        for target in acceptance_criteria_targets:
+            story_code = normalize_ticket_code(target.get("story_code"))
+            criterion_text = " ".join(str(target.get("text") or "").split())
+            label = str(target.get("label") or f"{story_code} acceptance criterion")
+            story = stories_by_code.get(story_code) or {}
+            parent = requirement_by_story.get(story_code) or {}
+            db_criterion = criterion_rows_by_key.get((story_code, criterion_text))
+            if parent.get("is_locked") or story.get("is_locked") or (
+                db_criterion is not None and db_criterion[1]
+            ):
+                blocked.append(f"{label} (locked)")
+                continue
+            archive_criteria_keys.add((story_code, criterion_text))
+            if db_criterion is not None:
+                archive_acceptance_criteria_ids.add(db_criterion[0])
+
+        for req_code in sorted(target_requirement_codes):
+            requirement = requirements_by_code.get(req_code)
+            if not requirement:
+                continue
+            child_codes = {
+                normalize_ticket_code(story.get("ticket_code"))
+                for story in (requirement.get("user_stories") or [])
+                if isinstance(story, dict) and normalize_ticket_code(story.get("ticket_code"))
+            }
+            locked_children = [
+                code for code in child_codes
+                if (stories_by_code.get(code) or {}).get("is_locked") or locked_criteria_by_story.get(code)
+            ]
+            if requirement.get("is_locked") or locked_children:
+                detail = f"{req_code} (locked)"
+                if locked_children:
+                    detail = f"{req_code} (contains locked items: {', '.join(sorted(locked_children))})"
+                blocked.append(detail)
+                continue
+            archive_requirement_codes.add(req_code)
+            archive_story_codes.update(child_codes)
+
+        for code in sorted(target_story_codes - archive_story_codes):
+            story = stories_by_code.get(code)
+            if not story:
+                continue
+            parent = requirement_by_story.get(code) or {}
+            if parent.get("is_locked") or story.get("is_locked") or locked_criteria_by_story.get(code):
+                blocked.append(f"{code} (locked)")
+                continue
+            archive_story_codes.add(code)
+
+        if archive_requirement_codes or archive_story_codes or archive_criteria_keys:
+            next_requirements = []
+            for requirement in requirements:
+                req_code = _normalize_requirement_code(requirement.get("requirement_code"))
+                if req_code in archive_requirement_codes:
+                    continue
+                next_requirement = copy.deepcopy(requirement)
+                kept_nested_stories = []
+                for story in (next_requirement.get("user_stories") or []):
+                    story_code = normalize_ticket_code(story.get("ticket_code"))
+                    if story_code in archive_story_codes:
+                        continue
+                    next_story = copy.deepcopy(story)
+                    next_story["acceptance_criteria"] = [
+                        criterion for criterion in (next_story.get("acceptance_criteria") or [])
+                        if (story_code, " ".join(str(criterion).split())) not in archive_criteria_keys
+                    ]
+                    kept_nested_stories.append(next_story)
+                next_requirement["user_stories"] = kept_nested_stories
+                next_requirements.append(next_requirement)
+
+            remaining_stories = []
+            for story in existing_stories:
+                story_code = normalize_ticket_code(story.get("ticket_code"))
+                if story_code in archive_story_codes:
+                    continue
+                next_story = copy.deepcopy(story)
+                next_story["acceptance_criteria"] = [
+                    criterion for criterion in (next_story.get("acceptance_criteria") or [])
+                    if (story_code, " ".join(str(criterion).split())) not in archive_criteria_keys
+                ]
+                remaining_stories.append(next_story)
+            req_state["requirements"] = next_requirements
+            req_state["user_stories"] = remaining_stories
+            req_state["acceptance_criteria"] = [
+                criterion
+                for story in remaining_stories
+                for criterion in (story.get("acceptance_criteria") or [])
+            ]
+            req_state["current_workflow_state"] = "delete_requirement_node"
+            req_state["validation_status"] = "valid"
+
+            targets = sorted(archive_requirement_codes | archive_story_codes)
+            targets.extend(sorted(
+                str(target.get("label"))
+                for target in acceptance_criteria_targets
+                if (
+                    normalize_ticket_code(target.get("story_code")),
+                    " ".join(str(target.get("text") or "").split()),
+                ) in archive_criteria_keys
+            ))
+            archive_msg = (
+                "Archive confirmation required.\n"
+                f"The following items will be archived only after you select Save: {', '.join(targets)}."
+            )
+            if blocked:
+                archive_msg += (
+                    "\nLocked items were excluded and will remain active: "
+                    f"{', '.join(blocked)}. Unlock them before trying again."
+                )
+            await ConversationMessageRepository.save_message(
+                project_id=project_id,
+                role="assistant",
+                message=archive_msg,
+                workflow_state="delete_requirement_node",
+                intent="DELETE_REQUIREMENT",
+            )
+            return {
+                "requirement_state": req_state,
+                "agent_message": archive_msg,
+                "current_version": req_state.get("version_number", 1),
+                "archive_story_codes": sorted(archive_story_codes),
+                "archive_requirement_codes": sorted(archive_requirement_codes),
+                "archive_acceptance_criteria_ids": sorted(archive_acceptance_criteria_ids),
+            }
+
+        if blocked:
+            lock_msg = (
+                "Nothing was archived because the matched item is locked: "
+                f"{', '.join(blocked)}. Unlock it before trying again."
+            )
             await ConversationMessageRepository.save_message(
                 project_id=project_id,
                 role="assistant",
                 message=lock_msg,
                 workflow_state="delete_requirement_node",
-                intent="DELETE_REQUIREMENT"
+                intent="DELETE_REQUIREMENT",
             )
             return {
                 "requirement_state": req_state,
                 "agent_message": lock_msg,
-                "current_version": req_state.get("version_number", 1)
+                "current_version": req_state.get("version_number", 1),
             }
-        
-        req_state["user_stories"] = archived_stories
-        req_state["current_workflow_state"] = "delete_requirement_node"
-        req_state["validation_status"] = "valid"
-        
-        # Update requirements list to reflect archived stories
-        reqs = req_state.get("requirements", [])
-        for req_item in reqs:
-            if isinstance(req_item, dict):
-                req_stories = req_item.get("user_stories", [])
-                updated_req_stories = []
-                for rs in req_stories:
-                    tc = rs.get("ticket_code", "")
-                    if tc and normalize_ticket_code(tc) == normalize_ticket_code(matched_req_id):
-                        # LOCK ENFORCEMENT: Never archive a locked user story
-                        if rs.get("is_locked", False):
-                            logger.warning(
-                                f"[DELETE NODE] Skipping archive of locked user story {tc} "
-                                f"(locked_by={rs.get('locked_by', 'unknown')}). AI removal blocked."
-                            )
-                            updated_req_stories.append(rs)
-                        else:
-                            archived_rs = dict(rs)
-                            archived_rs["status"] = "archived"
-                            archived_rs["change_type"] = "archived"
-                            updated_req_stories.append(archived_rs)
-                    else:
-                        updated_req_stories.append(rs)
-                req_item["user_stories"] = updated_req_stories
-        
-        # Update acceptance criteria
-        all_ac = []
-        for story in archived_stories:
-            if story.get("status", "active") == "active":
-                all_ac.extend(story.get("acceptance_criteria", []))
-        req_state["acceptance_criteria"] = all_ac
-        
-        delete_msg = f"Requirement deleted.\nSuccessfully archived requirement `{matched_req_id}` as requested."
-        await ConversationMessageRepository.save_message(
-            project_id=project_id,
-            role="assistant",
-            message=delete_msg,
-            workflow_state="delete_requirement_node",
-            intent="DELETE_REQUIREMENT"
-        )
-        
-        return {
-            "requirement_state": req_state,
-            "agent_message": delete_msg,
-            "current_version": req_state.get("version_number", 1)
-        }
-    else:
-        # No clear match - ask for clarification
-        logger.warning(f"[DELETE NODE] No clear match for deletion. matched_req_id={matched_req_id}, confidence={match_confidence}")
-        
-        clarification_text = f"I'm not sure which requirement you want to delete. Please specify the ticket code (e.g., US-001)."
-        if match_action == "AMBIGUOUS":
-            candidates = requirement_match.get("candidates", [])
-            if candidates:
-                clarification_text = f"Your request could refer to multiple requirements: {', '.join(candidates)}. Which requirement did you intend to delete?"
-        
-        cqs = [{
-            "checklist_category": "Delete Requirement Ambiguity",
-            "target_user_story_id": matched_req_id,
-            "question_text": clarification_text,
-            "user_answer": None,
-            "is_resolved": False
-        }]
-        existing_cqs = req_state.get("clarification_questions", []) or []
-        preserved_cqs = [q for q in existing_cqs if not q.get("is_resolved", False)]
-        req_state["clarification_questions"] = preserved_cqs + cqs
-        req_state["validation_status"] = "invalid"
-        req_state["current_workflow_state"] = "delete_requirement_node"
-        
-        await ConversationMessageRepository.save_message(
-            project_id=project_id,
-            role="assistant",
-            message=f"Clarification needed (delete):\n{clarification_text}",
-            workflow_state="delete_requirement_node",
-            intent="CLARIFY_REQUIREMENT"
-        )
-        
-        return {
-            "requirement_state": req_state,
-            "agent_message": clarification_text,
-            "current_version": req_state.get("version_number", 1)
-        }
+
+    logger.warning(
+        "[DELETE NODE] No clear archive target. matched=%s confidence=%s",
+        matched_story_id, match_confidence,
+    )
+    clarification_text = "I'm not sure which item you want to archive. Please specify a ticket code (for example, US-001 or REQ-001)."
+    if match_action == "AMBIGUOUS":
+        candidates = requirement_match.get("candidates", [])
+        if candidates:
+            clarification_text = f"Your request could refer to multiple items: {', '.join(candidates)}. Which item should be archived?"
+
+    cqs = [{
+        "checklist_category": "Archive Requirement Ambiguity",
+        "target_user_story_id": matched_story_id,
+        "question_text": clarification_text,
+        "user_answer": None,
+        "is_resolved": False,
+    }]
+    existing_cqs = req_state.get("clarification_questions", []) or []
+    req_state["clarification_questions"] = [
+        q for q in existing_cqs if not q.get("is_resolved", False)
+    ] + cqs
+    req_state["validation_status"] = "invalid"
+    req_state["current_workflow_state"] = "delete_requirement_node"
+    await ConversationMessageRepository.save_message(
+        project_id=project_id,
+        role="assistant",
+        message=f"Clarification needed (archive):\n{clarification_text}",
+        workflow_state="delete_requirement_node",
+        intent="CLARIFY_REQUIREMENT",
+    )
+    return {
+        "requirement_state": req_state,
+        "agent_message": clarification_text,
+        "current_version": req_state.get("version_number", 1),
+    }
 
 
 def _dedupe_dicts(items: List[Dict[str, Any]], key_fields: tuple[str, ...]) -> List[Dict[str, Any]]:
@@ -2635,10 +2993,16 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
         if isinstance(requirement, dict)
         and any(str(requirement.get(field) or "").strip() for field in ("title", "description"))
     ]
-    if not all_stories and not nested and not meaningful_requirements:
+    empty_requirement_board = not all_stories and not nested and not meaningful_requirements
+    if empty_requirement_board and regeneration_scope is None:
         raise ValueError(
             f"Cannot compile PRD for project {project_id}: no active requirements "
             "or user stories are available. Gather requirements before generating a PRD."
+        )
+    if empty_requirement_board:
+        logger.info(
+            "Architect Node: refreshing the scoped PRD to an empty-requirements state "
+            "after the final active requirement was archived."
         )
 
     version_history_summaries = state.get("version_history_summaries", "No previous revision logs available.")
@@ -2769,8 +3133,14 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
     #             previously stored diagram when the model fails or returns something
     #             that is not a flowchart — a diagram hiccup can never lose the PRD.
     regenerate_diagram = regeneration_scope is None or bool(regeneration_scope.get("regenerate_diagram"))
-    fresh_diagram = await _generate_flow_diagram(project_id, req_state, data) if regenerate_diagram else ""
-    req_state["generated_diagrams"] = fresh_diagram or req_state.get("generated_diagrams", "")
+    fresh_diagram = (
+        await _generate_flow_diagram(project_id, req_state, data)
+        if regenerate_diagram and not empty_requirement_board else ""
+    )
+    req_state["generated_diagrams"] = (
+        "" if empty_requirement_board and regenerate_diagram
+        else fresh_diagram or req_state.get("generated_diagrams", "")
+    )
     req_state["current_workflow_state"] = "architect_node"
 
     # PART-LEVEL PRD SYNC: merge the freshly generated document into the
@@ -2909,7 +3279,7 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
 # 1.2 route_on_demand(state) → node name:
 #       target_agent == "auditor"                      → auditor_node      (AUDITOR flow)
 #       target_agent == "architect"                    → architect_node    (ARCHITECT flow)
-#       target_agent == "delete_requirement"           → delete_requirement_node
+#       target_agent == "delete_requirement"           → requirement_matcher_node
 #         OR detected_intent == "DELETE_REQUIREMENT"
 #       otherwise                                      → router_node       (ROUTING 2.x)
 #     Keys read: target_agent, detected_intent (both declared in AgentState 74-92).
@@ -2935,8 +3305,8 @@ def route_on_demand(state: AgentState) -> str:
         logger.info("Routing to architect_node on-demand.")
         return "architect_node"
     elif target == "delete_requirement" or detected_intent == "DELETE_REQUIREMENT":
-        logger.info("Routing to delete_requirement_node on-demand.")
-        return "delete_requirement_node"
+        logger.info("Routing delete request through requirement matching before archive preview.")
+        return "requirement_matcher_node"
     else:
         logger.info("Routing to router_node before Gatherer.")
         return "router_node"
@@ -2977,6 +3347,12 @@ def route_from_matcher(state: AgentState) -> str:
     Routes based on requirement matcher validation status.
     """
     req_state = state.get("requirement_state", {})
+    if state.get("detected_intent") == "DELETE_REQUIREMENT":
+        match = state.get("requirement_match") or {}
+        status_value = str(match.get("status") or "").upper()
+        if status_value in {"AMBIGUOUS", "LOW_CONFIDENCE"} or float(match.get("confidence", 0.0)) < 0.75:
+            return END
+        return "delete_requirement_node"
     if req_state.get("validation_status") == "invalid":
         return END
     return "gatherer_node"
@@ -2984,7 +3360,7 @@ def route_from_matcher(state: AgentState) -> str:
 # ==========================================
 # ROUTING 1.0 — Graph topology (whole picture):
 #   START --route_on_demand(1.2)--> router_node | auditor_node | architect_node
-#                                    | delete_requirement_node
+#                                    | requirement_matcher_node (delete)
 #   router_node --route_from_router(4.1)--> requirement_matcher_node
 #                                    | auditor_node | architect_node | END
 #   requirement_matcher_node --route_from_matcher(4.2)--> gatherer_node | END
@@ -3014,6 +3390,7 @@ workflow.add_conditional_edges(
     route_on_demand,
     {
         "router_node": "router_node",
+        "requirement_matcher_node": "requirement_matcher_node",
         "auditor_node": "auditor_node",
         "architect_node": "architect_node",
         "delete_requirement_node": "delete_requirement_node"
@@ -3033,7 +3410,8 @@ workflow.add_conditional_edges(
     }
 )
 
-# Route from requirement_matcher_node to gatherer_node or END (if ambiguous / low confidence)
+# Route from requirement_matcher_node to the appropriate mutation node or END
+# (if ambiguous / low confidence).
 # ROUTING 4.4 — Matcher gate: an ambiguous/low-confidence match (validation_status
 #             == "invalid", set by the matcher) ends the run with the clarification
 #             question instead of letting the gatherer rewrite the wrong story.
@@ -3042,6 +3420,7 @@ workflow.add_conditional_edges(
     route_from_matcher,
     {
         "gatherer_node": "gatherer_node",
+        "delete_requirement_node": "delete_requirement_node",
         END: END
     }
 )

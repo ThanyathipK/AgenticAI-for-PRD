@@ -1186,15 +1186,25 @@ async def _process_requirements_pipeline(
             and not stale_result
             and requirement_content_changed
         ):
+            pending_action_type = "ARCHIVE" if detected_intent == "DELETE_REQUIREMENT" else "MERGE"
             pending_action = await PendingActionRepository.create(
                 project_id=request.project_id,
                 data={
-                    "action_type": "MERGE",
+                    "action_type": pending_action_type,
                     "target_requirement_id": None,
                     "original_user_message": request.raw_input or "",
                     "proposed_changes": req_state,
-                    "affected_user_story_ids": [],
-                    "affected_acceptance_criteria_ids": [],
+                    # Archive actions store canonical REQ/US codes here for a
+                    # second lock check at confirmation time. Other merge types
+                    # keep the established empty-list behavior.
+                    "affected_user_story_ids": (
+                        final_state.get("archive_requirement_codes", [])
+                        + final_state.get("archive_story_codes", [])
+                    ),
+                    "affected_acceptance_criteria_ids": (
+                        final_state.get("archive_acceptance_criteria_ids", [])
+                        if detected_intent == "DELETE_REQUIREMENT" else []
+                    ),
                     "workflow_stage": req_state.get("current_workflow_state", "gatherer_node")
                 },
                 expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
@@ -1315,6 +1325,10 @@ async def _process_requirements_pipeline(
             "message": agent_message,
             "pending_merge": pending_action_id is not None,
             "pending_action_id": pending_action_id,
+            "pending_action_type": (
+                "ARCHIVE" if pending_action_id is not None and detected_intent == "DELETE_REQUIREMENT" else
+                "MERGE" if pending_action_id is not None else None
+            ),
             "no_changes": no_changes,
             "stale_result": stale_result,
             "audit_auto_persisted": audit_auto_persisted,

@@ -154,6 +154,220 @@ async def test_matcher_resolves_explicit_parent_requirement_without_story_guess(
 
 
 @pytest.mark.asyncio
+async def test_delete_matcher_supports_explicit_multiple_stories_and_remove_all(monkeypatch):
+    _patch(monkeypatch, REQ_STATE, llm_result={})
+
+    async def story_matcher_must_not_run(*_args, **_kwargs):
+        raise AssertionError("explicit delete scopes must bypass story-level inference")
+
+    monkeypatch.setattr(agents, "match_requirement", story_matcher_must_not_run)
+    explicit = await agents.requirement_matcher_node({
+        "project_id": "p1",
+        "raw_input": "Archive US-001 and US-003",
+        "detected_intent": "DELETE_REQUIREMENT",
+        "intent_confidence": 0.99,
+        "current_version": 5,
+    })
+    assert explicit["requirement_match"]["matched_requirement_ids"] == ["US-001", "US-003"]
+
+    all_items = await agents.requirement_matcher_node({
+        "project_id": "p1",
+        "raw_input": "Remove all requirements",
+        "detected_intent": "DELETE_REQUIREMENT",
+        "intent_confidence": 0.99,
+        "current_version": 5,
+    })
+    assert all_items["requirement_match"]["scope"] == "ALL_REQUIREMENTS"
+    assert all_items["requirement_match"]["parent_requirement_codes"] == ["REQ-001", "REQ-002"]
+
+
+@pytest.mark.asyncio
+async def test_delete_matcher_does_not_guess_ambiguous_bare_number(monkeypatch):
+    _patch(monkeypatch, REQ_STATE, llm_result={})
+
+    async def story_matcher_must_not_run(*_args, **_kwargs):
+        raise AssertionError("bare archive numbers must be resolved deterministically")
+
+    monkeypatch.setattr(agents, "match_requirement", story_matcher_must_not_run)
+    result = await agents.requirement_matcher_node({
+        "project_id": "p1",
+        "raw_input": "remove 001",
+        "detected_intent": "DELETE_REQUIREMENT",
+        "intent_confidence": 0.99,
+        "current_version": 5,
+    })
+
+    match = result["requirement_match"]
+    assert match["status"] == "AMBIGUOUS"
+    assert match["candidates"] == ["US-001", "REQ-001"]
+    assert result["requirement_state"]["validation_status"] == "invalid"
+
+
+@pytest.mark.asyncio
+async def test_delete_matcher_maps_story_scoped_acceptance_criterion(monkeypatch):
+    _patch(monkeypatch, REQ_STATE, llm_result={})
+
+    async def story_matcher_must_not_run(*_args, **_kwargs):
+        raise AssertionError("explicit AC references must bypass story inference")
+
+    monkeypatch.setattr(agents, "match_requirement", story_matcher_must_not_run)
+    result = await agents.requirement_matcher_node({
+        "project_id": "p1",
+        "raw_input": "remove US-001-AC-001",
+        "detected_intent": "DELETE_REQUIREMENT",
+        "intent_confidence": 0.99,
+        "current_version": 5,
+    })
+
+    match = result["requirement_match"]
+    assert match["status"] == "MATCHED"
+    assert match["acceptance_criteria_targets"][0]["label"] == "US-001-AC-001"
+
+
+@pytest.mark.asyncio
+async def test_delete_node_removes_only_target_acceptance_criterion(monkeypatch):
+    _patch(monkeypatch, REQ_STATE)
+    criterion = US_001["acceptance_criteria"][0]
+    result = await agents.delete_requirement_node({
+        "project_id": "p1",
+        "current_version": 5,
+        "requirement_match": {
+            "matched_requirement_id": "US-001",
+            "acceptance_criteria_targets": [{
+                "story_code": "US-001",
+                "ordinal": 1,
+                "text": criterion,
+                "label": "US-001-AC-001",
+            }],
+            "confidence": 1.0,
+            "action": "DELETE",
+            "status": "MATCHED",
+        },
+    })
+
+    state = result["requirement_state"]
+    assert [story["ticket_code"] for story in state["user_stories"]] == ["US-001", "US-002", "US-003"]
+    assert state["user_stories"][0]["acceptance_criteria"] == []
+    assert _story_codes_by_requirement(state["requirements"]) == {
+        "REQ-001": ["US-001", "US-002"],
+        "REQ-002": ["US-003"],
+    }
+    assert result["archive_story_codes"] == []
+    assert "US-001-AC-001" in result["agent_message"]
+
+
+@pytest.mark.asyncio
+async def test_delete_node_stages_archive_by_omitting_story_until_confirmation(monkeypatch):
+    saved, _ = _patch(monkeypatch, REQ_STATE)
+    result = await agents.delete_requirement_node({
+        "project_id": "p1",
+        "current_version": 5,
+        "requirement_match": {
+            "matched_requirement_id": "US-002",
+            "matched_requirement_ids": ["US-002"],
+            "confidence": 1.0,
+            "action": "DELETE",
+            "status": "MATCHED",
+        },
+    })
+
+    assert [story["ticket_code"] for story in result["requirement_state"]["user_stories"]] == ["US-001", "US-003"]
+    assert _story_codes_by_requirement(result["requirement_state"]["requirements"]) == {
+        "REQ-001": ["US-001"],
+        "REQ-002": ["US-003"],
+    }
+    assert result["archive_story_codes"] == ["US-002"]
+    assert "only after you select Save" in result["agent_message"]
+    assert saved and "Archive confirmation required" in saved[0]["message"]
+
+
+@pytest.mark.asyncio
+async def test_delete_node_keeps_locked_story_and_tells_user_to_unlock(monkeypatch):
+    locked_state = copy.deepcopy(REQ_STATE)
+    for story in locked_state["user_stories"]:
+        if story["ticket_code"] == "US-002":
+            story["is_locked"] = True
+            story["locked_by"] = "product-owner"
+    for requirement in locked_state["requirements"]:
+        for story in requirement["user_stories"]:
+            if story["ticket_code"] == "US-002":
+                story["is_locked"] = True
+                story["locked_by"] = "product-owner"
+
+    _patch(monkeypatch, locked_state)
+    result = await agents.delete_requirement_node({
+        "project_id": "p1",
+        "current_version": 5,
+        "requirement_match": {
+            "matched_requirement_id": "US-002",
+            "confidence": 1.0,
+            "action": "DELETE",
+            "status": "MATCHED",
+        },
+    })
+
+    assert result["requirement_state"]["user_stories"] == locked_state["user_stories"]
+    assert "locked" in result["agent_message"].lower()
+    assert "unlock" in result["agent_message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_compiled_workflow_routes_delete_matcher_to_archive_node(monkeypatch):
+    """The graph's branch table must include every value route_from_matcher returns."""
+    _patch(monkeypatch, REQ_STATE)
+
+    result = await agents.prd_workflow.ainvoke({
+        "project_id": "p1",
+        "raw_input": "Archive US-002",
+        "target_agent": "delete_requirement",
+        "detected_intent": "DELETE_REQUIREMENT",
+        "intent_confidence": 0.99,
+        "current_version": 5,
+        "requirement_state": copy.deepcopy(REQ_STATE),
+    })
+
+    assert result["archive_story_codes"] == ["US-002"]
+    assert result["requirement_state"]["current_workflow_state"] == "delete_requirement_node"
+
+
+@pytest.mark.asyncio
+async def test_delete_lock_query_casts_legacy_postgres_uuid_columns(monkeypatch):
+    """Production may retain VARCHAR IDs while ORM metadata declares UUID."""
+    from sqlalchemy.dialects import postgresql
+
+    class EmptyRows:
+        def all(self):
+            return []
+
+    class CapturingSession:
+        def __init__(self):
+            self.statements = []
+
+        async def execute(self, statement):
+            self.statements.append(statement)
+            return EmptyRows()
+
+    session = CapturingSession()
+    _patch(monkeypatch, REQ_STATE)
+    await agents.delete_requirement_node({
+        "project_id": "11111111-1111-1111-1111-111111111111",
+        "current_version": 5,
+        "db_session": session,
+        "requirement_match": {
+            "matched_requirement_id": "US-002",
+            "confidence": 1.0,
+            "action": "DELETE",
+            "status": "MATCHED",
+        },
+    })
+
+    sql = str(session.statements[0].compile(dialect=postgresql.dialect()))
+    assert "CAST(user_stories.project_id AS VARCHAR)" in sql
+    assert "CAST(acceptance_criteria.user_story_id AS VARCHAR)" in sql
+    assert "CAST(user_stories.id AS VARCHAR)" in sql
+
+
+@pytest.mark.asyncio
 async def test_multi_requirement_output_does_not_duplicate_existing_stories(monkeypatch):
     """The old node ran one merge PER LLM requirement over the whole backlog,
     duplicating every existing story into every requirement group."""

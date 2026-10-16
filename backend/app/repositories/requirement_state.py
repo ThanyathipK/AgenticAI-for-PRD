@@ -8,7 +8,7 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import String, cast, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -478,10 +478,11 @@ class RequirementStateRepository:
                 touched_req_ids.add(str(created_req_id))
 
                 # ---- Process User Stories for this requirement ----
-                if not stories:
-                    continue
-
                 # Load all existing stories for this specific requirement
+                # even when the incoming list is empty. An empty list is the
+                # explicit archive-all-children representation used by the
+                # confirmation workflow; skipping it would leave the database
+                # stories active after the preview said they were removed.
                 stmt_stories = select(UserStoryModel).where(UserStoryModel.requirement_id == created_req_id)
                 res_stories = await session.execute(stmt_stories)
                 db_stories = res_stories.scalars().all()
@@ -585,7 +586,9 @@ class RequirementStateRepository:
                     touched_story_ids.append(db_story.id)
 
                     # Sync acceptance criteria for this story
-                    stmt_ac = select(AcceptanceCriteriaModel).where(AcceptanceCriteriaModel.user_story_id == db_story.id)
+                    stmt_ac = select(AcceptanceCriteriaModel).where(
+                        cast(AcceptanceCriteriaModel.user_story_id, String) == str(db_story.id)
+                    )
                     res_ac = await session.execute(stmt_ac)
                     db_ac_list = res_ac.scalars().all()
 
@@ -686,7 +689,7 @@ class RequirementStateRepository:
                         s_model.version = s_model.version + 1
 
                         stmt_story_ac = select(AcceptanceCriteriaModel).where(
-                            AcceptanceCriteriaModel.user_story_id == s_id,
+                            cast(AcceptanceCriteriaModel.user_story_id, String) == str(s_id),
                             AcceptanceCriteriaModel.status == "active"
                         )
                         res_story_ac = await session.execute(stmt_story_ac)
@@ -732,6 +735,22 @@ class RequirementStateRepository:
                             orphan_story.status = "archived"
                             orphan_story.change_type = "archived"
                             orphan_story.version = orphan_story.version + 1
+
+                            stmt_orphan_ac = select(AcceptanceCriteriaModel).where(
+                                cast(AcceptanceCriteriaModel.user_story_id, String) == str(orphan_story.id),
+                                AcceptanceCriteriaModel.status == "active",
+                            )
+                            res_orphan_ac = await session.execute(stmt_orphan_ac)
+                            for orphan_ac in res_orphan_ac.scalars().all():
+                                if orphan_ac.is_locked:
+                                    logger.warning(
+                                        "[LOCK ENFORCEMENT] Preserving locked acceptance criteria %s",
+                                        orphan_ac.id,
+                                    )
+                                    continue
+                                orphan_ac.status = "archived"
+                                orphan_ac.change_type = "archived"
+                                orphan_ac.version = orphan_ac.version + 1
                     await session.flush()
 
         # 3. Propagation for Clarification Questions (associate with first active requirement)
@@ -797,8 +816,19 @@ class RequirementStateRepository:
             carry_over = prd_list[0] if prd_list else (
                 await PRDDocumentRepository.get_latest_for_project(str(project_id), session)
             )
-            prd_markdown = updates.get("generated_prd") or ((carry_over or {}).get("prd_markdown") or "")
-            mermaid_diagram = updates.get("generated_diagrams") or ((carry_over or {}).get("mermaid_diagram") or "")
+            prd_markdown = (
+                updates["generated_prd"]
+                if "generated_prd" in updates and updates["generated_prd"] is not None
+                else ((carry_over or {}).get("prd_markdown") or "")
+            )
+            # An explicit empty string clears a stale diagram (for example when
+            # the final requirement is archived). Only an omitted field carries
+            # the previous diagram forward.
+            mermaid_diagram = (
+                updates["generated_diagrams"]
+                if "generated_diagrams" in updates and updates["generated_diagrams"] is not None
+                else ((carry_over or {}).get("mermaid_diagram") or "")
+            )
 
             if not prd_list:
                 await PRDDocumentRepository.create(str(project_id), {

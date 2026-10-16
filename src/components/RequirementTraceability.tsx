@@ -99,6 +99,9 @@ const RowCard: React.FC<{ row: TraceabilityRow }> = ({ row }) => {
                 <ul className="pl-2 space-y-0.5">
                   {story.acceptance_criteria.map((ac, idx) => (
                     <li key={idx} className="text-[10.5px] text-on-surface-variant leading-snug list-disc ml-2">
+                      <span className="mr-1 font-mono font-bold text-primary">
+                        {story.ticket_code}-AC-{String(idx + 1).padStart(3, '0')}
+                      </span>
                       {ac}
                       {story.criteria_needing_review?.includes(ac) && (
                         <span className="ml-1.5 rounded border border-amber-300 bg-amber-50 px-1 py-0.5 text-[9px] font-bold uppercase text-amber-700">

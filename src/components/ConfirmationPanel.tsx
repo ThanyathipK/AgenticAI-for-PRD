@@ -46,7 +46,7 @@ function ChangeBadge({ kind, label }: { kind: string; label?: string }) {
   const labels: Record<string, string> = {
     created: 'NEW',
     updated: 'UPDATED',
-    removed: 'REMOVED',
+    removed: 'ARCHIVED',
     unchanged: 'UNCHANGED',
   };
   return (
@@ -90,10 +90,10 @@ function ImpactAnalysisSection({
   if (summary) {
     if (summary.requirements_created) chips.push({ label: `+${summary.requirements_created} requirement`, tone: 'bg-emerald-50 text-emerald-700 border-emerald-200' });
     if (summary.requirements_updated) chips.push({ label: `~${summary.requirements_updated} requirements updated`, tone: 'bg-blue-50 text-blue-700 border-blue-200' });
-    if (summary.requirements_removed) chips.push({ label: `−${summary.requirements_removed} requirement removed`, tone: 'bg-red-50 text-red-700 border-red-200' });
+    if (summary.requirements_removed) chips.push({ label: `−${summary.requirements_removed} requirement archived`, tone: 'bg-red-50 text-red-700 border-red-200' });
     if (summary.stories_created) chips.push({ label: `+${summary.stories_created} story`, tone: 'bg-emerald-50 text-emerald-700 border-emerald-200' });
     if (summary.stories_updated) chips.push({ label: `~${summary.stories_updated} stories updated`, tone: 'bg-blue-50 text-blue-700 border-blue-200' });
-    if (summary.stories_removed) chips.push({ label: `−${summary.stories_removed} story removed`, tone: 'bg-red-50 text-red-700 border-red-200' });
+    if (summary.stories_removed) chips.push({ label: `−${summary.stories_removed} story archived`, tone: 'bg-red-50 text-red-700 border-red-200' });
     if (summary.criteria_added) chips.push({ label: `+${summary.criteria_added} criteria`, tone: 'bg-emerald-50 text-emerald-700 border-emerald-200' });
     if (summary.criteria_removed) chips.push({ label: `−${summary.criteria_removed} criteria`, tone: 'bg-red-50 text-red-700 border-red-200' });
     if (summary.criteria_review_required) chips.push({ label: `${summary.criteria_review_required} criteria need review`, tone: 'bg-amber-50 text-amber-700 border-amber-200' });
@@ -230,6 +230,7 @@ function ImpactAnalysisSection({
   //              Dashboard callbacks that refresh project state afterwards.
 export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, onConfirm, onCancel }) => {
   const [isWorking, setIsWorking] = useState<boolean>(false);
+  const isArchive = action.action_type === 'ARCHIVE';
 
   // Compact shape of the staged draft — parsed once per action and used as the
   // fallback summary when the impact analysis endpoint is unavailable, so Save
@@ -321,11 +322,13 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="font-bold text-sm text-amber-900">
-            Pending {action.action_type}: Review Before Saving
+            {isArchive ? 'Archive alert: confirmation required' : `Pending ${action.action_type}: Review Before Saving`}
           </h3>
           <p className="text-xs text-amber-800 mt-0.5 break-words">
             {hasChanges
-              ? 'Nothing is saved yet. Below is what changes and what is affected. Save applies this version; Cancel rolls back to the version before.'
+              ? isArchive
+                ? 'Nothing is archived yet. Confirm archive applies the changes below; Cancel keeps every item active.'
+                : 'Nothing is saved yet. Below is what changes and what is affected. Save applies this version; Cancel rolls back to the version before.'
               : `You have a pending change based on: "${action.original_user_message}"`}
           </p>
         </div>
@@ -339,19 +342,19 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
         <button
           onClick={handleConfirm}
           disabled={isWorking}
-          className="flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-[8px] text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex h-9 w-[132px] shrink-0 items-center justify-center gap-1 bg-orange-500 hover:bg-orange-600 text-white px-3 rounded-[8px] text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <Check size={16} /> Save
+          <Check size={16} /> {isArchive ? 'Confirm archive' : 'Save'}
         </button>
         <button
           onClick={handleCancel}
           disabled={isWorking}
-          className="flex items-center gap-1 bg-white hover:bg-[#faf8f4] text-gray-700 px-4 py-2 rounded-[8px] border border-outline text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex h-9 w-[132px] shrink-0 items-center justify-center gap-1 bg-white hover:bg-[#faf8f4] text-gray-700 px-3 rounded-[8px] border border-outline text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <X size={16} /> Cancel
         </button>
         <span className="text-[10px] text-on-surface-variant ml-auto font-mono">
-          {isWorking ? 'Working…' : 'Save applies this version; Cancel rolls back'}
+          {isWorking ? 'Working…' : isArchive ? 'Confirm archive applies it; Cancel keeps items active' : 'Save applies this version; Cancel rolls back'}
         </span>
       </div>
     </div>

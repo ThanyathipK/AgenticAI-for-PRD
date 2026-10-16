@@ -174,6 +174,7 @@ export default function Dashboard() {
     setProjectSearchQuery,
     pendingActions,
     setPendingActions,
+    registerCascadeJob,
     loadProjectState,
     setMessages,
     currentVersion,
@@ -774,6 +775,9 @@ export default function Dashboard() {
                     action={action} 
                     onConfirm={(result) => {
                         setPendingActions(prev => prev.filter(a => a.id !== action.id));
+                        if (result?.cascade_status === 'queued' && result.cascade_job_id) {
+                            registerCascadeJob(result.cascade_job_id);
+                        }
                         if(projectId) loadProjectState(projectId);
                         // The merge just created/renamed requirement records, so
                         // re-read the authoritative lock list (new rows must be

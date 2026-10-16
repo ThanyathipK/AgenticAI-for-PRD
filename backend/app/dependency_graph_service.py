@@ -9,7 +9,7 @@ import uuid
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ArtifactDependencyModel, PRDSectionModel, RegenerationRunModel, RequirementStateModel
+from app.models import ArtifactDependencyModel, PRDSectionModel, RegenerationRunModel
 from app.merge_service import normalize_ticket_code
 from app.repositories.prd_section import PRDSectionRepository
 from app.repositories.requirement_state import RequirementStateRepository
@@ -382,11 +382,13 @@ async def execute_regeneration(
                 },
             })
             generated_state = result.get("requirement_state") or {}
-            state_model = await session.get(RequirementStateModel, uuid.UUID(str(project_id)))
-            if state_model is not None:
-                state_model.generated_prd = generated_state.get("generated_prd") or state_model.generated_prd
-                state_model.generated_diagrams = generated_state.get("generated_diagrams") or state_model.generated_diagrams
-                state_model.current_workflow_state = "COMPLETED"
+            artifact_updates: dict[str, Any] = {"current_workflow_state": "COMPLETED"}
+            if generated_state.get("generated_prd"):
+                artifact_updates["generated_prd"] = generated_state["generated_prd"]
+            if "generated_diagrams" in generated_state:
+                # The repository treats an explicit empty string as a real clear.
+                artifact_updates["generated_diagrams"] = generated_state.get("generated_diagrams") or ""
+            await RequirementStateRepository.save_or_update(project_id, artifact_updates, session)
             await rebuild_dependency_graph(project_id, session)
             await session.flush()
         run.status = "completed"

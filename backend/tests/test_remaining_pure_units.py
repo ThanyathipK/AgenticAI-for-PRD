@@ -28,6 +28,15 @@ def test_route_from_matcher_blocks_invalid_only():
     assert route_from_matcher({}) == "gatherer_node"
 
 
+def test_route_from_matcher_sends_confident_delete_to_archive_node():
+    state = {
+        "detected_intent": "DELETE_REQUIREMENT",
+        "requirement_state": {"validation_status": "invalid"},
+        "requirement_match": {"status": "MATCHED", "confidence": 1.0},
+    }
+    assert route_from_matcher(state) == "delete_requirement_node"
+
+
 class _Payload(BaseModel):
     value: int
 

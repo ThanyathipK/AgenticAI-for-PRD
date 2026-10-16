@@ -146,6 +146,31 @@ async def test_story_change_invalidates_criteria_and_linked_sections(db_session,
 
 
 @pytest.mark.asyncio
+async def test_final_requirement_delete_regenerates_empty_prd_and_clears_diagram(
+    db_session, graph_project
+):
+    before = await RequirementStateRepository.get_by_project_id(graph_project, db_session)
+    after = await RequirementStateRepository.save_or_update(graph_project, {
+        "requirements": [],
+        "user_stories": [],
+        "acceptance_criteria": [],
+    }, db_session)
+    changed = detect_changed_artifacts(before, after)
+
+    result = await execute_regeneration(graph_project, changed, "Test Owner", db_session)
+
+    assert result["status"] == "completed"
+    refreshed = await RequirementStateRepository.get_by_project_id(graph_project, db_session)
+    assert refreshed["generated_prd"]
+    assert refreshed["generated_diagrams"] == ""
+    product_scope = await PRDSectionRepository.get_by_key("product_scope", graph_project, db_session)
+    locked_tech = await PRDSectionRepository.get_by_key("tech_ops", graph_project, db_session)
+    assert product_scope is not None and "REQ-001" not in product_scope["content"]
+    # Locked/human-owned content remains protected even during an empty refresh.
+    assert locked_tech is not None and "REQ-001" in locked_tech["content"]
+
+
+@pytest.mark.asyncio
 async def test_section_sync_updates_only_selected_parts(db_session, graph_project, monkeypatch):
     monkeypatch.setattr("app.latex_service.prd_to_markdown", lambda value: value)
     product = await PRDSectionRepository.get_by_key("product_scope", graph_project, db_session)

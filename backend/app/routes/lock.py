@@ -3,6 +3,7 @@ from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthenticatedUser, require_project_owner
@@ -361,6 +362,104 @@ async def confirm_action(
 
     if not action:
         raise HTTPException(status_code=404, detail="Pending action not found")
+
+    # Archive previews are checked again here because an artifact may have been
+    # locked after the preview was created. Never silently skip a protected
+    # target while reporting the confirmation as successful.
+    if action.get("action_type") == "ARCHIVE":
+        from app.models import AcceptanceCriteriaModel, RequirementModel, UserStoryModel
+
+        affected_codes = {
+            str(code).strip().upper()
+            for code in (action.get("affected_user_story_ids") or [])
+            if str(code).strip()
+        }
+        requirement_codes = {code for code in affected_codes if code.startswith("REQ-")}
+        story_codes = {code for code in affected_codes if code.startswith("US-")}
+        criterion_ids = {
+            str(criterion_id).strip()
+            for criterion_id in (action.get("affected_acceptance_criteria_ids") or [])
+            if str(criterion_id).strip()
+        }
+        locked_items: set[str] = set()
+
+        if criterion_ids:
+            locked_criteria = await session.execute(
+                select(AcceptanceCriteriaModel.id).where(
+                    cast(AcceptanceCriteriaModel.id, String).in_(criterion_ids),
+                    AcceptanceCriteriaModel.is_locked.is_(True),
+                )
+            )
+            locked_items.update(
+                f"acceptance criterion {criterion_id}"
+                for criterion_id in locked_criteria.scalars().all()
+            )
+
+        if requirement_codes:
+            locked_requirements = await session.execute(
+                select(RequirementModel.requirement_code).where(
+                    cast(RequirementModel.project_id, String) == str(project_id),
+                    RequirementModel.requirement_code.in_(requirement_codes),
+                    RequirementModel.is_locked.is_(True),
+                )
+            )
+            locked_items.update(str(code) for code in locked_requirements.scalars().all())
+
+        if story_codes:
+            story_lock_rows = await session.execute(
+                select(
+                    UserStoryModel.ticket_code,
+                    UserStoryModel.is_locked,
+                    RequirementModel.requirement_code,
+                    RequirementModel.is_locked,
+                )
+                .join(
+                    RequirementModel,
+                    cast(UserStoryModel.requirement_id, String)
+                    == cast(RequirementModel.id, String),
+                )
+                .where(
+                    cast(RequirementModel.project_id, String) == str(project_id),
+                    UserStoryModel.ticket_code.in_(story_codes),
+                )
+            )
+            for story_code, story_locked, req_code, requirement_locked in story_lock_rows.all():
+                if story_locked:
+                    locked_items.add(str(story_code))
+                if requirement_locked:
+                    locked_items.add(str(req_code))
+
+            criteria_lock_rows = await session.execute(
+                select(UserStoryModel.ticket_code)
+                .join(
+                    AcceptanceCriteriaModel,
+                    cast(AcceptanceCriteriaModel.user_story_id, String)
+                    == cast(UserStoryModel.id, String),
+                )
+                .join(
+                    RequirementModel,
+                    cast(UserStoryModel.requirement_id, String)
+                    == cast(RequirementModel.id, String),
+                )
+                .where(
+                    cast(RequirementModel.project_id, String) == str(project_id),
+                    UserStoryModel.ticket_code.in_(story_codes),
+                    func.lower(AcceptanceCriteriaModel.status) == "active",
+                    AcceptanceCriteriaModel.is_locked.is_(True),
+                )
+            )
+            locked_items.update(
+                f"{code} acceptance criteria" for code in criteria_lock_rows.scalars().all()
+            )
+
+        if locked_items:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Archive blocked because these items are locked: "
+                    f"{', '.join(sorted(locked_items))}. Unlock them before confirming."
+                ),
+            )
 
     # 2. Extract the proposed changes (the full merged requirement state)
     proposed_changes = action.get("proposed_changes", {})

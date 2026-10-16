@@ -16,7 +16,7 @@
 // This hook keeps exposing the same `ProjectState` interface so the presentational
 // components (Dashboard, ChatPanel, PRDEditor, ArchitectureFlows, VersionHistory)
 // are unaffected.
-import { useRef, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type {
   AuditResult,
   ChatMessage,
@@ -121,6 +121,10 @@ export interface ProjectState {
    * at least one uploaded knowledge document, user story, or requirement item.
    */
   canRunAgentActions: boolean;
+  /** User-facing explanation when Validate / Generate PRD must wait. */
+  agentActionsBlockedReason: string;
+  /** Track the automatic dependency refresh returned by merge confirmation. */
+  registerCascadeJob: (jobId?: string | null) => void;
   /** Aborts the in-flight agent request (Stop button). No-op when idle. */
   handleStopGeneration: () => void;
   handleDownloadDocx: () => Promise<void>;
@@ -193,6 +197,16 @@ export function useProjectState(
   const ui = useWorkspaceUi();
   const store = useRequirementStore(projectsApi.projectId);
   const locks = useArtifactLocks(store, projectsApi.projectId);
+  const [activeCascadeJobId, setActiveCascadeJobId] = useState<string | null>(null);
+  const cascadeStorageKey = projectsApi.projectId
+    ? `agenticdia:active-cascade:${projectsApi.projectId}`
+    : null;
+
+  useEffect(() => {
+    setActiveCascadeJobId(
+      cascadeStorageKey ? window.localStorage.getItem(cascadeStorageKey) : null,
+    );
+  }, [cascadeStorageKey]);
 
   // SSE bridge for LIVE extraction progress. useProjectSync receives the
   // document_extraction_* frames, maps them to a DocumentExtractionProgress,
@@ -240,6 +254,8 @@ export function useProjectState(
       },
     },
   );
+  const loadProjectStateRef = useRef(loadProjectState);
+  loadProjectStateRef.current = loadProjectState;
   const lm = useLmStudioHealth();
   // Documents must be composed BEFORE useChat so the agent-action gate below
   // can consider the knowledge base when it is injected into the chat deps.
@@ -251,6 +267,48 @@ export function useProjectState(
       liveExtractionProgressRef.current = fn;
     },
   });
+
+  // A confirmed requirement change may start an automatic downstream refresh.
+  // Keep agent actions paused until that durable job reaches a terminal state;
+  // otherwise an immediate Validate / Generate PRD click races it and gets 409.
+  useEffect(() => {
+    const projectId = projectsApi.projectId;
+    const jobId = activeCascadeJobId;
+    if (!projectId || !jobId) return;
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const poll = async () => {
+      try {
+        const job = await api.getGenerationJob(projectId, jobId);
+        if (cancelled) return;
+        if (['completed', 'failed', 'cancelled'].includes(job.status)) {
+          setActiveCascadeJobId(null);
+          if (cascadeStorageKey) window.localStorage.removeItem(cascadeStorageKey);
+          store.setSyncStatus(
+            job.status === 'completed'
+              ? 'Requirements update finished. Validate and Generate PRD are available.'
+              : 'Requirements update stopped. Validate and Generate PRD are available.',
+          );
+          await loadProjectStateRef.current(projectId);
+          return;
+        }
+        store.setSyncStatus('Applying the confirmed requirements update…');
+        timer = window.setTimeout(poll, 1200);
+      } catch {
+        if (!cancelled) {
+          // A missing/expired job no longer owns the backend generation slot.
+          setActiveCascadeJobId(null);
+          if (cascadeStorageKey) window.localStorage.removeItem(cascadeStorageKey);
+        }
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [activeCascadeJobId, cascadeStorageKey, projectsApi.projectId, store.setSyncStatus]);
 
   // Agent-action gating (Validate Requirements / Generate PRD): a brand-new
   // project with NO knowledge documents and NO gathered requirements has
@@ -265,8 +323,17 @@ export function useProjectState(
   const hasKnowledgeContent = documents.documents.some(
     document => document.status === 'processed' && document.token_count > 0,
   );
+  const hasPendingRequirementUpdate = projectsApi.pendingActions.length > 0;
+  const agentActionsBlockedReason = hasPendingRequirementUpdate
+    ? 'Save or cancel the pending requirements update first'
+    : activeCascadeJobId
+      ? 'Please wait while the confirmed requirements update finishes'
+      : '';
   const canRunAgentActions =
-    Boolean(projectsApi.projectId) && (hasRequirementContent || hasKnowledgeContent);
+    Boolean(projectsApi.projectId)
+    && (hasRequirementContent || hasKnowledgeContent)
+    && !hasPendingRequirementUpdate
+    && !activeCascadeJobId;
 
   const chat = useChat(store, {
     projectId: projectsApi.projectId,
@@ -276,6 +343,7 @@ export function useProjectState(
     setActiveTab: ui.setActiveTab,
     loadProjectState,
     canRunAgentActions,
+    agentActionsBlockedReason,
   });
 
 
@@ -433,6 +501,15 @@ export function useProjectState(
     handleValidateRequirements: chat.handleValidateRequirements,
     handleGeneratePRD: chat.handleGeneratePRD,
     canRunAgentActions,
+    agentActionsBlockedReason,
+    registerCascadeJob: (jobId) => {
+      const normalizedJobId = jobId ?? null;
+      setActiveCascadeJobId(normalizedJobId);
+      if (cascadeStorageKey) {
+        if (normalizedJobId) window.localStorage.setItem(cascadeStorageKey, normalizedJobId);
+        else window.localStorage.removeItem(cascadeStorageKey);
+      }
+    },
     handleStopGeneration: chat.handleStopGeneration,
     handleDownloadDocx,
     handlePrintPDF,

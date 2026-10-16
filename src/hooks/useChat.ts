@@ -32,6 +32,7 @@ export interface ChatDeps {
    * the disabled Validate / Generate PRD buttons).
    */
   canRunAgentActions: boolean;
+  agentActionsBlockedReason: string;
 }
 
 export interface UseChatResult {
@@ -280,6 +281,7 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
         const receivedReqs = data.structured_requirements || null;
         const pendingActionId = data.pending_action_id;
         const isPendingMerge = data.pending_merge === true;
+        const pendingActionType = detectedIntent === 'DELETE_REQUIREMENT' ? 'ARCHIVE' : 'MERGE';
 
         // GATHERING 8.1 — Frontend side of the handoff (UI layer): the staged merge is
         //            pushed into `pendingActions`, which renders the ConfirmationPanel
@@ -291,7 +293,7 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
           deps.setPendingActions(prev => [...prev, {
             id: pendingActionId,
             project_id: projectId,
-            action_type: 'MERGE',
+            action_type: pendingActionType,
             original_user_message: inputMsg,
             proposed_changes: (receivedReqs ?? undefined) as Record<string, unknown> | undefined,
           }]);
@@ -299,7 +301,9 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
           store.setMessages(prev => [...prev, {
             id: `merge-preview-${Date.now()}`,
             role: 'assistant',
-            content: `Merge preview ready.\nI have analyzed your input and prepared the merged requirements. Please review the changes below and select Save or Cancel.\n\n"${inputMsg}"`,
+            content: detectedIntent === 'DELETE_REQUIREMENT'
+              ? `${data.message || 'Archive preview ready.'}\n\nNothing has been archived yet. Review the alert below and select Confirm archive or Cancel.\n\n"${inputMsg}"`
+              : `Merge preview ready.\nI have analyzed your input and prepared the merged requirements. Please review the changes below and select Save or Cancel.\n\n"${inputMsg}"`,
             timestamp: nowTime(),
           }]);
         } else if (receivedReqs && receivedReqs.epic_name) {
@@ -386,6 +390,10 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
   const handleValidateRequirements = async () => {
     if (!deps.projectId) return;
     if (!deps.canRunAgentActions) {
+      if (deps.agentActionsBlockedReason) {
+        store.setSyncStatus(deps.agentActionsBlockedReason);
+        return;
+      }
       // Nothing to audit yet — mirror the disabled button instead of running
       // the auditor agent against an empty project.
       store.setSyncStatus('Nothing to validate yet. Add requirements or upload a knowledge document.');
@@ -606,6 +614,10 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
   const handleGeneratePRD = async () => {
     if (!deps.projectId) return;
     if (!deps.canRunAgentActions) {
+      if (deps.agentActionsBlockedReason) {
+        store.setSyncStatus(deps.agentActionsBlockedReason);
+        return;
+      }
       // Nothing to compile yet — mirror the disabled button instead of asking
       // the architect agent to build a PRD from an empty project.
       store.setSyncStatus('Nothing to compile yet. Add requirements or upload a knowledge document.');

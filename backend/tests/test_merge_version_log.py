@@ -24,10 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.database import get_db as app_get_db
 from app.main import app as fastapi_app
 from app.models import (
+    AcceptanceCriteriaModel,
     PendingActionModel,
     PRDVersionModel,
     ProjectModel,
+    RequirementModel,
     RequirementStateModel,
+    UserStoryModel,
     UserModel,
 )
 
@@ -216,6 +219,168 @@ class TestMergeVersionLog:
             (await db_session.execute(select(RequirementStateModel))).scalars().all()
         )
         assert states[0].version_number == 1
+
+    @pytest.mark.asyncio
+    async def test_confirm_archive_with_empty_story_list_persists_archived_status(
+        self, seeded_project, client, db_session
+    ):
+        baseline = await _create_merge_action(
+            db_session, seeded_project, "Add secure login requirement", version_number=1
+        )
+        assert (await client.post(
+            f"/api/confirm-action/{baseline.id}", params={"project_id": seeded_project}
+        )).status_code == status.HTTP_200_OK
+
+        proposed = _merged_state(1)
+        proposed["requirements"][0]["user_stories"] = []
+        proposed["user_stories"] = []
+        action = PendingActionModel(
+            project_id=seeded_project,
+            action_type="ARCHIVE",
+            original_user_message="Archive US-001",
+            proposed_changes=proposed,
+            affected_user_story_ids=["US-001"],
+            workflow_stage="delete_requirement_node",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        db_session.add(action)
+        await db_session.commit()
+
+        confirm = await client.post(
+            f"/api/confirm-action/{action.id}", params={"project_id": seeded_project}
+        )
+        assert confirm.status_code == status.HTTP_200_OK
+        story = await db_session.scalar(
+            select(UserStoryModel).where(UserStoryModel.ticket_code == "US-001")
+        )
+        assert story is not None
+        assert story.status == "archived"
+        criterion = await db_session.scalar(select(AcceptanceCriteriaModel))
+        assert criterion is not None
+        assert criterion.status == "archived"
+
+    @pytest.mark.asyncio
+    async def test_confirm_archive_one_criterion_keeps_story_and_requirement_active(
+        self, seeded_project, client, db_session
+    ):
+        baseline = await _create_merge_action(
+            db_session, seeded_project, "Add secure login requirement", version_number=1
+        )
+        assert (await client.post(
+            f"/api/confirm-action/{baseline.id}", params={"project_id": seeded_project}
+        )).status_code == status.HTTP_200_OK
+
+        criterion = await db_session.scalar(select(AcceptanceCriteriaModel))
+        assert criterion is not None
+        proposed = _merged_state(1)
+        proposed["requirements"][0]["user_stories"][0]["acceptance_criteria"] = []
+        proposed["user_stories"][0]["acceptance_criteria"] = []
+        proposed["acceptance_criteria"] = []
+        action = PendingActionModel(
+            project_id=seeded_project,
+            action_type="ARCHIVE",
+            original_user_message="Archive US-001-AC-001",
+            proposed_changes=proposed,
+            affected_user_story_ids=[],
+            affected_acceptance_criteria_ids=[str(criterion.id)],
+            workflow_stage="delete_requirement_node",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        db_session.add(action)
+        await db_session.commit()
+
+        confirm = await client.post(
+            f"/api/confirm-action/{action.id}", params={"project_id": seeded_project}
+        )
+        assert confirm.status_code == status.HTTP_200_OK
+        requirement = await db_session.scalar(select(RequirementModel))
+        story = await db_session.scalar(select(UserStoryModel))
+        persisted_criterion = await db_session.scalar(select(AcceptanceCriteriaModel))
+        assert requirement is not None and requirement.status == "active"
+        assert story is not None and story.status == "active"
+        assert persisted_criterion is not None and persisted_criterion.status == "archived"
+
+    @pytest.mark.asyncio
+    async def test_confirm_remove_all_requirements_archives_the_full_hierarchy(
+        self, seeded_project, client, db_session
+    ):
+        baseline = await _create_merge_action(
+            db_session, seeded_project, "Add secure login requirement", version_number=1
+        )
+        assert (await client.post(
+            f"/api/confirm-action/{baseline.id}", params={"project_id": seeded_project}
+        )).status_code == status.HTTP_200_OK
+
+        proposed = _merged_state(1)
+        proposed["requirements"] = []
+        proposed["user_stories"] = []
+        action = PendingActionModel(
+            project_id=seeded_project,
+            action_type="ARCHIVE",
+            original_user_message="Remove all requirements",
+            proposed_changes=proposed,
+            affected_user_story_ids=["REQ-001", "US-001"],
+            workflow_stage="delete_requirement_node",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        db_session.add(action)
+        await db_session.commit()
+
+        confirm = await client.post(
+            f"/api/confirm-action/{action.id}", params={"project_id": seeded_project}
+        )
+        assert confirm.status_code == status.HTTP_200_OK
+        requirement = await db_session.scalar(select(RequirementModel))
+        story = await db_session.scalar(select(UserStoryModel))
+        criterion = await db_session.scalar(select(AcceptanceCriteriaModel))
+        assert requirement is not None and requirement.status == "archived"
+        assert story is not None and story.status == "archived"
+        assert criterion is not None and criterion.status == "archived"
+
+    @pytest.mark.asyncio
+    async def test_confirm_archive_rechecks_locks_and_keeps_pending_action(
+        self, seeded_project, client, db_session
+    ):
+        baseline = await _create_merge_action(
+            db_session, seeded_project, "Add secure login requirement", version_number=1
+        )
+        assert (await client.post(
+            f"/api/confirm-action/{baseline.id}", params={"project_id": seeded_project}
+        )).status_code == status.HTTP_200_OK
+
+        story = await db_session.scalar(
+            select(UserStoryModel).where(UserStoryModel.ticket_code == "US-001")
+        )
+        assert story is not None
+        story.is_locked = True
+        story.locked_by = "product-owner"
+
+        proposed = _merged_state(1)
+        proposed["requirements"][0]["user_stories"] = []
+        proposed["user_stories"] = []
+        action = PendingActionModel(
+            project_id=seeded_project,
+            action_type="ARCHIVE",
+            original_user_message="Archive US-001",
+            proposed_changes=proposed,
+            affected_user_story_ids=["US-001"],
+            workflow_stage="delete_requirement_node",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        db_session.add(action)
+        await db_session.commit()
+
+        confirm = await client.post(
+            f"/api/confirm-action/{action.id}", params={"project_id": seeded_project}
+        )
+        assert confirm.status_code == status.HTTP_409_CONFLICT
+        assert "Unlock" in confirm.json()["detail"]
+        persisted_story = await db_session.scalar(
+            select(UserStoryModel).where(UserStoryModel.ticket_code == "US-001")
+        )
+        assert persisted_story is not None
+        assert persisted_story.status == "active"
+        assert await _count(db_session, PendingActionModel) == 1
 
     @pytest.mark.asyncio
     async def test_cancel_rolls_back_writes_nothing(
