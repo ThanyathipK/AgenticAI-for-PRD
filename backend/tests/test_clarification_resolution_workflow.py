@@ -6,7 +6,8 @@ The suite protects the user-visible contract:
 * unanswered questions stay unresolved;
 * answers reach the Gatherer with their original evidence and are processed in
   bounded, topic-aware batches;
-* all batch results produce one replaceable review proposal; and
+* only material requirement changes produce a review proposal; and
+* Gatherer follow-ups are deferred to the next explicit validation run; and
 * submitting answers never invokes the Auditor automatically.
 """
 
@@ -29,7 +30,7 @@ def _question(index, source_reference):
 
 
 @pytest.mark.asyncio
-async def test_answers_are_batched_into_one_proposal_without_automatic_reaudit(
+async def test_answers_are_batched_without_empty_proposal_or_automatic_reaudit(
     client, db_session, seeded_project, monkeypatch
 ):
     import app.agents as agents
@@ -165,10 +166,12 @@ async def test_answers_are_batched_into_one_proposal_without_automatic_reaudit(
     pending_count = await db_session.scalar(
         select(func.count()).select_from(PendingActionModel)
     )
-    assert pending_count == 1
+    assert pending_count == 0
+    assert submitted.json()["pending_merge"] is False
+    assert "no requirement fields changed" in submitted.json()["proposal_no_change_reason"]
 
-    # Answering the remaining question replaces the old combined draft instead
-    # of stacking another merge window, and still does not trigger Auditor.
+    # Answering the remaining question still creates no empty merge window and
+    # does not trigger Auditor.
     gatherer_batches.clear()
     final_submit = await client.post(
         "/api/clarification/submit",
@@ -182,7 +185,7 @@ async def test_answers_are_batched_into_one_proposal_without_automatic_reaudit(
     assert [len(items) for items, _context in gatherer_batches] == [1]
     assert await db_session.scalar(
         select(func.count()).select_from(PendingActionModel)
-    ) == 1
+    ) == 0
 
     final_state = (await client.get(f"/api/project/{seeded_project}")).json()
     assert all(q["is_resolved"] for q in final_state["clarification_questions"])
@@ -241,9 +244,83 @@ async def test_gatherer_failure_saves_answers_and_stages_review_warning(
     assert reloaded["clarification_questions"][0]["user_answer"] == (
         "Operations checker verifies it."
     )
+    assert body["pending_merge"] is False
+    assert body["pending_action_id"] is None
     assert await db_session.scalar(
         select(func.count()).select_from(PendingActionModel)
-    ) == 1
+    ) == 0
+
+
+@pytest.mark.asyncio
+async def test_gatherer_follow_up_does_not_replace_or_append_questions_on_submit(
+    client, db_session, seeded_project, monkeypatch
+):
+    """Only a later Validate action may introduce a new clarification question."""
+    import app.routes.requirements as requirements_route
+    from app.repositories import RequirementStateRepository
+
+    await RequirementStateRepository.save_or_update(
+        seeded_project,
+        {
+            "clarification_questions": [
+                {
+                    "question_text": "Who approves the payment?",
+                    "checklist_category": "Approval",
+                    "target_user_story_id": "PAY-001",
+                    "is_resolved": False,
+                },
+                {
+                    "question_text": "What is the approval threshold?",
+                    "checklist_category": "Approval",
+                    "target_user_story_id": "PAY-001",
+                    "is_resolved": False,
+                },
+            ],
+            "validation_status": "invalid",
+        },
+        db_session,
+    )
+    await db_session.commit()
+    original = (await client.get(f"/api/project/{seeded_project}")).json()[
+        "clarification_questions"
+    ]
+
+    async def gatherer(items, _requirement_context):
+        return {
+            "classifications": [{
+                "question_id": items[0]["question_id"],
+                "classification": "FOLLOW_UP",
+                "target_requirement_id": items[0]["target_requirement_id"],
+                "rationale": "The named role needs more detail.",
+                "follow_up_question": "Which operations role approves it?",
+            }],
+            "proposed_requirements": [],
+        }
+
+    monkeypatch.setattr(
+        requirements_route, "gather_clarification_answer_batch", gatherer
+    )
+    response = await client.post(
+        "/api/clarification/submit",
+        json={
+            "project_id": seeded_project,
+            "answers": {original[0]["id"]: "An operations role approves it."},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    questions = response.json()["clarification_questions"]
+    assert [question["id"] for question in questions] == [
+        question["id"] for question in original
+    ]
+    assert questions[0]["is_resolved"] is True
+    assert questions[0]["user_answer"] == "An operations role approves it."
+    assert questions[1]["is_resolved"] is False
+    assert questions[1]["question_text"] == original[1]["question_text"]
+    assert all(
+        question["question_text"] != "Which operations role approves it?"
+        for question in questions
+    )
 
 
 @pytest.mark.asyncio

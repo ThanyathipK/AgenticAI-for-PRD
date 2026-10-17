@@ -82,6 +82,9 @@ export function ChatPanel({ state }: { state: ProjectState }) {
   // stay disabled until real content exists.
   const llmUnavailable = lmStudioOnline === false || !lmStudioModelLoaded;
   const agentActionsDisabled = isLoading || isProcessing || !canRunAgentActions || llmUnavailable;
+  const hasDraftClarificationAnswer = Object.values(clarificationAnswers).some(
+    answer => answer.trim().length > 0,
+  );
   const agentActionHint = !projectId
     ? 'Create or select a project first'
     : agentActionsBlockedReason
@@ -322,18 +325,20 @@ export function ChatPanel({ state }: { state: ProjectState }) {
                           );
                         })}
 
-                        <button
-                          type="submit"
-                          disabled={isProcessing}
-                          className={`w-full py-2 rounded-xl font-label-md text-xs transition-all font-bold shadow-md flex items-center justify-center gap-1.5 ${
-                            isProcessing
-                              ? 'bg-slate-400 text-white cursor-wait shadow-none'
-                              : 'bg-primary hover:brightness-110 active:scale-[0.99] text-on-primary shadow-primary/20'
-                          }`}
-                        >
-                          {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                          <span>{isProcessing ? 'Sending to Gatherer…' : 'Save Answered Questions'}</span>
-                        </button>
+                        {hasDraftClarificationAnswer && (
+                          <button
+                            type="submit"
+                            disabled={isProcessing}
+                            className={`w-full py-2 rounded-xl font-label-md text-xs transition-all font-bold shadow-md flex items-center justify-center gap-1.5 ${
+                              isProcessing
+                                ? 'bg-slate-400 text-white cursor-wait shadow-none'
+                                : 'bg-primary hover:brightness-110 active:scale-[0.99] text-on-primary shadow-primary/20'
+                            }`}
+                          >
+                            {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                            <span>{isProcessing ? 'Sending to Gatherer…' : 'Save Answered Questions'}</span>
+                          </button>
+                        )}
                       </form>
                     </motion.div>
                   )}
@@ -391,6 +396,7 @@ export function ChatPanel({ state }: { state: ProjectState }) {
               auditor run (empty raw_input + target_agent=auditor). Disabled via
               agentActionsDisabled when there is nothing to audit. */}
           <button
+            type="button"
             onClick={handleValidateRequirements}
             disabled={agentActionsDisabled}
             title={agentActionsDisabled ? agentActionHint : 'Validate current requirements and knowledge-base document content'}
@@ -403,6 +409,7 @@ export function ChatPanel({ state }: { state: ProjectState }) {
               run (empty raw_input + target_agent=architect). Disabled via
               agentActionsDisabled when there is nothing to compile. */}
           <button
+            type="button"
             onClick={handleGeneratePRD}
             disabled={agentActionsDisabled}
             title={agentActionsDisabled ? agentActionHint : 'Compile the formal PRD and architecture diagram'}
@@ -412,13 +419,6 @@ export function ChatPanel({ state }: { state: ProjectState }) {
             <span>Generate PRD</span>
           </button>
         </div>
-
-        {/* Knowledge-base attach feedback (e.g. scanned-PDF / needs-OCR notice) */}
-        {documents.lastDraftMessage && (
-          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-            {documents.lastDraftMessage}
-          </p>
-        )}
 
         <div className="flex items-end gap-2 bg-white rounded-[16px] pl-2 pr-1.5 py-1.5 border border-[#e8e2d9] shadow-[0_2px_4px_rgba(0,0,0,0.02)] hover:border-primary focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20 transition-all">
           <Tooltip
@@ -467,7 +467,7 @@ export function ChatPanel({ state }: { state: ProjectState }) {
                 handleSendMessage();
               }
             }}
-            placeholder={isLoading || isProcessing ? 'Processing...' : 'Describe a change or write feedback… (Shift+Enter for a new line)'}
+            placeholder={isLoading || isProcessing ? 'Processing...' : 'Add !!!, !!, or ! before a request to set priority…'}
             className="flex-1 min-w-0 bg-transparent border-none focus:ring-0 font-body-sm text-sm placeholder:text-on-surface-variant/55 text-on-surface outline-none resize-none max-h-40 leading-relaxed py-1 custom-scrollbar"
           />
           {isLoading || isProcessing ? (

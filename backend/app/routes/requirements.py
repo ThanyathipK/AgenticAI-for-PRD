@@ -472,7 +472,6 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
         str(req.get("requirement_code")): req for req in current_requirements if isinstance(req, dict)
     }
     classifications: List[Dict[str, Any]] = []
-    follow_ups: List[Dict[str, Any]] = []
     proposal_generation_warning = None
     for group_items in grouped.values():
         for start in range(0, len(group_items), 4):
@@ -516,23 +515,11 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
                 code = str(req.get("requirement_code") or "")
                 if code:
                     proposed_by_code[code] = req
-            by_id = {str(item["question_id"]): item for item in batch}
-            for classification in batch_result.get("classifications") or []:
-                if classification.get("classification") == "FOLLOW_UP" and classification.get("follow_up_question"):
-                    original = by_id.get(str(classification.get("question_id")), {})
-                    follow_ups.append({
-                        "checklist_category": "Answer follow-up",
-                        "target_user_story_id": original.get("target_user_story_id"),
-                        "target_requirement_id": original.get("target_requirement_id"),
-                        "question_text": classification["follow_up_question"],
-                        "is_resolved": False,
-                        "user_answer": None,
-                        "source_references": original.get("source_references") or [],
-                        "provenance": original.get("provenance") or {"type": "System analysis"},
-                        "requirement_context": original.get("requirement_context"),
-                    })
-
-    req_state["clarification_questions"] = questions + follow_ups
+    # A Gatherer FOLLOW_UP classification is advisory for the review proposal.
+    # Do not turn it into a clarification row during answer submission: answered
+    # questions are complete, unanswered original questions stay untouched, and
+    # only the next explicit Validate action may create new audit questions.
+    req_state["clarification_questions"] = questions
 
     # Answers are evidence for a future audit, not proof that blocking findings
     # are fixed. Keep the project pending/invalid until a fresh Auditor run.
@@ -565,29 +552,43 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
             "[CLARIFICATION][REVIEW] replaced %d older combined clarification draft(s) for project=%s",
             len(removed_drafts), project_id,
         )
-    pending_action = await PendingActionRepository.create(
-        project_id=project_id,
-        data={
-            "action_type": "MERGE",
-            "original_user_message": "Clarification answers",
-            "proposed_changes": proposal_state,
-            "workflow_stage": "clarification_gatherer_review",
-        },
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-        session=session,
-    )
-    saved_state["pending_action_id"] = pending_action.get("id")
-    saved_state["pending_merge"] = True
+    has_requirement_changes = proposal_state["requirements"] != current_requirements
+    pending_action = None
+    if has_requirement_changes:
+        pending_action = await PendingActionRepository.create(
+            project_id=project_id,
+            data={
+                "action_type": "MERGE",
+                "original_user_message": "Clarification answers",
+                "proposed_changes": proposal_state,
+                "workflow_stage": "clarification_gatherer_review",
+            },
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            session=session,
+        )
+    saved_state["pending_action_id"] = pending_action.get("id") if pending_action else None
+    saved_state["pending_merge"] = pending_action is not None
     saved_state["clarification_answer_classifications"] = classifications
     if proposal_generation_warning:
         saved_state["proposal_generation_warning"] = proposal_generation_warning
+    elif not has_requirement_changes:
+        rationales = [
+            str(item.get("rationale") or "").strip()
+            for item in classifications
+            if str(item.get("rationale") or "").strip()
+        ]
+        saved_state["proposal_no_change_reason"] = (
+            "Answers were saved, but no requirement fields changed. "
+            + (" ".join(dict.fromkeys(rationales)) if rationales else
+               "The Gatherer found no actionable requirement update in the submitted answers.")
+        )
     # CLARIFY 3.7 — Real-time fan-out with the new verdict so other clients update
     #            their audit/clarification views (EVENTS flow).
     await event_manager.publish(project_id, "clarification_submitted", {
         "project_id": project_id,
         "validation_status": req_state.get("validation_status"),
         "current_workflow_state": req_state.get("current_workflow_state"),
-        "pending_action_id": pending_action.get("id"),
+        "pending_action_id": pending_action.get("id") if pending_action else None,
         "proposal_generation_warning": proposal_generation_warning,
     })
     # CLARIFY 3.8 — Response = the saved state; CLARIFY 1.3 applies it (answers reset,
@@ -1076,8 +1077,12 @@ async def _process_requirements_pipeline(
             # Wait until user explicitly clicks Run Auditor
             pass
     elif current_state == "WAITING_CLARIFICATION":
-        # User messages treated as clarification answers
-        request.target_agent = "auditor"
+        # Clarification answers now use the dedicated submit endpoint. Do not
+        # hijack an explicit update or archive request and send it back through
+        # Auditor: a failed audit otherwise traps the project in this state and
+        # makes every subsequent mutation look like another validation run.
+        if request.target_agent in {"gatherer", "delete_requirement"}:
+            current_state = "GATHERING"
     elif current_state == "ARCHITECTING":
         if request.target_agent != "architect":
             # Wait until user explicitly clicks Generate PRD / Diagram
@@ -1267,9 +1272,20 @@ async def _process_requirements_pipeline(
             req_state.get(field) != requirement_state_before_workflow.get(field)
             for field in requirement_source_fields
         )
+        requirement_match = final_state.get("requirement_match") or {}
+        matcher_status = str(requirement_match.get("status") or "").upper()
+        matcher_needs_clarification = (
+            matcher_status in {"AMBIGUOUS", "LOW_CONFIDENCE"}
+            or (
+                requirement_match
+                and float(requirement_match.get("confidence", 1.0) or 0.0) < 0.75
+            )
+        )
 
         # Update workflow state after run
-        if request.target_agent == "gatherer" or current_state == "GATHERING":
+        if matcher_needs_clarification:
+            req_state["current_workflow_state"] = "WAITING_CLARIFICATION"
+        elif request.target_agent == "gatherer" or current_state == "GATHERING":
             req_state["current_workflow_state"] = "REVIEWING"
         elif request.target_agent == "auditor":
             is_valid = req_state.get("validation_status") == "valid"
@@ -1354,7 +1370,26 @@ async def _process_requirements_pipeline(
         #             debounced SSE refresh and the client's merge preview (8.1).
         # Create a pending action with the full merged state as proposed changes
         pending_action_id = None
-        if request.target_agent == "auditor" and not audit_operational_error and not stale_result:
+        if matcher_needs_clarification and not stale_result:
+            # Matcher ambiguity is a question, not a requirement edit. Persist
+            # it immediately so the chat can render the answer form before any
+            # Gatherer merge preview. A preview is created only after a later
+            # answer produces a material requirement change.
+            req_state = await RequirementStateRepository.save_or_update(
+                request.project_id,
+                {
+                    "validation_status": "invalid",
+                    "current_workflow_state": "WAITING_CLARIFICATION",
+                    "clarification_questions": req_state.get("clarification_questions", []),
+                },
+                session,
+            )
+            final_state["requirement_state"] = req_state
+            logger.info(
+                "Requirement Matcher clarification persisted for project %s; no merge confirmation created",
+                request.project_id,
+            )
+        elif request.target_agent == "auditor" and not audit_operational_error and not stale_result:
             # An audit changes only audit metadata and clarification questions;
             # it is not a proposed requirements edit. Persist those fields
             # immediately so questions are answerable by stable database IDs,
@@ -1442,9 +1477,13 @@ async def _process_requirements_pipeline(
                 (str(item.get("question_text") or "").strip() for item in reversed(unresolved_questions) if isinstance(item, dict)),
                 "",
             )
-            agent_message = latest_question or (
-                "I couldn't find an applicable requirement change in that request. "
-                "No changes were made. Please check the user story ID and try again."
+            agent_message = (
+                f"No changes were made because I need clarification before updating the requirements.\n\n{latest_question}"
+                if matcher_needs_clarification and latest_question
+                else (
+                    "I couldn't find an applicable requirement change in that request. "
+                    "No changes were made. Please check the user story ID and try again."
+                )
             )
         if request.project_id and agent_message and not no_changes and request.target_agent != "architect":
             await ConversationMessageRepository.save_message(

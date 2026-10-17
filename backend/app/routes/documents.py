@@ -103,6 +103,26 @@ async def _persist_conversion_message(
         # because an SSE subscriber disappeared.
         logger.exception("Failed to publish conversion chat refresh for %s", project_id)
 
+
+async def _persist_extraction_message(
+    project_id: str,
+    role: str,
+    message: str,
+    *,
+    intent: str,
+    session: AsyncSession,
+) -> None:
+    """Persist a document extraction turn as part of the normal chat timeline."""
+    await ConversationMessageRepository.save_message(
+        project_id=project_id,
+        role=role,
+        message=message,
+        workflow_state="gatherer_node",
+        intent=intent,
+        session=session,
+    )
+    await session.commit()
+
 # ==========================================
 # ALLOWED FORMATS / MIME VALIDATION
 # ==========================================
@@ -833,6 +853,15 @@ async def process_document(
 
     content_markdown = doc.get("content_markdown") or ""
     token_count = count_tokens(content_markdown)
+    filename = doc.get("original_filename") or document_id
+
+    await _persist_extraction_message(
+        project_id,
+        "user",
+        f'Extract requirements from attached document "{filename}".',
+        intent="DOCUMENT_REQUIREMENTS_REQUEST",
+        session=session,
+    )
 
     # Explicit, loud tracking flag: the user has triggered extraction.
     await DocumentRepository.update_extraction_status(
@@ -860,6 +889,15 @@ async def process_document(
         await DocumentRepository.update_extraction_status(
             document_id, project_id, "not_extracted", session
         )
+        await _persist_extraction_message(
+            project_id,
+            "assistant",
+            f'Document requirement extraction failed for "{filename}". No changes were written.',
+            intent="DOCUMENT_REQUIREMENTS_FAILED",
+            session=session,
+        )
+        # Persist before notifying clients: the SSE handler refreshes the
+        # transcript and must always be able to observe the canonical message.
         await event_manager.publish(
             project_id,
             "document_extraction_failed",
@@ -894,6 +932,18 @@ async def process_document(
             "workflow_stage": "gatherer_node",
         },
         expires_at=expires_at,
+        session=session,
+    )
+
+    await _persist_extraction_message(
+        project_id,
+        "gatherer",
+        (
+            f'Merge preview ready. Requirements were gathered from the full content of '
+            f'"{filename}" using {run["mode"]} mode ({run["chunk_count"]} chunk(s)). '
+            "Nothing has been written yet; review the proposed changes and select Save or Cancel."
+        ),
+        intent="DOCUMENT_REQUIREMENTS_DRAFT_READY",
         session=session,
     )
 

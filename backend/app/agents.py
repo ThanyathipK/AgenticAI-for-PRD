@@ -20,6 +20,7 @@ from app.config import settings
 from app.input_validation import count_body_tokens, count_tokens
 from app.audit_checklist import load_active_audit_checklist
 from app.prompt_loader import load_prompt
+from app.request_priority import format_prioritized_input
 from app.llm_factory import build_llm, llm, parser
 from app.llm_utils import invoke_llm_structured
 from app.merge_service import (
@@ -1216,6 +1217,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
     logger.info("Executing gatherer_node to structure requirements.")
     project_id = state.get("project_id", "PROJ-UNKNOWN")
     raw_input = state.get("raw_input", "")
+    prioritized_input = format_prioritized_input(raw_input)
 
     # Use session from state if available, otherwise let function create one
     db_session = state.get("db_session")
@@ -1645,6 +1647,13 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
         requirement_match=requirement_match,
         has_existing_stories=bool(existing_user_stories),
     )
+    if prioritized_input != str(raw_input or "").strip():
+        intent_guidance += (
+            "\nThe input uses line-prefix priorities. Process items in the supplied "
+            "priority order. If the five-story response limit prevents full coverage, "
+            "include MUST COMPLETE items first, then IMPORTANT, NORMAL, and NICE TO HAVE. "
+            "Never drop a higher-priority item to include a lower-priority one."
+        )
     if parent_requirement:
         intent_guidance += (
             f"\nThe user explicitly targeted parent requirement {parent_requirement_code}. "
@@ -1670,7 +1679,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
     pydantic_parser = PydanticOutputParser(pydantic_object=GatheredRequirements)
     format_instructions = pydantic_parser.get_format_instructions()
     prompt_value = prompt_template.format(
-        raw_input=raw_input,
+        raw_input=prioritized_input,
         detected_intent=detected_intent,
         intent_guidance=intent_guidance,
         current_context=current_context,
@@ -1692,7 +1701,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
             prompt_template,
             GatheredRequirements,
             variables={
-                "raw_input": raw_input,
+                "raw_input": prioritized_input,
                 "detected_intent": detected_intent,
                 "intent_guidance": intent_guidance,
                 "current_context": current_context,
@@ -2497,6 +2506,171 @@ def _auditor_payload_token_budget(prompt: PromptTemplate, current_version: int) 
     return budget
 
 
+def _compact_auditor_clarification_evidence(
+    questions: List[Dict[str, Any]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Keep open questions actionable and resolved history token-efficient.
+
+    The database remains the complete audit ledger. The model only needs full
+    provenance for questions that are still open; resolved items are supplied
+    as compact question/answer decisions so it does not ask them again.
+    """
+    unresolved: List[Dict[str, Any]] = []
+    resolved: List[Dict[str, Any]] = []
+    seen_resolved = set()
+    for question in questions or []:
+        if not isinstance(question, dict):
+            continue
+        target = question.get("target_requirement_id") or question.get("target_user_story_id")
+        if not question.get("is_resolved", False):
+            unresolved.append({
+                "question": question.get("question_text"),
+                "provenance": question.get("provenance"),
+                "target_requirement_id": target,
+            })
+            continue
+        answer = str(question.get("user_answer") or "").strip()
+        prompt = str(question.get("question_text") or "").strip()
+        if not answer:
+            continue
+        decision = {
+            "target_requirement_id": target,
+            "category": question.get("checklist_category"),
+            "question": prompt,
+            "answer": answer,
+        }
+        dedupe_key = (
+            str(target or "").casefold(),
+            prompt.casefold(),
+            answer.casefold(),
+        )
+        if dedupe_key not in seen_resolved:
+            seen_resolved.add(dedupe_key)
+            resolved.append(decision)
+    return {
+        "unresolved_questions": unresolved,
+        "resolved_decisions": resolved,
+    }
+
+
+def _auditor_failure_details(exc: Exception) -> Dict[str, str]:
+    """Map internal inference failures to safe, actionable UI messages."""
+    detail = str(exc).lower()
+    context_markers = (
+        "no usable input context",
+        "above the auditor safe per-pass input allowance",
+        "metadata leaves insufficient context",
+        "model passes",
+        "tokens to keep from the initial prompt",
+        "context length",
+    )
+    if any(marker in detail for marker in context_markers):
+        return {
+            "code": "AUDIT_CONTEXT_LIMIT",
+            "message": (
+                "The audit could not run because the requirements and evidence are too large "
+                "for the loaded model context. No validation result was applied. Shorten or "
+                "split the evidence, or load LM Studio with a larger context window."
+            ),
+            "description": "The auditor prompt and evidence exceed the loaded model context window.",
+            "recommendation": "Reduce or split the audit evidence, or reload the model with a larger context window.",
+        }
+    if "length limit was reached" in detail or "finish_reason" in detail and "length" in detail:
+        return {
+            "code": "AUDIT_OUTPUT_LIMIT",
+            "message": (
+                "The audit model reached its response-token limit before completing the JSON result. "
+                "No validation result was applied. Increase AUDITOR_OUTPUT_TOKENS or reduce the audit scope."
+            ),
+            "description": "The local model response was truncated before the audit JSON was complete.",
+            "recommendation": "Increase the auditor output-token allowance or audit a smaller scope.",
+        }
+    return {
+        "code": "AUDIT_PARSE_ERROR",
+        "message": "The local model returned no usable audit JSON. No validation result was applied.",
+        "description": "The local model returned no usable structured audit result.",
+        "recommendation": "Retry after confirming LM Studio has Qwen loaded and thinking mode is disabled.",
+    }
+
+
+def _audit_checklist_batches(max_batches: int = 3) -> List[Dict[str, Any]]:
+    """Split the canonical checklist into bounded recovery passes."""
+    rules = ACTIVE_AUDIT_CHECKLIST.rules
+    batch_count = max(1, min(max_batches, len(rules)))
+    batch_size = max(1, (len(rules) + batch_count - 1) // batch_count)
+    return [
+        {
+            "checklist_id": ACTIVE_AUDIT_CHECKLIST.checklist_id,
+            "version": ACTIVE_AUDIT_CHECKLIST.version,
+            "rules": [rule.model_dump() for rule in rules[index:index + batch_size]],
+        }
+        for index in range(0, len(rules), batch_size)
+    ]
+
+
+def _deterministic_audit_fallback(
+    structured_payload: Dict[str, Any], current_version: int
+) -> Dict[str, Any]:
+    """Return safe structural findings when every LLM audit pass fails."""
+    stories = [
+        story for story in (structured_payload.get("user_stories") or [])
+        if isinstance(story, dict)
+    ]
+    findings = []
+    seen_codes = set()
+    for story in stories:
+        code = str(story.get("ticket_code") or "unknown")
+        normalized_code = code.strip().casefold()
+        if normalized_code in seen_codes:
+            findings.append({
+                "rule_id": "ADHOC", "finding_type": "duplicated", "severity": "medium",
+                "category": "Requirement structure", "target_requirement_id": code,
+                "description": f"Duplicate user story code detected: {code}.",
+                "source_references": [], "evidence_status": "supported",
+                "applicability": "applicable_required", "impact": "warning", "confidence": 1.0,
+                "rationale": "Duplicate identifiers make requirement traceability ambiguous.",
+                "recommendation": None,
+            })
+        seen_codes.add(normalized_code)
+        missing = [
+            field for field in ("story_title", "as_a", "i_want_to", "so_that")
+            if not str(story.get(field) or "").strip()
+        ]
+        if missing:
+            findings.append({
+                "rule_id": "ADHOC", "finding_type": "missing", "severity": "medium",
+                "category": "Requirement structure", "target_requirement_id": code,
+                "description": f"The story is missing required fields: {', '.join(missing)}.",
+                "source_references": [], "evidence_status": "supported",
+                "applicability": "applicable_required", "impact": "warning", "confidence": 1.0,
+                "rationale": "The structural check can confirm missing fields without model inference.",
+                "recommendation": None,
+            })
+        if not (story.get("acceptance_criteria") or []):
+            findings.append({
+                "rule_id": "ADHOC", "finding_type": "missing", "severity": "medium",
+                "category": "Requirement structure", "target_requirement_id": code,
+                "description": "The story has no acceptance criteria.",
+                "source_references": [], "evidence_status": "supported",
+                "applicability": "applicable_required", "impact": "warning", "confidence": 1.0,
+                "rationale": "Acceptance-criteria presence is a deterministic structural check.",
+                "recommendation": None,
+            })
+    return {
+        "is_valid": False,
+        "verdict": "incomplete",
+        "project_context": {},
+        "audit_version_reviewed": current_version,
+        "passed_checks": [],
+        "failed_checks": ["AUDIT_INCOMPLETE"],
+        "findings": findings,
+        "source_references": [],
+        "clarification_questions": [],
+        "checklist_id": ACTIVE_AUDIT_CHECKLIST.checklist_id,
+        "checklist_version": ACTIVE_AUDIT_CHECKLIST.version,
+    }
+
+
 def _build_auditor_contexts(
     structured_payload: Dict[str, Any],
     prompt: PromptTemplate,
@@ -2554,7 +2728,12 @@ def _build_auditor_contexts(
 
 
 def _validate_audit_output(output, documents):
-    """Reject malformed results or invented citations before staging an audit."""
+    """Validate schema and safely normalize unverifiable model claims.
+
+    A bad citation must never become evidence, but it also should not discard an
+    otherwise usable multi-minute audit. Remove unverifiable references and
+    downgrade the affected finding so it cannot become a blocking conclusion.
+    """
     required = {"is_valid", "findings", "clarification_questions"}
     if not isinstance(output, dict) or not required.issubset(output):
         logger.warning("Auditor validation rejected output: missing required top-level fields")
@@ -2568,32 +2747,55 @@ def _validate_audit_output(output, documents):
     for finding in parsed["findings"]:
         rule_id = finding.get("rule_id", "ADHOC").upper()
         if rule_id not in allowed_rule_ids:
-            logger.warning("Auditor validation rejected unknown rule_id=%s", rule_id)
-            return False
+            logger.warning("Auditor normalized unknown rule_id=%s to ADHOC", rule_id)
+            finding["rule_id"] = "ADHOC"
     sources = {doc["document_id"]: doc for doc in documents}
-    for item in parsed["findings"] + parsed["clarification_questions"]:
+    auditable_items = (
+        [(item, True) for item in parsed["findings"]]
+        + [(item, False) for item in parsed["clarification_questions"]]
+    )
+    for item, is_finding in auditable_items:
+        valid_refs = []
+        rejected_ref = False
         for ref in item.get("source_references", []):
             doc = sources.get(ref.get("document_id"))
             if not doc:
                 logger.warning(
-                    "Auditor validation rejected unknown citation document_id=%s; allowed=%s",
+                    "Auditor removed unknown citation document_id=%s; allowed=%s",
                     ref.get("document_id"), sorted(sources),
                 )
-                return False
+                rejected_ref = True
+                continue
             if ref.get("document_name") != doc["filename"]:
                 logger.warning(
-                    "Auditor validation rejected citation name=%r for document_id=%s; expected=%r",
+                    "Auditor removed citation name=%r for document_id=%s; expected=%r",
                     ref.get("document_name"), ref.get("document_id"), doc["filename"],
                 )
-                return False
+                rejected_ref = True
+                continue
             body = " ".join(doc.get("content_markdown", "").split())
             excerpt = " ".join((ref.get("excerpt") or "").split())
             if excerpt and excerpt not in body:
                 logger.warning(
-                    "Auditor validation rejected non-verbatim excerpt for document_id=%s: %r",
+                    "Auditor removed non-verbatim excerpt for document_id=%s: %r",
                     ref.get("document_id"), excerpt[:160],
                 )
-                return False
+                rejected_ref = True
+                continue
+            valid_refs.append(ref)
+        item["source_references"] = valid_refs
+        if rejected_ref and is_finding:
+            item["evidence_status"] = "insufficient"
+            if item.get("impact") == "blocking":
+                item["impact"] = "warning"
+            item["rationale"] = (
+                "The model supplied a citation that could not be verified against the provided evidence; "
+                "this observation is non-blocking until evidence is confirmed."
+            )
+    # Return the validated and normalized structure to the caller; the callback
+    # contract is boolean, so mutation is how the safe form becomes the result.
+    output.clear()
+    output.update(parsed)
     return True
 
 
@@ -2717,16 +2919,9 @@ async def auditor_node(state: AgentState) -> Dict[str, Any]:
         "knowledge_base_documents": knowledge_documents,
         # Prior questions are durable audit evidence. Resolved answers help the
         # Auditor avoid asking again; unresolved questions remain open inputs.
-        "clarification_evidence": [
-            {
-                "question": q.get("question_text"),
-                "answer": q.get("user_answer"),
-                "is_resolved": bool(q.get("is_resolved")),
-                "provenance": q.get("provenance"),
-                "target_requirement_id": q.get("target_requirement_id") or q.get("target_user_story_id"),
-            }
-            for q in (req_state.get("clarification_questions") or []) if isinstance(q, dict)
-        ],
+        "clarification_evidence": _compact_auditor_clarification_evidence(
+            req_state.get("clarification_questions") or []
+        ),
     }
 
     prompt = PromptTemplate(
@@ -2752,42 +2947,120 @@ async def auditor_node(state: AgentState) -> Dict[str, Any]:
         # the local model generate long, slow answers. The compact contract is
         # still validated by AuditorOutput on the structured fallback path.
         format_instructions = AUDITOR_FORMAT_INSTRUCTIONS
-        partial_results = []
-        for index, context in enumerate(contexts, start=1):
-            allowed_sources = [
-                {"document_id": doc.get("document_id"), "document_name": doc.get("filename")}
-                for doc in context["knowledge_base_documents"]
-            ]
-            pass_format_instructions = (
-                format_instructions
-                + "\nCitation validation for this pass: use only these exact document_id/document_name pairs: "
-                + json.dumps(allowed_sources, ensure_ascii=False)
-                + ". For a question or finding based only on requirement analysis, use an empty "
-                  "source_references array. Never cite 'System analysis' as a document. Excerpts must be "
-                  "short verbatim substrings of the supplied document; remove an unverifiable citation."
-            )
-            partial_results.append(await invoke_llm_structured(
-                auditor_llm,
-                prompt,
-                AuditorOutput,
-                variables={
-                    "structured_requirements": json.dumps(context, ensure_ascii=False),
-                    "current_version": current_version,
-                    "audit_scope": f"pass {index} of {len(contexts)}",
-                    "audit_checklist": json.dumps(ACTIVE_AUDIT_CHECKLIST.prompt_payload(), ensure_ascii=False),
-                    "format_instructions": "Output ONLY raw JSON. No markdown.",
-                },
-                description=f"auditor pass {index}/{len(contexts)}",
-                # The compact repair call must know which citations are valid;
-                # otherwise it can only reproduce the candidate's bad ID/name.
-                format_instructions=pass_format_instructions,
-                validate=lambda output: _validate_audit_output(
-                    output, context["knowledge_base_documents"]
-                ),
-                native_json_schema=True,
-            ))
-            partial_results[-1] = AuditorOutput.model_validate(partial_results[-1]).model_dump()
+        model_passes_used = 0
 
+        async def run_passes(
+            checklist_payloads: List[Dict[str, Any]], *, tolerate_failures: bool
+        ) -> tuple[List[Dict[str, Any]], List[Exception]]:
+            nonlocal model_passes_used
+            completed: List[Dict[str, Any]] = []
+            failures: List[Exception] = []
+            total = len(contexts) * len(checklist_payloads)
+            pass_number = 0
+            for checklist_payload in checklist_payloads:
+                allowed_rule_ids = [rule["rule_id"] for rule in checklist_payload["rules"]]
+                for context in contexts:
+                    if model_passes_used >= settings.AUDITOR_MAX_PASSES:
+                        failures.append(RuntimeError("Auditor model-pass budget exhausted"))
+                        return completed, failures
+                    model_passes_used += 1
+                    pass_number += 1
+                    allowed_sources = [
+                        {"document_id": doc.get("document_id"), "document_name": doc.get("filename")}
+                        for doc in context["knowledge_base_documents"]
+                    ]
+                    pass_format_instructions = (
+                        format_instructions
+                        + "\nEvaluate only these rule IDs in this pass: "
+                        + json.dumps(allowed_rule_ids)
+                        + ". Return at most one finding and one clarification question per rule."
+                        + "\nCitation validation for this pass: use only these exact document_id/document_name pairs: "
+                        + json.dumps(allowed_sources, ensure_ascii=False)
+                        + ". For a question or finding based only on requirement analysis, use an empty "
+                          "source_references array. Never cite 'System analysis' as a document. Excerpts must be "
+                          "short verbatim substrings of the supplied document; remove an unverifiable citation."
+                    )
+                    try:
+                        pass_result = await invoke_llm_structured(
+                            auditor_llm,
+                            prompt,
+                            AuditorOutput,
+                            variables={
+                                "structured_requirements": json.dumps(context, ensure_ascii=False),
+                                "current_version": current_version,
+                                "audit_scope": f"pass {pass_number} of {total}",
+                                "audit_checklist": json.dumps(checklist_payload, ensure_ascii=False),
+                                "format_instructions": "Output ONLY raw JSON. No markdown.",
+                            },
+                            description=f"auditor pass {pass_number}/{total}",
+                            format_instructions=pass_format_instructions,
+                            validate=lambda output, docs=context["knowledge_base_documents"]: (
+                                _validate_audit_output(output, docs)
+                            ),
+                            native_json_schema=True,
+                        )
+                        completed.append(AuditorOutput.model_validate(pass_result).model_dump())
+                    except Exception as pass_exc:
+                        failures.append(pass_exc)
+                        logger.exception(
+                            "Auditor pass %s/%s failed during %s mode",
+                            pass_number, total, "recovery" if tolerate_failures else "primary",
+                        )
+                        if not tolerate_failures:
+                            return completed, failures
+            return completed, failures
+
+        full_checklist = ACTIVE_AUDIT_CHECKLIST.prompt_payload()
+        partial_results, pass_failures = await run_passes(
+            [full_checklist], tolerate_failures=False
+        )
+        primary_failure = pass_failures[0] if pass_failures else None
+        recovery_used = bool(pass_failures)
+        if recovery_used:
+            # Retry as smaller rule groups. Successful groups are retained even
+            # if another group fails; the final status remains incomplete and
+            # never becomes a false pass.
+            remaining_passes = settings.AUDITOR_MAX_PASSES - model_passes_used
+            max_batches = remaining_passes // max(1, len(contexts))
+            recovery_payloads = _audit_checklist_batches(min(3, max_batches))
+            if recovery_payloads:
+                partial_results, pass_failures = await run_passes(
+                    recovery_payloads, tolerate_failures=True
+                )
+
+        if not partial_results:
+            result = _deterministic_audit_fallback(structured_reqs_for_prompt, current_version)
+            failure = _auditor_failure_details(primary_failure or RuntimeError("audit unavailable"))
+            result["failed_checks"] = sorted({"AUDIT_INCOMPLETE", failure["code"]})
+            return {
+                "requirement_state": req_state,
+                "audit_result": result,
+                "audit_operational_error": True,
+                "agent_message": (
+                    failure["message"] + " Structural checks were returned, "
+                    "but compliance categories remain unevaluated. The previous saved verdict was preserved."
+                ),
+            }
+
+        result = _merge_audit_passes(partial_results, current_version)
+        if recovery_used and pass_failures:
+            result["is_valid"] = False
+            result["verdict"] = "incomplete"
+            result["failed_checks"] = sorted(set(result.get("failed_checks", [])) | {"AUDIT_INCOMPLETE"})
+            return {
+                "requirement_state": req_state,
+                "audit_result": result,
+                "audit_operational_error": True,
+                "agent_message": (
+                    f"The audit completed only {len(partial_results)} of "
+                    f"{len(partial_results) + len(pass_failures)} recovery passes. "
+                    "Partial findings are shown, unevaluated categories are not treated as passed, "
+                    "and the previous saved verdict was preserved."
+                ),
+            }
+
+        # Either the primary pass succeeded or every smaller recovery category
+        # succeeded, so normal verdict persistence can continue.
         result = _merge_audit_passes(partial_results, current_version)
         
         # Merge new questions with every existing unresolved question. An Auditor
@@ -2892,20 +3165,21 @@ async def auditor_node(state: AgentState) -> Dict[str, Any]:
         # non-valid UI result, but mark it so the pipeline does not create a
         # merge action or overwrite the last good audit.
         logger.exception("Auditor execution failed")
+        failure = _auditor_failure_details(exc)
         result = {
             "is_valid": False,
             "verdict": "needs_clarification",
             "project_context": req_state.get("audit_project_context", {}),
             "audit_version_reviewed": current_version,
             "passed_checks": [],
-            "failed_checks": ["AUDIT_PARSE_ERROR"],
+            "failed_checks": [failure["code"]],
             "findings": [{
                 "rule_id": "ADHOC",
                 "finding_type": "audit_unavailable",
                 "severity": "medium",
                 "category": "Audit execution",
                 "target_requirement_id": None,
-                "description": "The local model returned no usable structured audit result.",
+                "description": failure["description"],
                 "source_references": [],
                 "evidence_status": "insufficient",
                 "applicability": "unknown",
@@ -2913,7 +3187,7 @@ async def auditor_node(state: AgentState) -> Dict[str, Any]:
                 "confidence": 1.0,
                 "rationale": "No compliance conclusion can be drawn from an incomplete model response.",
                 "recommendation": {
-                    "summary": "Retry after confirming LM Studio has Qwen loaded and thinking mode is disabled.",
+                    "summary": failure["recommendation"],
                     "proposed_requirement_text": None,
                     "proposed_acceptance_criteria": [],
                     "expected_benefit": "Produces a complete evidence-based audit.",
@@ -2928,7 +3202,7 @@ async def auditor_node(state: AgentState) -> Dict[str, Any]:
             "requirement_state": req_state,
             "audit_result": result,
             "audit_operational_error": True,
-            "agent_message": "The local model returned no usable audit JSON. No validation result was applied.",
+            "agent_message": failure["message"],
         }
 
 def _prd_narrative_from_validated_audit(requirement_state: Dict[str, Any]) -> Dict[str, Any]:

@@ -71,7 +71,7 @@ async def test_audit_auto_persistence_reload_and_failed_retry(client, db_session
     assert "private model exception" not in failed.text
     assert failed.json()["pending_merge"] is False
     assert failed.json()["pending_action_id"] is None
-    assert failed.json()["audit_result"]["failed_checks"] == ["AUDIT_PARSE_ERROR"]
+    assert set(failed.json()["audit_result"]["failed_checks"]) == {"AUDIT_INCOMPLETE", "AUDIT_PARSE_ERROR"}
     assert await db_session.scalar(select(func.count()).select_from(PendingActionModel)) == count_before
     after = (await client.get(f"/api/project/{seeded_project}")).json()
     assert after["audit_findings"] == saved["audit_findings"]

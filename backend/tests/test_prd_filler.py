@@ -261,8 +261,47 @@ def test_filled_body_converts_to_docx():
 def test_empty_data_still_compiles():
     body = fill_template_body(project_id="abc", project_name="P", version=1, data={})
     assert "\\section*{Stakeholders}" in body
+    assert "TBD" not in body
+    assert "1. \\prdfield{}" not in body
     pdf = compile_latex_to_pdf(body)
     assert pdf.startswith(b"%PDF")
+
+
+def test_regeneration_normalizes_existing_numbering_without_nesting():
+    """Saved/imported presentation labels must not compound on later builds."""
+    dirty = {
+        **DATA,
+        "business_goals": ["1. 1. Reduce handling time"],
+        "problem_statement": ["1.1.1.1 TBD", "2. Existing issue"],
+        "scope_in": ["1. 1. Submit refunds online"],
+        "scope_out": ["1.1. Legacy branch flow"],
+        "requirements": [{
+            "requirement_code": "REQ-001",
+            "title": "Refunds",
+            "user_stories": [{
+                "ticket_code": "US-001",
+                "story_title": "Refund request",
+                "as_a": "TBD",
+                "i_want_to": "FR 1.1: 1. submit a refund",
+                "so_that": "receive funds",
+                "acceptance_criteria": ["AC 1.1: AC 1.1: 1. request is validated", "1.1.1.1 TBD"],
+            }],
+        }],
+    }
+    body = fill_template_body(
+        project_id="p1",
+        project_name="P",
+        data=dirty,
+        narrative={"non_functional": "1. 1. Latency under two seconds", "growth": "1.1.1.1 TBD"},
+    )
+    assert "1. 1." not in body
+    assert "1.1.1.1" not in body
+    assert "TBD" not in body
+    assert "FR 1.1: submit a refund" in body
+    assert "AC 1.1: request is validated" in body
+    assert "As a " not in body
+    assert compile_latex_to_pdf(body).startswith(b"%PDF")
+    assert convert_latex_to_docx(body)[:2] == b"PK"
 
 
 def test_no_literal_prdfield_leak():

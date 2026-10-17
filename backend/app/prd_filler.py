@@ -10,7 +10,7 @@ template, so the result is PDF-exact and always compiles.
 
 ``fill_template_body`` is deterministic and data-driven. Optional narrative
 snippets (AI-written prose) can be supplied per-section; anything absent is
-left as an honest placeholder (TBD) instead of invented content.
+left blank instead of displaying a fabricated value or placeholder.
 """
 from __future__ import annotations
 
@@ -54,6 +54,35 @@ def _clean(value: Any) -> str:
     pages) with the content, mirroring the DOCX export behaviour.
     """
     return str(value or "").strip().replace("\r", " ").replace("\n", " ")
+
+
+_OUTLINE_PREFIX_RE = re.compile(
+    r"^\s*(?:(?:\d+(?:\.\d+)+[.):]?|\d+[.):])\s*)+"
+)
+_FR_AC_PREFIX_RE = re.compile(r"^\s*(?:FR|AC)\s+\d+(?:\.\d+)*\s*:\s*", re.I)
+
+
+def _plain_list_item(value: Any) -> str:
+    """Remove presentation numbering before the template adds its own label."""
+    text = str(value or "").strip()
+    previous = None
+    while text and text != previous:
+        previous = text
+        text = _FR_AC_PREFIX_RE.sub("", text)
+        text = _OUTLINE_PREFIX_RE.sub("", text)
+    return "" if text.upper() == "TBD" else text.strip()
+
+
+def _numbered_text(value: Any) -> str:
+    """Canonicalize a numbered multiline field, returning blank when unknown."""
+    source = str(value or "").replace("<br>", "\n")
+    items = [_plain_list_item(line) for line in source.splitlines()]
+    items = [item for item in items if item]
+    if not items:
+        return ""
+    if len(items) == 1 and not re.match(r"^\s*(?:\d|FR\b|AC\b)", source, re.I):
+        return items[0]
+    return "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1))
 
 
 # PENDING DOCUMENT-VERSION LABEL — written into the cover's VERSION field and
@@ -433,20 +462,21 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
 
     def _narr(key: str, fallback: str) -> str:
         if narrative and narrative.get(key):
-            return r"\prdfield{" + escape_latex(_clean(narrative[key])) + "}"
-        return fallback
+            return r"\prdfield{" + escape_latex(_numbered_text(narrative[key])) + "}"
+        return fallback.replace("{TBD}", "{}")
 
     def _topic(name: str, fallback: str) -> str:
         value = business_topics.get(name)
-        return r"\prdfield{" + escape_latex(_clean(value)) + "}" if value else fallback
+        cleaned_value = _numbered_text(value)
+        return r"\prdfield{" + escape_latex(cleaned_value) + "}" if cleaned_value else fallback
 
-    epic = _topic("Introduction & Executive Summary", _narr("exec_summary", r"\prdfield{TBD}"))
+    epic = _topic("Introduction & Executive Summary", _narr("exec_summary", r"\prdfield{}"))
 
     problem_source = ([business_topics["Problem Statement"]]
                       if business_topics.get("Problem Statement")
                       else (data.get("problem_statement") or []))
-    problems = [_clean(p) for p in problem_source
-                if str(p or "").strip()] or ["TBD"]
+    problems = [_plain_list_item(p) for p in problem_source]
+    problems = [problem for problem in problems if problem]
     problem_cell = r"\prdfield{" + "".join(
         f"{i + 1}. {escape_latex(p)}"
         + (r"\newline " if i < len(problems) - 1 else "")
@@ -455,10 +485,13 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
 
     def _num(items: List[str]) -> str:
         # No caps: the longtable rows wrap and grow with the content.
-        cleaned = [escape_latex(_clean(i))
-                   for i in items if str(i or "").strip()]
+        expanded = []
+        for item in items:
+            expanded.extend(str(item or "").replace("<br>", "\n").splitlines())
+        cleaned = [escape_latex(_plain_list_item(item)) for item in expanded]
+        cleaned = [item for item in cleaned if item]
         if not cleaned:
-            return r"\prdfield{TBD}"
+            return r"\prdfield{}"
         parts = []
         for idx, item in enumerate(cleaned):
             parts.append(
@@ -471,10 +504,12 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
         (a.get("name", a) if isinstance(a, dict) else a) for a in (actors or [])
     ]
     target = [n for n in target if str(n or "").strip()]
-    target_text = business_topics.get("Target Audience & user Personas") or ", ".join(str(n) for n in target)
+    target_text = _plain_list_item(
+        business_topics.get("Target Audience & user Personas") or ", ".join(str(n) for n in target)
+    )
     target_cell = r"\prdfield{" + escape_latex(target_text) + "}"
     if target_cell == r"\prdfield{":
-        target_cell = r"\prdfield{TBD}"
+        target_cell = r"\prdfield{}"
 
     rows = [
         (
@@ -535,18 +570,18 @@ def _fr_rows_for(stories: List[Dict[str, Any]]) -> str:
     normalized cleanly by the Markdown preview converter.
     """
     if not stories:
-        return r"""    & & \shortstack{FR 1.1: The system\\
-must\ldots} & \shortstack{AC 1.1:\\
-AC 1.2:} \\"""
+        return r"""    & & & \\"""
     rows = []
     for idx, story in enumerate(stories, start=1):
         code = story.get("ticket_code") or f"US-{idx:03d}"
         title = story.get("story_title") or story.get("i_want_to") or f"Story {idx}"
-        story_lines = [
-            "As a " + escape_latex(_clean(story.get("as_a") or "TBD")),
-            "I want to " + escape_latex(_clean(story.get("i_want_to") or "TBD")),
-            "So that " + escape_latex(_clean(story.get("so_that") or "TBD")),
-        ]
+        story_lines = []
+        for prefix, value in (("As a ", story.get("as_a")),
+                              ("I want to ", story.get("i_want_to")),
+                              ("So that ", story.get("so_that"))):
+            cleaned_value = _plain_list_item(value)
+            if cleaned_value:
+                story_lines.append(prefix + escape_latex(cleaned_value))
         story_block = r"\newline\newline ".join(story_lines)
         # Requirement-only projects use a synthetic row without user-story
         # sentence fields. Keep that requirement identifiable, while real
@@ -554,10 +589,10 @@ AC 1.2:} \\"""
         desired_action_source = story.get("i_want_to")
         if not desired_action_source:
             desired_action_source = f"{code}: {title}"
-        desired_action = escape_latex(_clean(desired_action_source))
-        fr_block = f"FR {idx}.1: {desired_action}"
-        acs = [escape_latex(_clean(a)) for a in (story.get("acceptance_criteria") or [])
-               if str(a or "").strip()] or [r"\prdfield{TBD}"]
+        desired_action = escape_latex(_plain_list_item(desired_action_source))
+        fr_block = f"FR {idx}.1: {desired_action}" if desired_action else ""
+        acs = [escape_latex(_plain_list_item(a)) for a in (story.get("acceptance_criteria") or [])]
+        acs = [ac for ac in acs if ac]
         ac_block = "\\\\".join(f"AC {idx}.{j}: {ac}" for j, ac in enumerate(acs, start=1))
         rows.append(f"    & {story_block} & \\rule{{0pt}}{{2.1cm}}{fr_block} & {ac_block} \\\\")
     # Each row already ends with a complete ``\\`` terminator; rows are
@@ -607,10 +642,10 @@ def _fill_product_scope(body: str, data: Dict[str, Any]) -> str:
     if _ANCHOR_FR_ROW in body:
         body = body.replace(_ANCHOR_FR_ROW, rows, 1)
 
-    scope_in = [escape_latex(s) for s in (data.get("scope_in") or [])
-                if str(s or "").strip()]
-    scope_out = [escape_latex(s) for s in (data.get("scope_out") or [])
-                 if str(s or "").strip()]
+    scope_in = [escape_latex(_plain_list_item(s)) for s in (data.get("scope_in") or [])]
+    scope_in = [item for item in scope_in if item]
+    scope_out = [escape_latex(_plain_list_item(s)) for s in (data.get("scope_out") or [])]
+    scope_out = [item for item in scope_out if item]
 
     BS = chr(92)  # backslash - plain concatenation avoids f-string brace bugs
     NL = "\n"
@@ -621,7 +656,7 @@ def _fill_product_scope(body: str, data: Dict[str, Any]) -> str:
         when ``last_gap`` and never a trailing '\\\\' (a row break directly
         before '}}}' makes \\shortstack die with 'Misplaced \\cr')."""
         if not items:
-            return f"1. {BS}prdfield{{TBD}}"
+            return ""
         lines = []
         n = len(items)
         for i, item in enumerate(items):
@@ -665,8 +700,8 @@ def _fill_product_scope(body: str, data: Dict[str, Any]) -> str:
 def _fill_tech_appendix(body: str, narrative: Optional[Dict[str, str]]) -> str:
     def _cell(key: str, fallback: str) -> str:
         if narrative and narrative.get(key):
-            return r"\prdfield{" + escape_latex(_clean(narrative[key])) + "}"
-        return fallback
+            return r"\prdfield{" + escape_latex(_numbered_text(narrative[key])) + "}"
+        return fallback.replace("{TBD}", "{}")
 
     rows = [
         (
@@ -741,7 +776,8 @@ def _normalize_glossary_entries(value: Any) -> List[tuple[str, str]]:
 def _fill_glossary_rows(body: str, narrative: Optional[Dict[str, Any]]) -> str:
     entries = _normalize_glossary_entries((narrative or {}).get("glossary"))
     if not entries:
-        return body
+        blank = "\n  \\cline{2-3}\n  & \\prdfield{} & \\prdfield{} \\\\"
+        return _GLOSSARY_GRID_RE.sub(lambda _match: blank, body, count=1)
     rows = []
     for term, definition in entries:
         rows.append(

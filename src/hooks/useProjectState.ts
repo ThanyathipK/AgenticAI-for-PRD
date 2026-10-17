@@ -263,6 +263,9 @@ export function useProjectState(
     projectId: projectsApi.projectId,
     pendingActions: projectsApi.pendingActions,
     setPendingActions: projectsApi.setPendingActions,
+    setMessages: store.setMessages,
+    setSyncStatus: store.setSyncStatus,
+    setCurrentAgentNode: store.setCurrentAgentNode,
     registerLiveProgress: (fn) => {
       liveExtractionProgressRef.current = fn;
     },

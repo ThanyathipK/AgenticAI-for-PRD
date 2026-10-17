@@ -27,7 +27,6 @@ import {
   Lock,
   Pin,
   PinOff,
-  Menu,
   ChevronDown,
 } from 'lucide-react';
 import { useProjectState } from '../hooks/useProjectState';
@@ -202,12 +201,11 @@ export default function Dashboard() {
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Mobile drawer: below `lg` the sidebar is hidden and toggled as an overlay
-  // drawer via a hamburger button in the top-left, so it never eats horizontal
-  // space on small screens.
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
   const [exportMenuOpen, setExportMenuOpen] = useState<boolean>(false);
-  const collapsed = historyCollapsed && !mobileSidebarOpen;
+  // Use one sidebar state at every viewport size. Previously narrow screens
+  // switched to a separate overlay drawer, so the same control had different
+  // behavior depending on the window width.
+  const collapsed = historyCollapsed;
   const expanded = !collapsed;
 
   // ---- Requirements tab: lockable requirement rows -------------------------
@@ -314,7 +312,7 @@ export default function Dashboard() {
       {/* PROJECT HISTORY SIDEBAR */}
       <aside
         id="project-sidebar"
-        className={`${mobileSidebarOpen ? 'mobile-open' : ''} hidden lg:flex lg:flex-col lg:bg-white lg:border-r lg:border-outline lg:shrink-0 lg:transition-[width] lg:duration-200 lg:ease-out ${historyCollapsed ? 'lg:w-[52px]' : 'lg:w-[280px]'}`}
+        className={`flex flex-col bg-white border-r border-outline shrink-0 transition-[width] duration-200 ease-out ${historyCollapsed ? 'w-[52px]' : 'w-[280px]'}`}
       >
         <div className={`py-4 flex items-center ${collapsed ? 'justify-center px-2' : 'justify-between px-5'} border-b border-outline`}>
           <div className={`flex items-center gap-2 overflow-hidden ${collapsed ? 'w-0 opacity-0' : 'opacity-100'}`}>
@@ -692,24 +690,6 @@ export default function Dashboard() {
           />
         </div>
       </aside>
-      {/* MOBILE SIDEBAR DRAWER (below `lg`): hamburger toggle + dimmed backdrop.
-          The sidebar itself is re-positioned as an overlay by #project-sidebar.mobile-open. */}
-      <button
-        type="button"
-        className={`group/tt fixed ${mobileSidebarOpen ? 'left-[292px]' : 'left-3'} top-3 z-30 w-9 h-9 rounded-lg bg-white border border-outline shadow-sm flex items-center justify-center text-on-surface hover:bg-primary/10 hover:text-primary transition-colors lg:hidden`}
-        onClick={() => setMobileSidebarOpen((v) => !v)}
-        aria-label={mobileSidebarOpen ? 'Close project sidebar' : 'Open project sidebar'}
-      >
-        {mobileSidebarOpen ? <XCircle className="w-4.5 h-4.5" /> : <Menu className="w-4.5 h-4.5" />}
-        <TooltipBubble label={mobileSidebarOpen ? 'Close sidebar' : 'Open sidebar'} side="bottom" />
-      </button>
-      {mobileSidebarOpen && (
-        <div
-          className="fixed inset-0 z-20 bg-black/40 lg:hidden"
-          onClick={() => setMobileSidebarOpen(false)}
-          aria-hidden="true"
-        />
-      )}
 
       {/* PAGE CONTENT — the workspace (chat + PRD tabs) or the projects
           overview dashboard, switched from the sidebar's view nav. Only the

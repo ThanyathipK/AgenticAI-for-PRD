@@ -406,7 +406,32 @@ def test_audit_rejects_unverifiable_citations(bad_field, bad_value):
     ]}
     assert agents._validate_audit_output(output, [document])
     ref[bad_field] = bad_value
-    assert not agents._validate_audit_output(output, [document])
+    finding = {
+        "finding_type": "missing", "severity": "high", "category": "Approval",
+        "description": "Approval is missing.", "source_references": [ref],
+        "evidence_status": "supported", "applicability": "applicable_required",
+        "impact": "blocking", "confidence": 0.9,
+    }
+    normalized = {"is_valid": False, "findings": [finding], "clarification_questions": []}
+    assert agents._validate_audit_output(normalized, [document])
+    assert normalized["findings"][0]["source_references"] == []
+    assert normalized["findings"][0]["evidence_status"] == "insufficient"
+    assert normalized["findings"][0]["impact"] == "warning"
+
+
+def test_audit_normalizes_unknown_rule_id_to_adhoc():
+    output = {
+        "is_valid": False,
+        "findings": [{
+            "rule_id": "INVENTED-999", "finding_type": "missing", "severity": "medium",
+            "category": "Approval", "description": "Approval ownership is unclear.",
+            "source_references": [], "evidence_status": "insufficient",
+            "applicability": "unknown", "impact": "warning", "confidence": 0.6,
+        }],
+        "clarification_questions": [],
+    }
+    assert agents._validate_audit_output(output, [])
+    assert output["findings"][0]["rule_id"] == "ADHOC"
 
 
 @pytest.mark.parametrize("field,value", [
@@ -454,5 +479,181 @@ async def test_auditor_parse_failure_returns_unmergeable_operational_result(monk
         "structured_requirements": _legacy_payload(board["user_stories"]),
     })
     assert result["audit_operational_error"] is True
-    assert result["audit_result"]["failed_checks"] == ["AUDIT_PARSE_ERROR"]
+    assert set(result["audit_result"]["failed_checks"]) == {"AUDIT_INCOMPLETE", "AUDIT_PARSE_ERROR"}
     assert "line 213" not in result["agent_message"]
+
+
+def test_clarification_evidence_keeps_open_provenance_and_compacts_resolved_history():
+    evidence = agents._compact_auditor_clarification_evidence([
+        {
+            "question_text": "Who approves the transfer?",
+            "is_resolved": False,
+            "provenance": {"type": "Project file", "document": "policy.pdf"},
+            "target_requirement_id": "REQ-001",
+        },
+        {
+            "question_text": "Is dual approval required?",
+            "user_answer": "Yes, above THB 500,000.",
+            "is_resolved": True,
+            "checklist_category": "Approval controls",
+            "provenance": {"type": "Project file", "document": "policy.pdf"},
+            "requirement_context": "large immutable snapshot that must stay out of the prompt",
+            "target_requirement_id": "REQ-001",
+        },
+    ])
+
+    assert evidence["unresolved_questions"] == [{
+        "question": "Who approves the transfer?",
+        "provenance": {"type": "Project file", "document": "policy.pdf"},
+        "target_requirement_id": "REQ-001",
+    }]
+    assert evidence["resolved_decisions"] == [{
+        "target_requirement_id": "REQ-001",
+        "category": "Approval controls",
+        "question": "Is dual approval required?",
+        "answer": "Yes, above THB 500,000.",
+    }]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_text", "expected_code", "message_fragment"),
+    [
+        (
+            "Auditor document metadata leaves insufficient context for content",
+            "AUDIT_CONTEXT_LIMIT",
+            "too large",
+        ),
+        (
+            "Could not parse response content as the length limit was reached",
+            "AUDIT_OUTPUT_LIMIT",
+            "response-token limit",
+        ),
+    ],
+)
+async def test_auditor_surfaces_actionable_size_failures(
+    monkeypatch, failure_text, expected_code, message_fragment
+):
+    board = copy.deepcopy(MULTI_GROUP_BOARD)
+    _patch(monkeypatch, board)
+
+    async def fail(*_args, **_kwargs):
+        raise RuntimeError(failure_text)
+
+    monkeypatch.setattr(agents, "invoke_llm_structured", fail)
+    result = await agents.auditor_node({
+        "project_id": "p1",
+        "current_version": 3,
+        "structured_requirements": _legacy_payload(board["user_stories"]),
+    })
+
+    assert result["audit_operational_error"] is True
+    assert set(result["audit_result"]["failed_checks"]) == {"AUDIT_INCOMPLETE", expected_code}
+    assert message_fragment in result["agent_message"]
+
+
+@pytest.mark.asyncio
+async def test_failed_full_audit_recovers_with_smaller_checklist_passes(monkeypatch):
+    board = copy.deepcopy(MULTI_GROUP_BOARD)
+    _patch(monkeypatch, board)
+    calls = []
+
+    async def recover(*_args, **kwargs):
+        calls.append(kwargs["variables"]["audit_checklist"])
+        if len(calls) == 1:
+            raise RuntimeError("full audit output was malformed")
+        return {"is_valid": True, "verdict": "pass", "findings": [], "clarification_questions": []}
+
+    monkeypatch.setattr(agents, "invoke_llm_structured", recover)
+    result = await agents.auditor_node({
+        "project_id": "p1", "current_version": 3,
+        "structured_requirements": _legacy_payload(board["user_stories"]),
+    })
+
+    assert len(calls) == 4  # one full pass, then three bounded rule batches
+    assert result.get("audit_operational_error") is not True
+    assert result["audit_result"]["verdict"] == "pass"
+
+
+@pytest.mark.asyncio
+async def test_primary_and_recovery_share_one_total_model_pass_budget(monkeypatch):
+    board = copy.deepcopy(MULTI_GROUP_BOARD)
+    _patch(monkeypatch, board)
+    original_build_contexts = agents._build_auditor_contexts
+
+    def two_contexts(*args, **kwargs):
+        contexts = original_build_contexts(*args, **kwargs)
+        return [copy.deepcopy(contexts[0]), copy.deepcopy(contexts[0])]
+
+    calls = 0
+
+    async def fail_second_primary_pass(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("full audit output was malformed")
+        return {"is_valid": True, "verdict": "pass", "findings": [], "clarification_questions": []}
+
+    monkeypatch.setattr(agents, "_build_auditor_contexts", two_contexts)
+    monkeypatch.setattr(agents.settings, "AUDITOR_MAX_PASSES", 4)
+    monkeypatch.setattr(agents, "invoke_llm_structured", fail_second_primary_pass)
+
+    result = await agents.auditor_node({
+        "project_id": "p1", "current_version": 3,
+        "structured_requirements": _legacy_payload(board["user_stories"]),
+    })
+
+    # Two primary calls leave room for exactly one two-context recovery batch.
+    assert calls == 4
+    assert result.get("audit_operational_error") is not True
+    assert result["audit_result"]["verdict"] == "pass"
+
+
+@pytest.mark.asyncio
+async def test_partial_recovery_never_reports_pass_or_overwrites_verdict(monkeypatch):
+    board = copy.deepcopy(MULTI_GROUP_BOARD)
+    _patch(monkeypatch, board)
+    calls = 0
+
+    async def partly_recover(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls in {1, 3, 4}:
+            raise RuntimeError("category unavailable")
+        return {
+            "is_valid": True, "verdict": "pass", "passed_checks": ["one category"],
+            "findings": [], "clarification_questions": [],
+        }
+
+    monkeypatch.setattr(agents, "invoke_llm_structured", partly_recover)
+    result = await agents.auditor_node({
+        "project_id": "p1", "current_version": 3,
+        "structured_requirements": _legacy_payload(board["user_stories"]),
+    })
+
+    assert result["audit_operational_error"] is True
+    assert result["audit_result"]["is_valid"] is False
+    assert result["audit_result"]["verdict"] == "incomplete"
+    assert "AUDIT_INCOMPLETE" in result["audit_result"]["failed_checks"]
+    assert "previous saved verdict was preserved" in result["agent_message"]
+
+
+@pytest.mark.asyncio
+async def test_total_model_failure_returns_deterministic_structural_audit(monkeypatch):
+    board = copy.deepcopy(MULTI_GROUP_BOARD)
+    board["user_stories"][0]["acceptance_criteria"] = []
+    _patch(monkeypatch, board)
+
+    async def always_fail(*_args, **_kwargs):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(agents, "invoke_llm_structured", always_fail)
+    result = await agents.auditor_node({
+        "project_id": "p1", "current_version": 3,
+        "structured_requirements": _legacy_payload(board["user_stories"]),
+    })
+
+    assert result["audit_operational_error"] is True
+    assert result["audit_result"]["verdict"] == "incomplete"
+    assert set(result["audit_result"]["failed_checks"]) == {"AUDIT_INCOMPLETE", "AUDIT_PARSE_ERROR"}
+    assert any("no acceptance criteria" in item["description"] for item in result["audit_result"]["findings"])

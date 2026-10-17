@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { api } from '../api/client';
+import type { ChatMessage } from '../components/types';
 import type {
   PendingActionPayload,
   ProcessDocumentResponse,
@@ -27,6 +28,9 @@ export interface DocumentsDeps {
   projectId: string | null;
   pendingActions: PendingActionPayload[];
   setPendingActions: Dispatch<SetStateAction<PendingActionPayload[]>>;
+  setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
+  setSyncStatus: Dispatch<SetStateAction<string>>;
+  setCurrentAgentNode: Dispatch<SetStateAction<string | null>>;
   /**
    * SSE bridge supplied by the composition root: `useProjectSync` forwards
    * `document_extraction_progress` frames here so the progress readout updates
@@ -43,7 +47,6 @@ export interface UseDocumentsResult {
   processingDocId: string | null;
   deletingDocId: string | null;
   extractionProgress: DocumentExtractionProgress | null;
-  lastDraftMessage: string | null;
   handleUploadDocument: (file: File) => Promise<void>;
   handleProcessDocument: (doc: UploadedDocumentPayload) => Promise<void>;
   /** Permanently removes a document; resolves to true on success. */
@@ -60,7 +63,6 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
   const [processingDocId, setProcessingDocId] = useState<string | null>(null);
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
   const [extractionProgress, setExtractionProgress] = useState<DocumentExtractionProgress | null>(null);
-  const [lastDraftMessage, setLastDraftMessage] = useState<string | null>(null);
   const prevPendingCount = useRef<number>(0);
 
   // DOC-UPLOAD 1.3 — Knowledge-base list load (DOC-UPLOAD 2.2). Runs on project switch and
@@ -118,13 +120,7 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
     if (!deps.projectId) return;
     setIsUploading(true);
     try {
-      const doc = await api.uploadDocument(deps.projectId, file);
-      if (doc.status === 'failed') {
-        // e.g. scanned PDF -> explicit needs-OCR message, never a silent stub.
-        setLastDraftMessage(doc.message || 'Upload stored with status failed.');
-      } else {
-        setLastDraftMessage(`Document conversion completed: ${doc.original_filename}`);
-      }
+      await api.uploadDocument(deps.projectId, file);
       await refreshDocuments();
     } catch (err) {
       handleError('Document upload failed.', err);
@@ -135,8 +131,16 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
 
   const handleProcessDocument = useCallback(async (doc: UploadedDocumentPayload) => {
     if (!deps.projectId || processingDocId) return;
+    const extractionRequest = `Extract requirements from attached document "${doc.original_filename}".`;
+    deps.setMessages(prev => [...prev, {
+      id: `document-extract-user-${Date.now()}`,
+      role: 'user',
+      content: extractionRequest,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    }]);
+    deps.setSyncStatus(`Gathering requirements from ${doc.original_filename}…`);
+    deps.setCurrentAgentNode('gatherer_node');
     setProcessingDocId(doc.id);
-    setLastDraftMessage(null);
     // Optimistic progress placeholder until the first chunk event lands.
     setExtractionProgress({
       documentId: doc.id,
@@ -159,11 +163,19 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
         deps.setPendingActions(prev =>
           prev.some(a => a.id === draft.id) ? prev : [...prev, draft],
         );
-        setLastDraftMessage(res.message || null);
+        // The backend persists the canonical completion message before publishing
+        // document_extraction_draft. The SSE refresh owns transcript updates so a
+        // fast refresh racing this response cannot create a duplicate message.
+        deps.setSyncStatus('Document requirements gathered. Review the merge preview.');
       }
     } catch (err) {
       handleError('Document extraction failed. No changes were written.', err);
+      // Extraction failures are also persisted and delivered through the SSE
+      // transcript refresh. The toast above still covers pre-extraction HTTP
+      // validation failures for which no durable chat entry is appropriate.
+      deps.setSyncStatus('Document extraction failed. No changes were written.');
     } finally {
+      deps.setCurrentAgentNode(null);
       setProcessingDocId(null);
       setExtractionProgress(null);
       await refreshDocuments();
@@ -199,7 +211,6 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
     processingDocId,
     deletingDocId,
     extractionProgress,
-    lastDraftMessage,
     handleUploadDocument,
     handleProcessDocument,
     handleDeleteDocument,

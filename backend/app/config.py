@@ -153,7 +153,9 @@ class Settings(BaseSettings):
     LLM_STRUCTURED_PROVIDER_FALLBACK: bool = False
     # Whole background-job deadline and process-wide heavy-inference limit.
     # One concurrent generation avoids swapping several 9B contexts on a 16GB Mac.
-    LLM_BACKGROUND_JOB_TIMEOUT_SECONDS: float = 660.0
+    # An audit is capped at AUDITOR_MAX_PASSES provider calls. This deadline
+    # covers eight worst-case 630-second structured calls plus shutdown overhead.
+    LLM_BACKGROUND_JOB_TIMEOUT_SECONDS: float = 5400.0
     LLM_MAX_CONCURRENT_HEAVY_JOBS: int = 1
     # Sequential, context-safe passes permitted for one audit. Eight allows a
     # normal project-wide + individual-policy evidence set on an 8k local model

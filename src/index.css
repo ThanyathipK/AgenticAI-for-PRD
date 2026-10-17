@@ -188,27 +188,6 @@ body.is-resizing {
     flex-direction: column;
   }
 
-  /* Project sidebar becomes an off-canvas overlay drawer below `lg`.
-     Hidden by default (`hidden lg:flex`), revealed via .mobile-open. */
-  #project-sidebar {
-    display: none;
-  }
-
-  #project-sidebar.mobile-open {
-    display: flex;
-    flex-direction: column;
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: 280px;
-    z-index: 25;
-    background: var(--color-background);
-    border-right: 1px solid var(--color-outline);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
-    overflow-y: auto;
-  }
-
   /* Override the drag-resize flex-basis (inline style) so chat becomes full-width
      on a stacked layout. `flex-basis` becomes the main-axis (height) in a column
      flex container, so we reset it to auto and cap it so the PRD stays visible. */
@@ -257,17 +236,6 @@ body.is-resizing {
 @media (max-width: 639px) {
   html {
     font-size: 15px;
-  }
-}
-
-/* Below `lg` the fixed sidebar-drawer toggle floats at the top-left of the
-   content area (left-3, 36px wide). Give the stacked chat panel header and the
-   projects dashboard hero matching left clearance so their content never hides
-   underneath the button. */
-@media (max-width: 1023px) {
-  #chat-panel-header,
-  #projects-dashboard-content {
-    padding-left: 3.5rem;
   }
 }
 

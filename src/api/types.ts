@@ -411,6 +411,7 @@ export interface RequirementStatePayload {
     follow_up_question?: string | null;
   }>;
   proposal_generation_warning?: string | null;
+  proposal_no_change_reason?: string | null;
 }
 
 // ----------------------------------------------------------------------------

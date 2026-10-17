@@ -89,11 +89,6 @@ export const DocumentLibrary: React.FC<DocumentLibraryProps> = ({ projectId, doc
             </p>
           </div>
         </div>
-        {docs.lastDraftMessage && (
-          <p className="mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-            {docs.lastDraftMessage}
-          </p>
-        )}
       </section>
 
       {/* DOCUMENT LIST — DOC-UPLOAD 1.4: filename opens the markdown preview (1.5), the chip

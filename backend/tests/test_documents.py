@@ -39,6 +39,7 @@ from app.main import app as fastapi_app
 from app.models import (
     AcceptanceCriteriaModel,
     ArtifactEventLogModel,
+    ConversationMessageModel,
     DocumentModel,
     PendingActionModel,
     ProjectModel,
@@ -469,6 +470,24 @@ class TestDraftOnlyExtraction:
             )
         ).scalar_one()
         assert row.extraction_status == "not_extracted"
+        messages = (
+            await db_session.execute(
+                select(ConversationMessageModel)
+                .where(ConversationMessageModel.project_id == seeded_project)
+                .order_by(ConversationMessageModel.created_at)
+            )
+        ).scalars().all()
+        extraction_messages = [
+            message for message in messages
+            if message.intent.startswith("DOCUMENT_REQUIREMENTS_")
+        ]
+        assert [message.intent for message in extraction_messages] == [
+            "DOCUMENT_REQUIREMENTS_REQUEST",
+            "DOCUMENT_REQUIREMENTS_FAILED",
+        ]
+        assert sum(
+            "extraction failed" in message.message for message in extraction_messages
+        ) == 1
 
     @pytest.mark.asyncio
     async def test_process_creates_draft_only_and_confirm_applies_once(

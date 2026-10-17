@@ -255,6 +255,15 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
       const detectedIntent = data.detected_intent || 'GENERAL_CHAT';
 
       if (data.no_changes === true) {
+        const clarificationQuestions = (data.audit_result?.clarification_questions || [])
+          .filter(question => !question.is_resolved);
+        if (clarificationQuestions.length > 0) {
+          const initialAnswers: Record<string, string> = {};
+          clarificationQuestions.forEach((question, index) => {
+            initialAnswers[questionAnswerKey(question, index)] = '';
+          });
+          store.setClarificationAnswers(initialAnswers);
+        }
         store.setSyncStatus('No changes were made');
         store.setCurrentAgentNode(null);
         store.setMessages(prev => [...prev, {
@@ -262,6 +271,10 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
           role: 'assistant',
           content: data.message || 'The requested item was not found. No changes were made.',
           timestamp: nowTime(),
+          isPendingClarifications: clarificationQuestions.length > 0,
+          auditResultSnapshot: clarificationQuestions.length > 0 && data.audit_result
+            ? toAuditResultFromPayload(data.audit_result)
+            : undefined,
         }]);
       } else if (detectedIntent === 'GENERAL_CHAT') {
         // Do NOT modify requirements, user stories, version history, or any project artifacts
@@ -488,7 +501,13 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
       const contextText = context
         ? `Inferred context: ${context.business_segment}, ${context.product_domain}, ${context.solution_type}, ${context.delivery_stage} (${Math.round(context.confidence * 100)}% confidence)`
         : '';
-      const auditCouldNotComplete = receivedAudit.failed_checks.includes('AUDIT_PARSE_ERROR');
+      const operationalAuditCodes = new Set([
+        'AUDIT_PARSE_ERROR',
+        'AUDIT_CONTEXT_LIMIT',
+        'AUDIT_OUTPUT_LIMIT',
+        'AUDIT_INCOMPLETE',
+      ]);
+      const auditCouldNotComplete = receivedAudit.failed_checks.some(code => operationalAuditCodes.has(code));
       if (isStaleResult) {
         store.setMessages(prev => [...prev, {
           id: `audit-stale-${Date.now()}`,
@@ -508,7 +527,7 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
           ? 'Requirements audit could not complete'
           : verdict === 'fail' ? 'Requirements audit failed' : 'Requirements audit needs clarification';
         const warningContent = auditCouldNotComplete
-          ? `${title}\n\n${findingTexts || 'Please run Validate again.'}`
+          ? `${title}\n\n${data.message || findingTexts || 'Please run Validate again.'}`
           : `${title}\n${contextText}\n\nFindings:\n${findingTexts || 'No blocking finding was established.'}\n\nPending clarifications:\n${questionTexts || 'None specified'}`;
 
         store.setMessages(prev => [...prev, {
@@ -878,6 +897,12 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
             workflow_stage: 'clarification_gatherer_review',
             }];
           });
+        } else {
+          // The server discards stale clarification previews when the latest
+          // answers produce no material requirement change.
+          deps.setPendingActions(prev =>
+            prev.filter(action => action.workflow_stage !== 'clarification_gatherer_review')
+          );
         }
         const classifications = res.clarification_answer_classifications || [];
         const classificationSummary = classifications.length
@@ -888,11 +913,15 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
           role: 'gatherer',
           content: res.proposal_generation_warning
             ? `Clarification answers were saved as audit evidence.\n\n${res.proposal_generation_warning}`
-            : `Clarification answers were sent to the Gatherer. A combined requirement-change proposal is ready for review and confirmation.\n\nClassifications: ${classificationSummary}`,
+            : res.proposal_no_change_reason
+              ? res.proposal_no_change_reason
+              : `Clarification answers were sent to the Gatherer. A combined requirement-change proposal is ready for review and confirmation.\n\nClassifications: ${classificationSummary}`,
           timestamp: nowTime(),
         }]);
         if (res.proposal_generation_warning) {
           store.setSyncStatus(res.proposal_generation_warning);
+        } else if (res.proposal_no_change_reason) {
+          store.setSyncStatus('Answers saved. No requirement changes were proposed.');
         } else if (unresolvedQuestions.length > 0) {
           store.setSyncStatus(`${unresolvedQuestions.length} clarification question(s) remain open. Review the combined proposed changes.`);
         } else {
