@@ -47,12 +47,14 @@ export function useProjectSync(
   // Live refs so the SSE handler always reads the freshest values without
   // having to reconnect the EventSource every time these change.
   const prdMarkdownRef = useRef(store.prdMarkdown);
+  const mermaidDiagramRef = useRef(store.mermaidDiagram);
   const currentVersionRef = useRef(store.currentVersion);
   const editingSectionIdRef = useRef(store.editingSectionId);
   const activeProjectIdRef = useRef(projectId);
   activeProjectIdRef.current = projectId;
   useEffect(() => {
     prdMarkdownRef.current = store.prdMarkdown;
+    mermaidDiagramRef.current = store.mermaidDiagram;
     currentVersionRef.current = store.currentVersion;
     editingSectionIdRef.current = store.editingSectionId;
   });
@@ -235,7 +237,7 @@ export function useProjectSync(
 
               const currentReqsStr = JSON.stringify(prev.requirements);
               const newReqsStr = JSON.stringify(newRequirements);
-              const epicName = epicNameFromRequirements(payload.requirements, '');
+              const epicName = payload.epic_name || epicNameFromRequirements(payload.requirements, '');
 
               // Always update if stories/epic/requirements changed, OR if lock states changed
               const hasLockChanges = newRequirements && prev.requirements
@@ -324,29 +326,36 @@ export function useProjectSync(
             return typeof staged === 'string' && staged !== '' && staged !== payload.generated_prd;
           });
 
-          // 5. Sync generated PRD markdown — the preview must always end up on
-          // the latest stored version. While the user is editing a section (or
-          // the staged-draft hold above is active) the incoming document is
-          // QUEUED, never dropped: the catch-up effect re-fetches and applies
-          // it as soon as the hold clears.
-          if (payload.generated_prd) {
-            const safeGeneratedPRD = getSafeSectionContent(payload.generated_prd);
-            if (safeGeneratedPRD) {
-              if (safeGeneratedPRD === prdMarkdownRef.current) {
-                prdSyncPendingRef.current = false;
-              } else if (editingSectionIdRef.current === null && !prdSyncHoldRef.current) {
-                prdSyncPendingRef.current = false;
-                store.setPrdMarkdown(safeGeneratedPRD);
-              } else {
-                prdSyncPendingRef.current = true;
-              }
-            }
-          }
+          // 5–6. Apply the PRD and diagram as one artifact snapshot. Previously
+          // the PRD waited during section editing / staged-preview holds while
+          // the diagram updated immediately, which could display two different
+          // revisions. Empty server values are authoritative too, so a removed
+          // diagram cannot remain stale in the UI.
+          const safeGeneratedPRD = getSafeSectionContent(payload.generated_prd || '');
+          const diagram = payload.generated_diagrams || '';
+          const artifactsChanged = (
+            safeGeneratedPRD !== prdMarkdownRef.current
+            || diagram !== mermaidDiagramRef.current
+          );
+          const artifactsHeld = (
+            editingSectionIdRef.current !== null || prdSyncHoldRef.current
+          );
 
-          // 6. Sync diagrams
-          const diagram = payload.generated_diagrams;
-          if (diagram) {
-            store.setMermaidDiagram(prev => (prev !== diagram ? diagram : prev));
+          if (artifactsChanged && artifactsHeld) {
+            prdSyncPendingRef.current = true;
+          } else if (!artifactsHeld) {
+            prdSyncPendingRef.current = false;
+            // An empty persisted PRD means the project has no generated
+            // document. Keep the official blank skeleton as the visual
+            // fallback, while clearing the paired diagram from the same state.
+            const nextPrd = safeGeneratedPRD || await getPrdTemplateMarkdown();
+            if (!isSubscribed || activeProjectIdRef.current !== projectId) return;
+            if (nextPrd !== prdMarkdownRef.current) {
+              store.setPrdMarkdown(nextPrd);
+            }
+            if (diagram !== mermaidDiagramRef.current) {
+              store.setMermaidDiagram(diagram);
+            }
           }
 
           // 7. Sync active agent node

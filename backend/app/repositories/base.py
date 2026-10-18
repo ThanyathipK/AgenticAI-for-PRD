@@ -56,7 +56,7 @@ def compact_requirement_context(value: Any, target: Optional[str] = None) -> Opt
 
     compact = {
         key: parsed.get(key)
-        for key in ("requirement_code", "title", "description")
+        for key in ("requirement_code", "title", "functional_requirement", "description")
         if parsed.get(key) is not None
     }
     if isinstance(compact.get("description"), str):
@@ -165,6 +165,7 @@ def serialize_requirement(req: RequirementModel) -> Dict[str, Any]:
         "epic_id": uid(req.epic_id),
         "requirement_code": req.requirement_code,
         "title": req.title,
+        "functional_requirement": req.functional_requirement,
         "description": req.description,
         "status": req.status,
         "is_locked": bool(req.is_locked) if req.is_locked is not None else False,

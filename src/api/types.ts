@@ -163,6 +163,7 @@ export interface RequirementPayload {
   epic_id?: string | null;
   requirement_code: string;
   title: string;
+  functional_requirement?: string;
   description?: string;
   status?: string;
   is_locked?: boolean;
@@ -388,6 +389,7 @@ export interface RequirementStatePayload {
   audit_checklist_version?: string;
   project_id?: string;
   project_name?: string | null;
+  epic_name?: string | null;
   requirements?: RequirementsField;
   business_goals?: Array<string | Record<string, unknown>>;
   actors?: Array<string | Record<string, unknown>>;

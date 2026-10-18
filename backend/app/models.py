@@ -115,6 +115,7 @@ class RequirementModel(Base):
     epic_id = Column(GUID, ForeignKey("epics.id", ondelete="CASCADE"), nullable=True, index=True)
     requirement_code = Column(String(50), nullable=False) # e.g. REQ-001
     title = Column(String(255), nullable=False)
+    functional_requirement = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
     status = Column(String(50), nullable=False, default="active", server_default="active")
     version = Column(Integer, nullable=False, default=1, server_default="1")

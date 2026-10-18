@@ -720,9 +720,11 @@ def get_prd_template(current_user: AuthenticatedUser = Depends(get_current_user)
 
     Both expose the SAME document structure that the Architect fills in.
     """
+    from app.prd_filler import strip_template_only_details
+
     return {
-        "template_latex": load_prd_latex_template(),
-        "template_markdown": load_prd_template(),
+        "template_latex": strip_template_only_details(load_prd_latex_template()),
+        "template_markdown": strip_template_only_details(load_prd_template()),
     }
 
 
@@ -794,8 +796,9 @@ async def post_prd_export_generation(
     )
     data = {
         "epic_name": (
-            requirements[0].get("title", "") if requirements
-            else str(project.get("name", ""))
+            req_state.get("epic_name")
+            or (requirements[0].get("title", "") if requirements else "")
+            or str(project.get("name", ""))
         ),
         "business_goals": business_goals,
         "actors": actors,
@@ -989,7 +992,9 @@ def _markdown_export_narrative(source: str) -> Dict[str, Any]:
         if current:
             sections[current].append(raw_line)
 
-    def prose(*names: str) -> str:
+    from app.prd_filler import is_template_only_detail
+
+    def prose(*names: str, field: str = "") -> str:
         for name in names:
             for heading, lines in sections.items():
                 if name in heading:
@@ -1002,7 +1007,8 @@ def _markdown_export_narrative(source: str) -> Dict[str, Any]:
                         value = re.sub(r"^\d+[.)]\s+", "", value)
                         cleaned.append(value)
                     if cleaned:
-                        return " ".join(cleaned)
+                        value = " ".join(cleaned)
+                        return "" if is_template_only_detail(value, field) else value
         return ""
 
     summary = prose("executive summary", "introduction", "overview")
@@ -1016,7 +1022,7 @@ def _markdown_export_narrative(source: str) -> Dict[str, Any]:
             "exec_summary": summary,
             "expected_benefit": prose("expected benefit", "benefits"),
             "success_metrics": prose("success metrics", "metrics"),
-            "non_functional": prose("non-functional", "non functional"),
+            "non_functional": prose("non-functional", "non functional", field="non_functional"),
             "tps_volume": prose("tps", "customer volume"),
             "growth": prose("growth"),
             "launch_plan": prose("launch", "rollout"),
@@ -1082,9 +1088,9 @@ async def _fill_official_export_template(
         or ("Initial PRD created." if not versions else "PRD updated with the latest requirements.")
     )
 
-    epic_name = recovered["epic_name"]
-    if requirements and isinstance(requirements[0], dict):
-        epic_name = requirements[0].get("title") or epic_name
+    epic_name = req_state.get("epic_name") or recovered["epic_name"]
+    if not epic_name and requirements and isinstance(requirements[0], dict):
+        epic_name = requirements[0].get("title") or ""
     epic_name = epic_name or str(project.get("name") or "")
 
     data = {
@@ -1147,7 +1153,9 @@ async def _export_prd_bytes(
     if not project:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
 
-    source = (payload.latex_source or "").strip()
+    from app.prd_filler import strip_template_only_details
+
+    source = strip_template_only_details(payload.latex_source).strip()
 
     # EXPORTS ALWAYS CARRY THE LATEST VERSION: resolve the newest stored
     # document server-side (the same resolution the project-state/preview
@@ -1158,7 +1166,7 @@ async def _export_prd_bytes(
     # compiled an OLDER version than the one on screen.
     stored_source = await _latest_stored_prd_source(project_id, db)
     if stored_source:
-        source = stored_source
+        source = strip_template_only_details(stored_source).strip()
 
     if not source:
         raise HTTPException(
@@ -1335,7 +1343,9 @@ async def convert_prd_to_markdown(
     Raises:
         HTTPException: 422 when no usable content was supplied.
     """
-    source = (payload.latex_source or "").strip()
+    from app.prd_filler import strip_template_only_details
+
+    source = strip_template_only_details(payload.latex_source).strip()
     if not source:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

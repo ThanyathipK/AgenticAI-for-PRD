@@ -132,6 +132,64 @@ Open questions and risks:
     assert all(field["confidence"] == 1.0 for field in gathered.values())
 
 
+def test_attached_template_sections_are_extracted_and_rendered_in_their_rows():
+    raw_input = """Introduction & Executive Summary:
+- A self-service refund portal for retail customers.
+Problem Statement:
+- Customers must visit a branch to request refunds.
+Business Objectives:
+- Reduce manual refund handling by 40 percent.
+Expected Benefit:
+- Customers can request refunds remotely.
+Success Metrics:
+- 80 percent of eligible refunds are submitted online.
+Target Audience & User Personas:
+- Retail customers and refund operations officers.
+User Flow & Wireframes:
+- Customer submits a refund, then an officer reviews it.
+Scope In:
+- Online refund submission.
+Scope Out:
+- Cross-bank settlement.
+Dependencies:
+- Core banking refund API.
+Go-to-Market Checklist:
+- Train customer support before launch.
+Related Documents:
+- Refund BRD v2.
+"""
+    gathered = _extract_explicit_prd_narrative(raw_input)
+    narrative = _prd_narrative_from_explicit_input({"prd_narrative": gathered})
+    markdown = prd_to_markdown(fill_template_body(
+        project_id="template-map",
+        project_name="Refund Portal",
+        data={
+            "epic_name": "Digital Refund Management",
+            "scope_in": ["Generic story-title fallback"],
+        },
+        narrative=narrative,
+    ))
+
+    for expected in (
+        "User Story Mapping & Functional Requirements",
+        "User Flow & Wireframes",
+        "A self-service refund portal for retail customers.",
+        "Customers must visit a branch to request refunds.",
+        "Reduce manual refund handling by 40 percent.",
+        "Customers can request refunds remotely.",
+        "80 percent of eligible refunds are submitted online.",
+        "Retail customers and refund operations officers.",
+        "Customer submits a refund, then an officer reviews it.",
+        "Online refund submission.",
+        "Cross-bank settlement.",
+        "Core banking refund API.",
+        "Train customer support before launch.",
+        "Refund BRD v2.",
+    ):
+        assert expected in markdown
+    assert "Generic story-title fallback" not in markdown
+
+
 def test_existing_tbd_prd_is_rebuilt_when_confirmed_narrative_arrives():
     state = {
         "prd_narrative": {

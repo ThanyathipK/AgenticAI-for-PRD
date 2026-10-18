@@ -709,7 +709,10 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
       const generatedMermaid = data.mermaid_diagram || '';
 
       if (generatedPrd) store.setPrdMarkdown(generatedPrd);
-      if (generatedMermaid) store.setMermaidDiagram(generatedMermaid);
+      // The response is one generated artifact snapshot. Apply the diagram
+      // even when it is empty so a newly cleared server diagram cannot leave
+      // the previous revision visible beside the new PRD.
+      store.setMermaidDiagram(generatedMermaid);
       if (data.structured_requirements?.version) {
         store.setCurrentVersion(data.structured_requirements.version);
       }

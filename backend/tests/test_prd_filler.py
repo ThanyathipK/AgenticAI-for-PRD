@@ -7,13 +7,14 @@ import zipfile
 
 sys.path.insert(0, "/Users/thanyathip/Desktop/agenticdia/backend")
 
-from app.latex_service import compile_latex_to_pdf, convert_latex_to_docx
+from app.latex_service import compile_latex_to_pdf, convert_latex_to_docx, prd_to_markdown
 from app.prd_filler import (
     extract_cover_fields,
     extract_intake_fields,
     extract_manual_export_fields,
     fill_template_body,
     format_project_status,
+    strip_template_only_details,
     version_history_sentence,
 )
 
@@ -34,6 +35,7 @@ DATA = {
         {
             "requirement_code": "REQ-001",
             "title": "Refund Request Submission",
+            "functional_requirement": "The system must accept refund requests with a transaction ID and reason",
             "user_stories": [
                 {
                     "ticket_code": "US-001",
@@ -61,6 +63,12 @@ def _fill():
         data=DATA,
         version_summary="Initial version",
     )
+
+
+def test_epic_name_fills_the_merged_epic_cell_and_markdown_preview():
+    body = _fill()
+    assert "Epic Name: PromptPay Refund Portal" in body
+    assert "Epic Name: PromptPay Refund Portal" in prd_to_markdown(body)
 
 
 def test_version_history_uses_one_short_human_sentence():
@@ -194,6 +202,82 @@ def test_manual_scope_and_operational_edits_feed_the_official_document():
     assert "Manually edited risk" in body
 
 
+def test_document_load_ignores_collapsed_section_headings_as_executive_summary():
+    saved = """### 1. Business & Strategic Overview
+|Topic|Details|
+|---|---|
+|Introduction & Executive Summary|Business & Strategic Overview Product Scope & Functional Requirements Technical & Operational Considerations Appendix|
+|Problem Statement|A real project problem|
+"""
+    intake = extract_intake_fields(saved)
+
+    assert "Introduction & Executive Summary" not in intake["business_topics"]
+    assert intake["business_topics"]["Problem Statement"] == "A real project problem"
+
+
+def test_document_load_ignores_template_nfr_example_but_keeps_real_nfr_details():
+    template_only = """### 3. Technical & Operational Considerations
+| Consideration | Details |
+| --- | --- |
+| Non-Functional<br> Requirements | 1. Performance & Latency |
+"""
+    detailed = """### 3. Technical & Operational Considerations
+| Consideration | Details |
+| --- | --- |
+| Non-Functional<br> Requirements | API responses must have p95 latency below 500 ms |
+"""
+
+    assert extract_manual_export_fields(template_only)["narrative"]["non_functional"] == "TBD"
+    assert (
+        extract_manual_export_fields(detailed)["narrative"]["non_functional"]
+        == "API responses must have p95 latency below 500 ms"
+    )
+
+
+def test_preview_and_download_strip_only_raw_template_defaults():
+    raw_latex = (
+        r"Non-Functional\newline Requirements & 1. Performance \& Latency \\"
+        "\n"
+        r"Non-Functional\newline Requirements & \prdfield{API p95 below 500 ms} \\"
+    )
+    raw_markdown = """|Introduction & Executive Summary|Business & Strategic Overview Product Scope & Functional Requirements Technical & Operational Considerations Appendix|
+|Non-Functional<br>Requirements|1. Performance & Latency|
+|Non-Functional<br>Requirements|API p95 below 500 ms|
+"""
+
+    cleaned_latex = strip_template_only_details(raw_latex)
+    cleaned_markdown = strip_template_only_details(raw_markdown)
+
+    assert r"& \prdfield{} \\" in cleaned_latex
+    assert r"\prdfield{API p95 below 500 ms}" in cleaned_latex
+    assert "|Introduction & Executive Summary||" in cleaned_markdown
+    assert "|Non-Functional<br>Requirements||" in cleaned_markdown
+    assert "API p95 below 500 ms" in cleaned_markdown
+
+
+def test_appendix_export_keeps_layout_and_numbers_only_real_details():
+    empty = fill_template_body(data={}, narrative={})
+    populated = fill_template_body(
+        data={},
+        narrative={
+            "open_questions": "Confirm the retention period",
+            "assumptions": "Identity provider remains available",
+            "related_documents": "Security architecture decision record",
+        },
+    )
+
+    assert (
+        r"Open\newline Questions \&\newline Risks & "
+        r"\multicolumn{2}{L{12.56cm}|}{\prdfield{}}"
+    ) in empty
+    assert (
+        r"Assumptions & \multicolumn{2}{L{12.56cm}|}{\prdfield{}}"
+    ) in empty
+    assert r"\prdfield{1. Confirm the retention period}" in populated
+    assert r"\prdfield{1. Identity provider remains available}" in populated
+    assert r"\prdfield{1. Security architecture decision record}" in populated
+
+
 def test_version_history_writes_every_version_as_its_own_row():
     body = fill_template_body(
         version_label="3.0.0",
@@ -297,11 +381,36 @@ def test_regeneration_normalizes_existing_numbering_without_nesting():
     assert "1. 1." not in body
     assert "1.1.1.1" not in body
     assert "TBD" not in body
-    assert "FR 1.1: submit a refund" in body
+    assert "FR 1.1: The system must submit a refund" in body
     assert "AC 1.1: request is validated" in body
     assert "As a " not in body
     assert compile_latex_to_pdf(body).startswith(b"%PDF")
     assert convert_latex_to_docx(body)[:2] == b"PK"
+
+
+def test_functional_requirement_wording_is_used_only_in_fr_cell():
+    body = _fill()
+    assert (
+        "FR 1.1: The system must accept refund requests with a transaction ID and reason"
+        in body
+    )
+    assert "I want to submit a refund request with transaction ID and reason" in body
+    assert "I want to The system must" not in body
+    assert "Given The system must" not in body
+
+
+def test_legacy_story_derives_system_must_fr_without_mutating_story_text():
+    legacy = {
+        **DATA,
+        "requirements": [{
+            "requirement_code": "REQ-001",
+            "title": "Refund Request Submission",
+            "user_stories": [DATA["requirements"][0]["user_stories"][0]],
+        }],
+    }
+    body = fill_template_body(project_id="p1", project_name="P", data=legacy)
+    assert "FR 1.1: The system must submit a refund request with transaction ID and reason" in body
+    assert "I want to submit a refund request with transaction ID and reason" in body
 
 
 def test_no_literal_prdfield_leak():

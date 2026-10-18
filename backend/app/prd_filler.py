@@ -205,6 +205,56 @@ BUSINESS_TOPICS = (
     "Target Audience & user Personas",
 )
 
+_PRD_SECTION_TITLES = (
+    "business & strategic overview",
+    "product scope & functional requirements",
+    "technical & operational considerations",
+    "appendix",
+)
+
+
+def is_template_only_detail(value: Any, field: str = "") -> bool:
+    """Return True when an extracted cell contains template structure, not data.
+
+    Legacy previews can contain the document's section titles collapsed into
+    one table cell.  The official template also includes ``Performance &
+    Latency`` as an NFR category example.  Neither is a project requirement
+    and neither should be restored when a saved document is loaded.
+    """
+    normalized = re.sub(r"\s+", " ", str(value or "")).strip().lower()
+    normalized = re.sub(r"^\d+[.)]?\s*", "", normalized)
+    if not normalized or normalized == "tbd":
+        return True
+    if sum(title in normalized for title in _PRD_SECTION_TITLES) >= 2:
+        return True
+    return field == "non_functional" and normalized == "performance & latency"
+
+
+def strip_template_only_details(document: str) -> str:
+    """Blank template examples/artifacts without changing real PRD content."""
+    source = str(document or "")
+    source = re.sub(
+        r"(Non-Functional\\newline Requirements\s*&\s*)"
+        r"1\.\s*Performance\s+\\&\s+Latency(\s*\\\\)",
+        r"\1\\prdfield{}\2",
+        source,
+    )
+
+    cleaned_lines = []
+    for line in source.splitlines():
+        if line.strip().startswith("|"):
+            cells = line.strip().strip("|").split("|")
+            if len(cells) >= 2:
+                row_label = re.sub(
+                    r"\s+", " ", cells[0].replace("<br>", " ").replace("**", "")
+                ).strip().lower().replace("-", " ")
+                field = "non_functional" if row_label == "non functional requirements" else ""
+                if is_template_only_detail(cells[1], field):
+                    cells[1] = ""
+                    line = "|" + "|".join(cells) + "|"
+        cleaned_lines.append(line)
+    return "\n".join(cleaned_lines)
+
 
 def extract_intake_fields(markdown: str) -> Dict[str, Any]:
     """Extract every new-project intake value from persisted PRD Markdown."""
@@ -237,7 +287,7 @@ def extract_intake_fields(markdown: str) -> Dict[str, Any]:
             continue
         choices = STAKEHOLDER_ROLES if current_section == "stakeholders" else BUSINESS_TOPICS
         canonical = next((choice for choice in choices if choice.lower() == label.lower()), None)
-        if canonical:
+        if canonical and not is_template_only_detail(value):
             target = "stakeholders" if current_section == "stakeholders" else "business_topics"
             result[target][canonical] = value
     return result
@@ -365,8 +415,11 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
             if key:
                 value = "\n".join(list_items(cells[1])) or clean_cell(cells[1])
                 # Presence of the editable row is authoritative even when the
-                # user cleared it; use TBD rather than resurrecting stale AI data.
-                result["narrative"][key] = value if value and value.upper() != "TBD" else "TBD"
+                # user cleared it. Template examples are also empty values,
+                # not project details; use TBD rather than restoring them.
+                result["narrative"][key] = (
+                    value if not is_template_only_detail(value, key) else "TBD"
+                )
                 glossary_headers = row_label == "glossary"
                 continue
             if row_label == "glossary":
@@ -453,6 +506,8 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
              for g in (data.get("business_goals") or [])]
     if business_topics.get("Business Objectives"):
         goals = [business_topics["Business Objectives"]]
+    elif narrative and narrative.get("business_objectives"):
+        goals = [narrative["business_objectives"]]
     narrative = dict(narrative or {})
     if business_topics.get("Expected Benefit"):
         narrative["expected_benefit"] = business_topics["Expected Benefit"]
@@ -472,9 +527,13 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
 
     epic = _topic("Introduction & Executive Summary", _narr("exec_summary", r"\prdfield{}"))
 
-    problem_source = ([business_topics["Problem Statement"]]
-                      if business_topics.get("Problem Statement")
-                      else (data.get("problem_statement") or []))
+    problem_source = (
+        [business_topics["Problem Statement"]]
+        if business_topics.get("Problem Statement")
+        else [narrative["problem_statement"]]
+        if narrative and narrative.get("problem_statement")
+        else (data.get("problem_statement") or [])
+    )
     problems = [_plain_list_item(p) for p in problem_source]
     problems = [problem for problem in problems if problem]
     problem_cell = r"\prdfield{" + "".join(
@@ -505,7 +564,9 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
     ]
     target = [n for n in target if str(n or "").strip()]
     target_text = _plain_list_item(
-        business_topics.get("Target Audience & user Personas") or ", ".join(str(n) for n in target)
+        business_topics.get("Target Audience & user Personas")
+        or ((narrative or {}).get("target_audience"))
+        or ", ".join(str(n) for n in target)
     )
     target_cell = r"\prdfield{" + escape_latex(target_text) + "}"
     if target_cell == r"\prdfield{":
@@ -561,6 +622,29 @@ def _rewrite_rows(body: str, rows: List[Tuple[str, str]]) -> str:
 
 
 
+_SYSTEM_OBLIGATION_PREFIX_RE = re.compile(r"^(?:the\s+)?system\s+(?:must|shall)\s+", re.I)
+
+
+def _functional_requirement_text(story: Dict[str, Any], code: str, title: str) -> str:
+    """Return one canonical FR sentence without changing stored story wording.
+
+    New requirement records supply ``_functional_requirement``. Older records
+    remain exportable by deriving the FR from the story action at render time.
+    The canonical phrase belongs only to the FR cell; user-story and AC cells
+    are rendered independently and are never rewritten here.
+    """
+    source = (
+        story.get("_functional_requirement")
+        or story.get("functional_requirement")
+        or story.get("i_want_to")
+    )
+    if not source:
+        source = f"{code}: {title}"
+    cleaned = _plain_list_item(source)
+    cleaned = _SYSTEM_OBLIGATION_PREFIX_RE.sub("", cleaned).strip()
+    return f"The system must {cleaned}" if cleaned else ""
+
+
 def _fr_rows_for(stories: List[Dict[str, Any]]) -> str:
     """Build user-story/FR/AC rows that grow with the project data.
 
@@ -583,14 +667,8 @@ def _fr_rows_for(stories: List[Dict[str, Any]]) -> str:
             if cleaned_value:
                 story_lines.append(prefix + escape_latex(cleaned_value))
         story_block = r"\newline\newline ".join(story_lines)
-        # Requirement-only projects use a synthetic row without user-story
-        # sentence fields. Keep that requirement identifiable, while real
-        # user stories deliberately omit their ticket code and title.
-        desired_action_source = story.get("i_want_to")
-        if not desired_action_source:
-            desired_action_source = f"{code}: {title}"
-        desired_action = escape_latex(_plain_list_item(desired_action_source))
-        fr_block = f"FR {idx}.1: {desired_action}" if desired_action else ""
+        functional_requirement = escape_latex(_functional_requirement_text(story, code, title))
+        fr_block = f"FR {idx}.1: {functional_requirement}" if functional_requirement else ""
         acs = [escape_latex(_plain_list_item(a)) for a in (story.get("acceptance_criteria") or [])]
         acs = [ac for ac in acs if ac]
         ac_block = "\\\\".join(f"AC {idx}.{j}: {ac}" for j, ac in enumerate(acs, start=1))
@@ -603,20 +681,42 @@ def _fr_rows_for(stories: List[Dict[str, Any]]) -> str:
 
 
 
-def _fill_product_scope(body: str, data: Dict[str, Any]) -> str:
+def _fill_product_scope(
+    body: str,
+    data: Dict[str, Any],
+    narrative: Optional[Dict[str, Any]] = None,
+) -> str:
     epic = data.get("epic_name") or (
         data.get("requirements") or [{}]
     )[0].get("title", "") or ""
+    # The official LaTeX template stores ``Epic Name:`` inside the content
+    # argument of a multicolumn cell; it is not a standalone ``{Epic Name:}``
+    # placeholder. Replace the label itself so the value remains inside that
+    # merged cell in the preview, PDF, and DOCX renderers.
     body = body.replace(
-        "{Epic Name:}",
-        "{Epic Name: " + escape_latex(epic) + "}",
+        "Epic Name:",
+        "Epic Name: " + escape_latex(epic),
+        1,
+    )
+    # Keep the complete label visible in the Markdown preview. Explicit row
+    # breaks inside this shortstack were interpreted as table boundaries.
+    body = body.replace(
+        "\\shortstack[l]{User Story\\\\ Mapping \\&\\\\ Functional\\\\ Requirements}",
+        "\\parbox{2.8cm}{User Story Mapping \\& Functional Requirements}",
         1,
     )
 
     stories: List[Dict[str, Any]] = []
     for req in (data.get("requirements") or []):
         if isinstance(req, dict):
-            stories.extend(req.get("user_stories") or [])
+            requirement_fr = str(req.get("functional_requirement") or "").strip()
+            for story in (req.get("user_stories") or []):
+                if not isinstance(story, dict):
+                    continue
+                document_story = dict(story)
+                if requirement_fr:
+                    document_story["_functional_requirement"] = requirement_fr
+                stories.append(document_story)
     stories.extend(data.get("user_stories") or [])
 
     # The template's label column is a \multirow spanning the epic row, the
@@ -642,9 +742,40 @@ def _fill_product_scope(body: str, data: Dict[str, Any]) -> str:
     if _ANCHOR_FR_ROW in body:
         body = body.replace(_ANCHOR_FR_ROW, rows, 1)
 
-    scope_in = [escape_latex(_plain_list_item(s)) for s in (data.get("scope_in") or [])]
+    user_flow = _numbered_text(data.get("user_flow") or (narrative or {}).get("user_flow"))
+    if user_flow:
+        flow_anchor = r"""  \shortstack[l]{User Flow \&\\
+Wireframes}
+    & \multicolumn{3}{L{12.55cm}|}{\rule{0pt}{1.15cm}} \\"""
+        flow_filled = (
+            r"""  \shortstack[l]{User Flow \&\\
+Wireframes}
+    & \multicolumn{3}{L{12.55cm}|}{\rule{0pt}{1.15cm}\prdfield{"""
+            + escape_latex(user_flow)
+            + r"""}} \\"""
+        )
+        body = body.replace(flow_anchor, flow_filled, 1)
+    body = body.replace(
+        "\\shortstack[l]{User Flow \\&\\\\\nWireframes}",
+        "User Flow \\& Wireframes",
+        1,
+    )
+
+    def _items(value: Any) -> List[str]:
+        if isinstance(value, str):
+            return [
+                _plain_list_item(line)
+                for line in value.replace("<br>", "\n").splitlines()
+            ]
+        if isinstance(value, (list, tuple)):
+            return [_plain_list_item(item) for item in value]
+        return []
+
+    scope_in_source = (narrative or {}).get("scope_in") or data.get("scope_in")
+    scope_out_source = (narrative or {}).get("scope_out") or data.get("scope_out")
+    scope_in = [escape_latex(item) for item in _items(scope_in_source)]
     scope_in = [item for item in scope_in if item]
-    scope_out = [escape_latex(_plain_list_item(s)) for s in (data.get("scope_out") or [])]
+    scope_out = [escape_latex(item) for item in _items(scope_out_source)]
     scope_out = [item for item in scope_out if item]
 
     BS = chr(92)  # backslash - plain concatenation avoids f-string brace bugs
@@ -703,6 +834,34 @@ def _fill_tech_appendix(body: str, narrative: Optional[Dict[str, str]]) -> str:
             return r"\prdfield{" + escape_latex(_numbered_text(narrative[key])) + "}"
         return fallback.replace("{TBD}", "{}")
 
+    def _launch_cell() -> str:
+        parts = []
+        for key, label in (
+            ("launch_plan", "Release plan"),
+            ("dependencies", "Dependencies"),
+            ("go_to_market", "Go-to-market"),
+        ):
+            value = _numbered_text((narrative or {}).get(key))
+            if value:
+                parts.append(escape_latex(f"{label}: {value}"))
+        if not parts:
+            return r"\prdfield{}"
+        return r"\prdfield{" + r"\newline ".join(parts) + "}"
+
+    def _appendix_cell(key: str, *, minimum_height: bool = False) -> str:
+        """Number real Appendix entries without numbering empty cells."""
+        source = str((narrative or {}).get(key) or "").replace("<br>", "\n")
+        items = [_plain_list_item(item) for item in source.splitlines()]
+        items = [item for item in items if item]
+        height = r"\rule{0pt}{1cm}" if minimum_height else ""
+        if not items:
+            return height + r"\prdfield{}"
+        numbered = r"\newline ".join(
+            f"{index}. {escape_latex(item)}"
+            for index, item in enumerate(items, start=1)
+        )
+        return height + r"\prdfield{" + numbered + "}"
+
     rows = [
         (
             r"^  Non-Functional",
@@ -718,15 +877,22 @@ def _fill_tech_appendix(body: str, narrative: Optional[Dict[str, str]]) -> str:
         ),
         (
             r"^  Launch",
-            f"  Launch \\&\\newline Rollout Plan & {_cell('launch_plan', r'\prdfield{TBD}')} \\\\",
+            f"  Launch \\&\\newline Rollout Plan & {_launch_cell()} \\\\",
         ),
         (
             r"^  Open",
-            f"  Open\\newline Questions \\&\\newline Risks & {_cell('open_questions', r'\prdfield{TBD}')} \\\\",
+            "  Open\\newline Questions \\&\\newline Risks & "
+            f"\\multicolumn{{2}}{{L{{12.56cm}}|}}{{{_appendix_cell('open_questions')}}} \\\\",
         ),
         (
             r"^  Assumptions",
-            f"  Assumptions & {_cell('assumptions', r'\prdfield{TBD}')} \\\\",
+            "  Assumptions & "
+            f"\\multicolumn{{2}}{{L{{12.56cm}}|}}{{{_appendix_cell('assumptions')}}} \\\\",
+        ),
+        (
+            r"^  Related\\",
+            "  Related\\newline Documents & "
+            f"\\multicolumn{{2}}{{L{{12.56cm}}|}}{{{_appendix_cell('related_documents', minimum_height=True)}}} \\\\",
         ),
     ]
     body = _rewrite_rows(body, rows)
@@ -845,6 +1011,6 @@ def fill_template_body(
     )
     body = _fill_reviews(body, data.get("actors") or [])
     body = _fill_business_overview(body, data, narrative, business_topics)
-    body = _fill_product_scope(body, data)
+    body = _fill_product_scope(body, data, narrative)
     body = _fill_tech_appendix(body, narrative)
     return body

@@ -69,6 +69,7 @@ export function toRequirementItem(r: RequirementPayload): RequirementItem {
     id: r.id,
     requirement_code: r.requirement_code,
     title: r.title,
+    functional_requirement: r.functional_requirement || '',
     description: r.description || '',
     user_stories: toUserStories(r.user_stories),
     status: r.status || 'active',
@@ -228,7 +229,7 @@ export function toStructuredRequirements(
   fallbackEpic = DEFAULT_EPIC_FALLBACK
 ): StructuredRequirements {
   return {
-    epic_name: epicNameFromRequirements(payload.requirements, fallbackEpic),
+    epic_name: payload.epic_name || epicNameFromRequirements(payload.requirements, fallbackEpic),
     version: payload.version_number || 1,
     user_stories: toUserStories(payload.user_stories),
     requirements: toRequirementItems(payload.requirements),

@@ -419,7 +419,7 @@ async def workflow_router_node(state: AgentState) -> Dict[str, Any]:
     elif workflow_type == "QUESTION":
         logger.info("[WORKFLOW ROUTER] Handling as QUESTION. Answering direct question.")
         requirements = req_state.get("requirements", [])
-        existing_epic = requirements[0].get("title", "") if requirements else ""
+        existing_epic = req_state.get("epic_name") or (requirements[0].get("title", "") if requirements else "")
         stories = req_state.get("user_stories", [])
         stories_summary = "\n".join([f"- {s.get('ticket_code', 'US')}: {s.get('story_title', '')}" for s in stories[:10]])
 
@@ -714,7 +714,8 @@ def _previous_requirement_identity(req_state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Return the first previously persisted requirement dict (possibly empty).
 
-    Preserving the stored ``requirement_code`` / ``title`` / ``description``
+    Preserving the stored ``requirement_code`` / ``title`` /
+    ``functional_requirement`` / ``description``
     keeps database identity stable across synthetic rebuilds instead of
     hardcoding a fixed code such as ``REQ-001`` onto every project.
     """
@@ -928,7 +929,7 @@ def _resolve_epic_name(req_state: Dict[str, Any], llm_epic_name: str, raw_input:
     which is how a first extraction names the project epic.
     """
     requirements = req_state.get("requirements", []) or []
-    existing_epic_name = requirements[0].get("title", "") if requirements else ""
+    existing_epic_name = req_state.get("epic_name") or (requirements[0].get("title", "") if requirements else "")
     is_placeholder = existing_epic_name in _PLACEHOLDER_EPIC_NAMES
     if existing_epic_name and not is_placeholder and not _user_requests_epic_rename(raw_input):
         return existing_epic_name
@@ -936,13 +937,39 @@ def _resolve_epic_name(req_state: Dict[str, Any], llm_epic_name: str, raw_input:
 
 
 def _extract_explicit_prd_narrative(raw_input: str) -> Dict[str, Dict[str, Any]]:
-    """Retain facts under explicit section 08/09 headings without inference."""
+    """Retain explicitly headed PRD facts without inference."""
     heading_keys = {
+        "introduction and executive summary": "exec_summary",
+        "introduction & executive summary": "exec_summary",
+        "executive summary": "exec_summary",
+        "problem statement": "problem_statement",
+        "goals and business objectives": "business_objectives",
+        "goals & business objectives": "business_objectives",
+        "business objectives": "business_objectives",
+        "expected benefit": "expected_benefit",
+        "expected benefits": "expected_benefit",
+        "success metrics": "success_metrics",
+        "target audience and user personas": "target_audience",
+        "target audience & user personas": "target_audience",
+        "target audience": "target_audience",
+        "user flow and wireframes": "user_flow",
+        "user flow & wireframes": "user_flow",
+        "user flow": "user_flow",
+        "scope in": "scope_in",
+        "in scope": "scope_in",
+        "scope out": "scope_out",
+        "out of scope": "scope_out",
         "technical requirements": "technical",
         "non-functional requirements": "technical",
         "non functional requirements": "technical",
+        "release phasing": "launch_plan",
         "rollout plan": "launch_plan",
         "launch plan": "launch_plan",
+        "launch and rollout plan": "launch_plan",
+        "launch & rollout plan": "launch_plan",
+        "dependencies": "dependencies",
+        "go-to-market checklist": "go_to_market",
+        "go to market checklist": "go_to_market",
         "assumptions": "assumptions",
         "open questions and risks": "open_questions",
         "open questions & risks": "open_questions",
@@ -1367,6 +1394,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
         ]
         req_state["user_stories"] = active_flat
         req_state["acceptance_criteria"] = collect_acceptance_criteria(active_flat)
+        req_state["epic_name"] = epic_name
         req_state["current_workflow_state"] = "gatherer_node"
         req_state["detected_intent"] = detected_intent
         version_number = req_state.get("version_number", 1)
@@ -1596,7 +1624,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
     # semantic/intent/matcher prompts so every agent describes the backlog
     # identically).
     requirements = req_state.get("requirements", [])
-    existing_epic = requirements[0].get("title", "") if requirements else ""
+    existing_epic = req_state.get("epic_name") or (requirements[0].get("title", "") if requirements else "")
     context_lines = []
     locked_story_codes = {
         normalize_ticket_code(story.get("ticket_code"))
@@ -1611,6 +1639,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
         req_code = _normalize_requirement_code(requirement.get("requirement_code"))
         context_lines.append(
             f"REQUIREMENT {req_code}: {requirement.get('title', '')}\n"
+            f"Functional Requirement: {requirement.get('functional_requirement', '')}\n"
             f"Description: {requirement.get('description', '')}"
         )
         mutable_children = [
@@ -1791,6 +1820,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
             continue
         raw_code = _normalize_requirement_code(req_item.get("requirement_code"))
         group_title = str(req_item.get("title") or "").strip()
+        group_functional = str(req_item.get("functional_requirement") or "").strip()
         group_desc = str(req_item.get("description") or "").strip()
         raw_stories = [s for s in (req_item.get("user_stories") or []) if isinstance(s, dict)]
 
@@ -1827,6 +1857,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
         if target_code not in llm_group_meta:
             llm_group_meta[target_code] = {
                 "title": group_title or f"Requirement {target_code}",
+                "functional_requirement": group_functional,
                 "description": group_desc,
             }
 
@@ -1903,6 +1934,11 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
             # matching group's non-empty metadata applies intentional parent
             # edits without renumbering or moving its child stories.
             "title": incoming_meta.get("title") or req.get("title") or f"Requirement {req_code}",
+            "functional_requirement": (
+                incoming_meta.get("functional_requirement")
+                if incoming_meta.get("functional_requirement")
+                else req.get("functional_requirement") or ""
+            ),
             "description": (
                 incoming_meta.get("description")
                 if incoming_meta.get("description")
@@ -1917,6 +1953,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
             req_groups[code] = {
                 "requirement_code": code,
                 "title": meta["title"],
+                "functional_requirement": meta.get("functional_requirement") or "",
                 "description": meta["description"],
                 "user_stories": [],
                 "_is_existing": False,
@@ -1955,6 +1992,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
             group = req_groups.setdefault(parent_code, {
                 "requirement_code": parent_code,
                 "title": meta.get("title") or f"Requirement {parent_code}",
+                "functional_requirement": meta.get("functional_requirement") or "",
                 "description": meta.get("description") or "",
                 "user_stories": [],
                 "_is_existing": False,
@@ -1974,6 +2012,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
     req_state["requirements"] = final_requirements
     req_state["user_stories"] = all_active_stories
     req_state["acceptance_criteria"] = collect_acceptance_criteria(all_active_stories)
+    req_state["epic_name"] = epic_name
     model_narrative = result.get("prd_narrative")
     extracted_narrative = {
         **(model_narrative if isinstance(model_narrative, dict) else {}),
@@ -2902,7 +2941,7 @@ async def auditor_node(state: AgentState) -> Dict[str, Any]:
 
     # Only send newly created or updated user stories for LLM evaluation
     requirements = req_state.get("requirements", [])
-    epic_name = requirements[0].get("title", "") if requirements else ""
+    epic_name = req_state.get("epic_name") or (requirements[0].get("title", "") if requirements else "")
     structured_reqs_for_prompt = {
         "epic_name": epic_name,
         "version": req_state["version_number"],
@@ -3248,8 +3287,12 @@ def _prd_narrative_from_explicit_input(requirement_state: Dict[str, Any]) -> Dic
     """Flatten explicitly gathered PRD facts, keeping only confidence >= 0.70."""
     narrative: Dict[str, Any] = {}
     allowed = {
+        "exec_summary", "problem_statement", "business_objectives",
+        "expected_benefit", "success_metrics", "target_audience",
+        "user_flow", "scope_in", "scope_out",
         "non_functional", "tps_volume", "growth", "launch_plan",
-        "open_questions", "assumptions", "glossary", "related_documents",
+        "dependencies", "go_to_market", "open_questions", "assumptions",
+        "glossary", "related_documents",
     }
     for key, field in (requirement_state.get("prd_narrative") or {}).items():
         if key not in allowed or not isinstance(field, dict):
@@ -3658,7 +3701,7 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
     if not stories_flat:
         stories_flat = all_stories
 
-    epic_name = requirements[0].get("title", "") if requirements else ""
+    epic_name = req_state.get("epic_name") or (requirements[0].get("title", "") if requirements else "")
     data: Dict[str, Any] = {
         "epic_name": epic_name,
         "business_goals": req_state.get("business_goals", []),
@@ -3713,13 +3756,13 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
     # FLOW DIAGRAM SYNC: every PRD generation also refreshes the Architecture
     # Flows diagram - the LLM is asked with the project's own (just-validated)
     # dataset and answers with raw Mermaid flowchart code, so the flow always
-    # mirrors the freshly generated document. When the model fails or returns
-    # unusable output the previously stored diagram is kept instead, so the
-    # PRD result is never lost over a diagram hiccup.
+    # mirrors the freshly generated document. When a requested diagram refresh
+    # fails, clear the old diagram rather than showing it beside a newer PRD.
+    # The PRD result itself still succeeds.
     # ARCHITECT 4.0 — Diagram refresh (the ONLY LLM call in this node): 4.1 asks for
-    #             raw Mermaid using the same dataset; 4.2 sanitizes it; 4.3 keeps the
-    #             previously stored diagram when the model fails or returns something
-    #             that is not a flowchart — a diagram hiccup can never lose the PRD.
+    #             raw Mermaid using the same dataset; 4.2 sanitizes it; 4.3 clears a
+    #             stale diagram when a requested refresh fails — a diagram hiccup can
+    #             never lose the PRD or pair it with an older diagram revision.
     regenerate_diagram = regeneration_scope is None or bool(regeneration_scope.get("regenerate_diagram"))
     # Architecture flows belong to Technical & Operational Considerations. If
     # that section is locked, preserve both its text and current diagram and do
@@ -3730,10 +3773,12 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
         await _generate_flow_diagram(project_id, req_state, data)
         if regenerate_diagram and not empty_requirement_board else ""
     )
-    req_state["generated_diagrams"] = (
-        "" if empty_requirement_board and regenerate_diagram
-        else fresh_diagram or req_state.get("generated_diagrams", "")
-    )
+    if regenerate_diagram:
+        req_state["generated_diagrams"] = fresh_diagram
+    else:
+        # An explicitly locked or out-of-scope diagram is governed content and
+        # remains unchanged because no refresh was requested.
+        req_state["generated_diagrams"] = req_state.get("generated_diagrams", "")
     req_state["current_workflow_state"] = "architect_node"
 
     # PART-LEVEL PRD SYNC: merge the freshly generated document into the

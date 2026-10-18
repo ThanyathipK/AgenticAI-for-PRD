@@ -117,6 +117,7 @@ CREATE TABLE requirements (
     epic_id UUID REFERENCES epics(id) ON DELETE CASCADE,
     requirement_code VARCHAR(50) NOT NULL,
     title VARCHAR(255) NOT NULL,
+    functional_requirement TEXT,
     description TEXT,
     status VARCHAR(50) NOT NULL DEFAULT 'active',
     version INTEGER NOT NULL DEFAULT 1,

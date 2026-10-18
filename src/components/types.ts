@@ -16,6 +16,8 @@ export interface RequirementItem {
   id?: string;
   requirement_code: string;
   title: string;
+  /** Concise system obligation rendered only in the PRD Functional Requirement column. */
+  functional_requirement?: string;
   description?: string;
   user_stories: UserStory[];
   /** 'active' | 'archived' | 'deleted' — mirrors the stored record status. */

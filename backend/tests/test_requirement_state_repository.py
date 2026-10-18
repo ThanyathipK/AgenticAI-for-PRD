@@ -131,6 +131,7 @@ def _user(project_id, seq):
         epic_id=None,
         requirement_code=f"REQ-{seq:03d}",
         title=f"Requirement {seq}",
+        functional_requirement=f"The system must perform requirement {seq}",
         description="desc",
         is_locked=False,
         locked_by=None,
@@ -248,6 +249,7 @@ class TestGetByProjectIdBatches:
 
         assert result is not None
         assert result["project_status"] == "draft"
+        assert result["epic_name"] == "E-commerce Platform"
         assert len(result["requirements"]) == 3
 
     @pytest.mark.asyncio
@@ -256,6 +258,7 @@ class TestGetByProjectIdBatches:
         result = await RequirementStateRepository.get_by_project_id(PROJECT_ID, session)
 
         first_req = result["requirements"][0]
+        assert first_req["functional_requirement"] == "The system must perform requirement 1"
         # Only the ACTIVE story survives; the AC attached to the archived story
         # is filtered out alongside it.
         assert [s["ticket_code"] for s in first_req["user_stories"]] == ["US-001"]

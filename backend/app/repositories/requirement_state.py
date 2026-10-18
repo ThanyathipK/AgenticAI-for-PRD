@@ -135,6 +135,7 @@ class RequirementStateRepository:
                 "id": str(req.id),
                 "requirement_code": req.requirement_code,
                 "title": req.title,
+                "functional_requirement": req.functional_requirement or "",
                 "description": req.description or "",
                 "user_stories": active_stories,
                 "is_locked": bool(req.is_locked) if req.is_locked is not None else False,
@@ -213,6 +214,7 @@ class RequirementStateRepository:
             "project_id": str(model.project_id),
             "project_name": project_name,
             "project_status": project_status,
+            "epic_name": epic_name,
             "requirements": requirements_list if requirements_list else [],
             "business_goals": model.business_goals,
             "actors": model.actors,
@@ -383,9 +385,9 @@ class RequirementStateRepository:
                     }]
 
             # Determine epic name from first requirement or updates
-            epic_name_val = ""
+            epic_name_val = str(updates.get("epic_name") or "").strip()
             if "requirements" in updates and isinstance(updates["requirements"], dict):
-                epic_name_val = updates["requirements"].get("epic_name", "")
+                epic_name_val = epic_name_val or updates["requirements"].get("epic_name", "")
             if not epic_name_val and req_items:
                 epic_name_val = req_items[0].get("title", "")
             if not epic_name_val:
@@ -437,6 +439,8 @@ class RequirementStateRepository:
             for req_item in req_items:
                 req_code = req_item.get("requirement_code", UNASSIGNED_REQUIREMENT_CODE)
                 req_title = req_item.get("title", "Untitled Requirement")
+                has_functional_requirement = "functional_requirement" in req_item
+                req_functional = req_item.get("functional_requirement") or ""
                 req_desc = req_item.get("description", "")
                 stories = req_item.get("user_stories", [])
 
@@ -455,6 +459,11 @@ class RequirementStateRepository:
                     if db_req.status != "active":
                         db_req.status = "active"
                     db_req.title = req_title
+                    # Legacy clients do not send this newly introduced field.
+                    # Absence means "preserve", while an explicit empty value
+                    # still allows a caller to clear it deliberately.
+                    if has_functional_requirement:
+                        db_req.functional_requirement = req_functional
                     db_req.description = req_desc
                     db_req.epic_id = epic_id_uuid
                     db_req.version = version_num
@@ -467,6 +476,7 @@ class RequirementStateRepository:
                         epic_id=epic_id_uuid,
                         requirement_code=req_code,
                         title=req_title,
+                        functional_requirement=req_functional,
                         description=req_desc,
                         version=version_num,
                         status="active"

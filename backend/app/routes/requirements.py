@@ -1019,7 +1019,7 @@ async def _process_requirements_pipeline(
             "detected_intent": "GENERAL_CHAT",
             "message": response_text,
             "structured_requirements": {
-                "epic_name": (
+                "epic_name": req_state.get("epic_name") or (
                     req_state.get("requirements", [])[0].get("title", "")
                     if req_state and req_state.get("requirements")
                     else ""
@@ -1216,7 +1216,7 @@ async def _process_requirements_pipeline(
         "project_id": request.project_id,
         "raw_input": request.raw_input or "",
         "structured_requirements": {
-            "epic_name": (
+            "epic_name": req_state.get("epic_name") or (
                 req_state.get("requirements", [])[0].get("title", "")
                 if req_state and req_state.get("requirements")
                 else ""
@@ -1503,7 +1503,11 @@ async def _process_requirements_pipeline(
         reqs_data = req_state.get("requirements", [])
         if isinstance(reqs_data, list):
             # Multi-requirement format
-            epic_name = reqs_data[0].get("title", "") if reqs_data and isinstance(reqs_data[0], dict) else ""
+            epic_name = req_state.get("epic_name") or (
+                reqs_data[0].get("title", "")
+                if reqs_data and isinstance(reqs_data[0], dict)
+                else ""
+            )
             structured_out = {
                 "epic_name": epic_name,
                 "version": req_state.get("version_number", 1),

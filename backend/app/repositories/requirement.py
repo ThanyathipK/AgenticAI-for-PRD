@@ -38,6 +38,7 @@ class RequirementRepository:
             epic_id=uuid.UUID(data["epic_id"]) if data.get("epic_id") else None,
             requirement_code=data.get("requirement_code", UNASSIGNED_REQUIREMENT_CODE),
             title=data.get("title", "Untitled Requirement"),
+            functional_requirement=data.get("functional_requirement"),
             description=data.get("description"),
             status=data.get("status", "active"),
             is_locked=False,
@@ -110,6 +111,7 @@ class RequirementRepository:
                     f"Unlock it before modifying."
                 )
             if "title" in updates: req.title = updates["title"]
+            if "functional_requirement" in updates: req.functional_requirement = updates["functional_requirement"]
             if "description" in updates: req.description = updates["description"]
             if "status" in updates: req.status = updates["status"]
             await session.flush()

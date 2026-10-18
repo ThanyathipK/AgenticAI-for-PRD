@@ -158,3 +158,25 @@ async def test_first_gathered_requirement_starts_at_req_001(client, db_session):
     # The reported bug: the first requirement of a fresh project was REQ-002
     # because a seeded/fabricated REQ-001 already occupied the first number.
     assert next_requirement_code(used_codes) == "REQ-001"
+
+
+@pytest.mark.asyncio
+async def test_distinct_epic_name_survives_requirement_save_and_reload(client, db_session):
+    project_id = await _create_bare_project(db_session, "Epic Persistence Project")
+
+    await RequirementStateRepository.save_or_update(project_id, {
+        "epic_name": "Corporate Payments Hub",
+        "requirements": [{
+            "requirement_code": "REQ-001",
+            "title": "High-value Payment Approval",
+            "functional_requirement": "The system must require approval for high-value payments",
+            "description": "",
+            "user_stories": [],
+        }],
+        "user_stories": [],
+    }, db_session)
+    await db_session.commit()
+
+    body = (await client.get(f"/api/project/{project_id}")).json()
+    assert body["epic_name"] == "Corporate Payments Hub"
+    assert body["requirements"][0]["title"] == "High-value Payment Approval"

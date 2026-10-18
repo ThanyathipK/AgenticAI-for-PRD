@@ -201,7 +201,7 @@ agenticdia/
 
 ### Prerequisites
 
-- **Node.js 20+** and npm
+- **Node.js 22.12+** and npm (required by Mermaid 12)
 - **Python 3.12+** (the bundled `venv/` targets 3.14)
 - **LM Studio** (desktop app) — for local inference
 - Optional: a **Supabase** PostgreSQL project (the backend works without one via the SQLite fallback)

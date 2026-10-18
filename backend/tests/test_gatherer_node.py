@@ -748,6 +748,7 @@ async def test_epic_name_kept_unless_explicit_rename(monkeypatch):
         "structured_requirements": {},
     })
     assert result["structured_requirements"]["epic_name"] == "Refund Request Submission"
+    assert result["requirement_state"]["epic_name"] == "Refund Request Submission"
 
     # Explicit rename phrasing (missed by the old substring check) -> LLM epic applied
     rename_result = {
@@ -770,6 +771,7 @@ async def test_epic_name_kept_unless_explicit_rename(monkeypatch):
         "structured_requirements": {},
     })
     assert result["structured_requirements"]["epic_name"] == "Payments Hub"
+    assert result["requirement_state"]["epic_name"] == "Payments Hub"
 
 
 @pytest.mark.asyncio

@@ -78,6 +78,10 @@ class UserStoryModel(BaseModel):
 class RequirementItem(BaseModel):
     requirement_code: str = Field(..., description="Unique requirement code (e.g. REQ-001)")
     title: str = Field(..., description="Short descriptive title of the requirement")
+    functional_requirement: Optional[str] = Field(
+        default="",
+        description="Concise system obligation used only in the PRD Functional Requirement column; starts with 'The system must'.",
+    )
     description: Optional[str] = Field(default="", description="Detailed description or goal of this requirement")
     user_stories: List[UserStoryModel] = Field(..., description="Granular product backlog items under this requirement")
 
@@ -88,8 +92,8 @@ class GatheredRequirements(BaseModel):
     prd_narrative: Dict[str, Dict[str, Any]] = Field(
         default_factory=dict,
         description=(
-            "Explicit PRD supporting facts keyed by non_functional, tps_volume, growth, "
-            "launch_plan, open_questions, assumptions, glossary, or related_documents. "
+            "Explicit PRD supporting facts for strategic context, scope, user flow, "
+            "technical constraints, rollout, appendix, glossary, and related documents. "
             "Each value contains value, confidence, and source."
         ),
     )
@@ -416,6 +420,7 @@ class RequirementDetail(BaseModel):
     epic_id: Optional[str] = Field(None, description="Owning epic UUID string, if any.")
     requirement_code: str = Field(..., description="Requirement code (e.g. REQ-001).")
     title: str = Field(..., description="Requirement title.")
+    functional_requirement: Optional[str] = Field(None, description="Concise system obligation for the PRD FR column.")
     description: Optional[str] = Field(None, description="Requirement description.")
     status: Optional[str] = Field("active", description="Status: 'active' or 'deleted'.")
     is_locked: Optional[bool] = Field(False, description="Whether locked against edits.")
@@ -451,6 +456,7 @@ class RequirementStateResponse(BaseModel):
 
     project_id: str = Field(..., description="Project UUID string.")
     project_name: Optional[str] = Field(None, description="Human-readable project name.")
+    epic_name: Optional[str] = Field(None, description="Persisted high-level epic name.")
     requirements: List[RequirementDetail] = Field(default_factory=list, description="Requirement entries, each carrying its own user_stories.")
     business_goals: List[Union[str, BusinessGoalItem]] = Field(default_factory=list, description="Parsed business-goal statements.")
     actors: List[Union[str, ActorItem]] = Field(default_factory=list, description="System actor definitions.")

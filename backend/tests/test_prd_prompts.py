@@ -49,6 +49,16 @@ def test_architect_prompt_maps_full_project_dataset():
         assert needle.lower() in prompt.lower(), needle
 
 
+def test_gatherer_prompt_separates_fr_wording_and_uses_contextual_ac_coverage():
+    prompt = load_prompt("gatherer")
+    assert "functional_requirement" in prompt
+    assert 'start with "The system must"' in prompt
+    assert "used only in the PRD Functional Requirement column" in prompt
+    assert "2-6 concise, testable" in prompt
+    assert "Do not force irrelevant perspectives" in prompt
+    assert "never invent missing detail" in prompt
+
+
 def test_prd_export_prompt_targets_official_template_body():
     prompt = load_prompt("prd_export")
     assert "<prd_template>" in prompt

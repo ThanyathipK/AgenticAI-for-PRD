@@ -43,6 +43,7 @@ async def test_requirement_crud_locking_and_cascade_archive(repository_db):
     created = await RequirementRepository.create(project_id, {
         "requirement_code": "REQ-001",
         "title": "Payments",
+        "functional_requirement": "The system must process authorized payments",
         "description": "Original",
     }, session)
     requirement_id = created["id"]
@@ -52,10 +53,16 @@ async def test_requirement_crud_locking_and_cascade_archive(repository_db):
 
     updated = await RequirementRepository.update(
         requirement_id, project_id,
-        {"title": "Instant Payments", "description": "Updated", "status": "active"},
+        {
+            "title": "Instant Payments",
+            "functional_requirement": "The system must process authorized payments immediately",
+            "description": "Updated",
+            "status": "active",
+        },
         session,
     )
     assert updated["title"] == "Instant Payments"
+    assert updated["functional_requirement"] == "The system must process authorized payments immediately"
 
     locked = await RequirementRepository.lock(requirement_id, project_id, session, locked_by="owner")
     assert locked["is_locked"] is True

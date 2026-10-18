@@ -99,9 +99,8 @@ async def test_architect_node_refreshes_flow_diagram_on_prd_generation(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_architect_node_keeps_previous_diagram_when_generation_fails(monkeypatch):
-    """A diagram failure keeps the previously stored diagram and never fails
-    the PRD generation itself."""
+async def test_architect_node_clears_stale_diagram_when_generation_fails(monkeypatch):
+    """A diagram failure clears the older revision but never fails the PRD."""
     async def broken_diagram(project_id, req_state, project_data):
         return ""
 
@@ -113,9 +112,9 @@ async def test_architect_node_keeps_previous_diagram_when_generation_fails(monke
 
     # PRD is still generated ...
     assert "\\section*{Stakeholders}" in result["prd_markdown"]
-    # ... and the previous diagram is kept instead of being wiped.
-    assert result["mermaid_diagram"] == "flowchart TD\n  OLD --> FLOW"
-    assert result["requirement_state"]["generated_diagrams"] == "flowchart TD\n  OLD --> FLOW"
+    # ... and the previous revision cannot remain beside the new PRD.
+    assert result["mermaid_diagram"] == ""
+    assert result["requirement_state"]["generated_diagrams"] == ""
 
 
 @pytest.mark.asyncio

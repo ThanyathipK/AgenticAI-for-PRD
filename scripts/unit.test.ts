@@ -41,6 +41,7 @@ import {
   epicNameFromRequirements,
   toRequirementItem,
   toRequirementItems,
+  toStructuredRequirements,
   toStructuredRequirementsFromGathered,
   toUserStories,
   toUserStory,
@@ -392,6 +393,7 @@ test('toRequirementItem: applies every default for sparse payloads', () => {
     id: undefined,
     requirement_code: 'REQ-1',
     title: 'T',
+    functional_requirement: '',
     description: '',
     user_stories: [],
     status: 'active',
@@ -455,6 +457,14 @@ test('toStructuredRequirementsFromGathered: null payload -> empty defaults', () 
     user_stories: [],
     requirements: undefined,
   });
+});
+
+test('toStructuredRequirements: prefers the persisted epic over a requirement title', () => {
+  const result = toStructuredRequirements({
+    epic_name: 'Corporate Payments Hub',
+    requirements: [{ requirement_code: 'REQ-001', title: 'Payment Approval' }],
+  });
+  assert.equal(result.epic_name, 'Corporate Payments Hub');
 });
 
 test('toStructuredRequirementsFromGathered: uses the payload version or the fallback', () => {
