@@ -1,6 +1,6 @@
 <div align="center">
 
-# Agentic AI
+# Agentic AI for PRD
 
 ### Enterprise Requirements Architecture Core
 
