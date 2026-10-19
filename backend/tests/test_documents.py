@@ -306,6 +306,29 @@ class TestUploadValidation:
         assert "does not match" in resp.json()["detail"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("filename", "content_type", "payload", "label"),
+        [
+            ("fake.pdf", "application/pdf", b"not a pdf", "PDF"),
+            (
+                "fake.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                b"not a zip",
+                "DOCX",
+            ),
+        ],
+    )
+    async def test_binary_signature_mismatch_rejected(
+        self, seeded_project, client, filename, content_type, payload, label
+    ):
+        resp = await client.post(
+            f"/api/project/{seeded_project}/documents/upload",
+            files={"file": (filename, payload, content_type)},
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert label in resp.json()["detail"]
+
+    @pytest.mark.asyncio
     async def test_empty_file_rejected(self, seeded_project, client):
         resp = await client.post(
             f"/api/project/{seeded_project}/documents/upload",

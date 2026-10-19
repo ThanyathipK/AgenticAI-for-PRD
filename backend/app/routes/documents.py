@@ -197,6 +197,25 @@ def _resolve_upload_format(filename: str, content_type: str) -> Dict:
     return {"original_format": entry["original_format"], "mime_type": mime or None}
 
 
+def _validate_binary_signature(raw: bytes, original_format: str) -> None:
+    """Reject binary uploads whose contents contradict their claimed format.
+
+    This complements extension/MIME checks without changing the permissive
+    UTF-8 handling used for Markdown and plain text. Full parsing remains the
+    authoritative structural validation performed by the existing converters.
+    """
+    if original_format == "pdf" and not raw.startswith(b"%PDF-"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File contents do not match the declared PDF format.",
+        )
+    if original_format == "docx" and not raw.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File contents do not match the declared DOCX format.",
+        )
+
+
 # DOC-UPLOAD 3.5 — Streaming size cap (step 2.1.3): reads the upload in 1 MB slices and
 #             aborts with 413 as soon as MAX_UPLOAD_MB is exceeded, so an oversized body is
 #             never fully buffered. This is the ONLY size check at save time — it guards
@@ -368,6 +387,7 @@ async def upload_document(
     try:
         fmt = _resolve_upload_format(file.filename or "", file.content_type or "")
         raw = await _read_upload_with_size_cap(file)
+        _validate_binary_signature(raw, fmt["original_format"])
     except HTTPException as exc:
         await _persist_conversion_message(
             project_id,

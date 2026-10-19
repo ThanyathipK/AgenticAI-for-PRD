@@ -14,7 +14,12 @@ from app.banking_knowledge_service import (
     set_knowledge_status,
 )
 from app.database import get_db
-from app.routes.documents import _convert_to_markdown, _read_upload_with_size_cap, _resolve_upload_format
+from app.routes.documents import (
+    _convert_to_markdown,
+    _read_upload_with_size_cap,
+    _resolve_upload_format,
+    _validate_binary_signature,
+)
 
 router = APIRouter()
 
@@ -63,6 +68,7 @@ async def upload_banking_knowledge(
 ) -> dict[str, Any]:
     descriptor = _resolve_upload_format(file.filename or "", file.content_type or "")
     raw = await _read_upload_with_size_cap(file)
+    _validate_binary_signature(raw, descriptor["original_format"])
     content = await asyncio.to_thread(_convert_to_markdown, raw, descriptor["original_format"])
     try:
         return await create_knowledge_document(

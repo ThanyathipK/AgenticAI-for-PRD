@@ -222,6 +222,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_CHAT_WINDOW: int = 60
     RATE_LIMIT_WORKFLOW_LIMIT: int = 60
     RATE_LIMIT_WORKFLOW_WINDOW: int = 60
+    RATE_LIMIT_LOGIN_LIMIT: int = 10
+    RATE_LIMIT_LOGIN_WINDOW: int = 60
+    RATE_LIMIT_REGISTER_LIMIT: int = 10
+    RATE_LIMIT_REGISTER_WINDOW: int = 300
 
     # Store backing the limiter. Only "in-process" is implemented today; the
     # startup guard (verify_single_worker_guarantee) then REQUIRES a single

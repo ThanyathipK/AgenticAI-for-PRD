@@ -26,6 +26,7 @@ from app.auth import (
     verify_project_access,
 )
 from app.main import app as fastapi_app
+from app.rate_limit import limiter
 
 AUTH_DEPENDENCIES = (
     get_current_user,
@@ -43,6 +44,13 @@ REAL_AUTH_MODULES = {"tests.test_auth", "tests.test_authorization_enforcement"}
 # Depends()). Their module-global name is patched so business-logic tests
 # bypass ownership checks exactly like the dependency-based routes do.
 DIRECT_CHECK_MODULES = ("app.routes.requirements", "app.routes.chat")
+
+
+@pytest.fixture(autouse=True)
+def isolate_auth_rate_limit_buckets():
+    """Keep process-global authentication counters isolated per test case."""
+    limiter.reset("auth-login:127.0.0.1")
+    limiter.reset("auth-register:127.0.0.1")
 
 
 @pytest.fixture(autouse=True)

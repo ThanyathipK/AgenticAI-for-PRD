@@ -26,6 +26,7 @@ from app.auth import (
 )
 from app.config import settings
 from app.database import get_db
+from app.rate_limit import rate_limit_dependency
 from app.repositories.user import UserRepository, normalize_email
 
 logger = logging.getLogger("app.routes.auth")
@@ -102,6 +103,11 @@ class RegisterResponse(BaseModel):
 @router.post("/api/auth/login", response_model=LoginResponse, status_code=status.HTTP_200_OK)
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
+    _rate: None = Depends(
+        rate_limit_dependency(
+            "auth-login", settings.RATE_LIMIT_LOGIN_LIMIT, settings.RATE_LIMIT_LOGIN_WINDOW
+        )
+    ),
     session: AsyncSession = Depends(get_db),
 ):
     """
@@ -285,6 +291,13 @@ async def change_password_endpoint(
 )
 async def register(
     register_request: RegisterRequest,
+    _rate: None = Depends(
+        rate_limit_dependency(
+            "auth-register",
+            settings.RATE_LIMIT_REGISTER_LIMIT,
+            settings.RATE_LIMIT_REGISTER_WINDOW,
+        )
+    ),
     session: AsyncSession = Depends(get_db),
 ):
     """

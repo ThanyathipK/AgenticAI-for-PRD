@@ -375,6 +375,8 @@ All backend configuration lives in `backend/.env`. Unlisted keys such as `GEMINI
 | `RATE_LIMIT_ENABLED` | `true` | Master switch for in-process sliding-window rate limiting on LLM-facing endpoints |
 | `RATE_LIMIT_CHAT_LIMIT` / `RATE_LIMIT_CHAT_WINDOW` | `30` / `60` | Max `/api/chat` requests per client IP per window (seconds) |
 | `RATE_LIMIT_WORKFLOW_LIMIT` / `RATE_LIMIT_WORKFLOW_WINDOW` | `60` / `60` | Max workflow-endpoint requests (`process-requirements`, `workflow-router`, `intent-detector`, `requirement-matcher`) per client IP per window (seconds) |
+| `RATE_LIMIT_LOGIN_LIMIT` / `RATE_LIMIT_LOGIN_WINDOW` | `10` / `60` | Max login attempts per client IP per window (seconds) |
+| `RATE_LIMIT_REGISTER_LIMIT` / `RATE_LIMIT_REGISTER_WINDOW` | `10` / `300` | Max registration attempts per client IP per window (seconds) |
 | `LLM_REQUEST_TIMEOUT_SECONDS` | `600` | Maximum wall time for one local-model request |
 | `LLM_STRUCTURED_TOTAL_TIMEOUT_SECONDS` | `630` | Shared wall-time budget across structured-output attempts |
 | `LLM_STRUCTURED_PROVIDER_FALLBACK` | `false` | Opt in to a second provider schema-output request after raw JSON parsing fails; disabled for LM Studio/Qwen to avoid repeating a full slow prompt |

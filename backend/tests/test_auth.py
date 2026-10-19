@@ -37,6 +37,7 @@ from app.auth import (
 from app.config import settings
 from app.database import Base, get_db as app_get_db
 from app.main import app as fastapi_app
+from app.rate_limit import limiter
 from app.repositories.user import UserRepository, normalize_email
 
 # A valid bcrypt hash of "Correct-Horse-1" is built per test through
@@ -72,6 +73,9 @@ async def db_session(session_factory):
 @pytest_asyncio.fixture
 async def client(db_session):
     """ASGI client wired to the isolated SQLite session (no lifespan run)."""
+
+    limiter.reset("auth-login:127.0.0.1")
+    limiter.reset("auth-register:127.0.0.1")
 
     async def override_get_db():
         try:
@@ -341,6 +345,36 @@ async def test_request_lifecycle_uses_safe_correlation_id(client, caplog):
     messages = [record.getMessage() for record in caplog.records]
     assert any("[REQUEST][browser_trace_123][START]" in message for message in messages)
     assert any("[REQUEST][browser_trace_123][DONE]" in message for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_responses_include_safe_security_headers(client):
+    response = await client.get("/api/auth/config")
+
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["content-security-policy"] == "frame-ancestors 'none'; base-uri 'none'"
+    assert "strict-transport-security" not in response.headers
+
+
+@pytest.mark.asyncio
+async def test_login_is_rate_limited_per_client(client, db_session):
+    await _create_user(db_session, email="limited@bank.com")
+
+    for _ in range(settings.RATE_LIMIT_LOGIN_LIMIT):
+        response = await client.post(
+            "/api/auth/login",
+            data={"username": "limited@bank.com", "password": "wrong"},
+        )
+        assert response.status_code == 401
+
+    blocked = await client.post(
+        "/api/auth/login",
+        data={"username": "limited@bank.com", "password": "wrong"},
+    )
+    assert blocked.status_code == 429
+    assert blocked.headers["retry-after"] == str(settings.RATE_LIMIT_LOGIN_WINDOW)
 
 
 @pytest.mark.asyncio

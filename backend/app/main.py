@@ -200,6 +200,21 @@ async def request_lifecycle_log(request: Request, call_next):
         )
         raise
     response.headers["X-Request-ID"] = request_id
+    # Browser hardening that is safe for API and development responses. HSTS is
+    # deliberately HTTPS-only so local HTTP development is never pinned or
+    # redirected. CSP is kept restrictive because this service returns JSON,
+    # files, and API documentation rather than hosting the Vite application.
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = (
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    )
+    # These CSP directives prevent framing and base-tag injection without
+    # blocking FastAPI's interactive docs or downloaded document rendering.
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'; base-uri 'none'"
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     logger.info(
         "[REQUEST][%s][DONE] %s %s status=%s elapsed_ms=%.1f",
         request_id, request.method, request.url.path, response.status_code,
