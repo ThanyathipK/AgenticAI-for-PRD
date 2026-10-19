@@ -194,7 +194,9 @@ def test_verify_token_rejects_garbage_and_wrongly_signed_tokens():
     from fastapi import HTTPException
     import jwt
 
-    wrong_secret = "wrong-secret-that-is-at-least-32-bytes"
+    # Build a sufficiently long test-only key without committing a
+    # credential-shaped literal that secret scanners can mistake for a leak.
+    wrong_secret = b"x" * 32
     for bad_token in ("not-a-jwt", jwt.encode({"sub": "x"}, wrong_secret, algorithm="HS256")):
         with pytest.raises(HTTPException) as exc:
             verify_token(bad_token)

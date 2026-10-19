@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Known-fake JWT key from the negative authentication test"
+regexTarget = "match"
+regexes = [
+  '''wrong-secret-that-is-at-least-32-bytes''',
+]
