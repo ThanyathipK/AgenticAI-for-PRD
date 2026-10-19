@@ -192,9 +192,10 @@ def test_access_token_round_trip():
 
 def test_verify_token_rejects_garbage_and_wrongly_signed_tokens():
     from fastapi import HTTPException
-    from jose import jwt
+    import jwt
 
-    for bad_token in ("not-a-jwt", jwt.encode({"sub": "x"}, "other-secret", algorithm="HS256")):
+    wrong_secret = "wrong-secret-that-is-at-least-32-bytes"
+    for bad_token in ("not-a-jwt", jwt.encode({"sub": "x"}, wrong_secret, algorithm="HS256")):
         with pytest.raises(HTTPException) as exc:
             verify_token(bad_token)
         assert exc.value.status_code == 401

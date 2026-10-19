@@ -109,7 +109,7 @@ flowchart LR
 | Layer | Technology |
 |-------|-----------|
 | Frontend | React 19 · TypeScript · Vite 6 · Tailwind CSS 4 · Motion · lucide-react · axios |
-| Backend | Python 3.12+ (developed on 3.14) · FastAPI · uvicorn · SQLAlchemy 2 (async) · Alembic · Pydantic v2 · python-docx / pypdf / mammoth (document ingestion) · python-jose + bcrypt (auth) |
+| Backend | Python 3.12+ (developed on 3.14) · FastAPI · uvicorn · SQLAlchemy 2 (async) · Alembic · Pydantic v2 · python-docx / pypdf / mammoth (document ingestion) · PyJWT + bcrypt (auth) |
 | AI orchestration | LangGraph · LangChain · LangChain-OpenAI client (pointed at LM Studio) |
 | Inference | **LM Studio** — local OpenAI-compatible server (`http://localhost:1234/v1`) with a configured chat model and optional embedding model for semantic memory |
 | Database | Supabase PostgreSQL (transaction pooler compatible) · SQLite fallback via `sqlite+aiosqlite:///app.db` |
