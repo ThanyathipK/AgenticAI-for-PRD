@@ -1,0 +1,532 @@
+{
+  "project_id": "12c1666f-059f-43a2-84b9-d0a07823c232",
+  "thresholds": {
+    "automated_pass_rate": 95.0,
+    "expert_dimension_average": 4.0,
+    "critical_errors_allowed": 0,
+    "note": "These thresholds are defined for this project's evaluation."
+  },
+  "automated": {
+    "passed": 47,
+    "failed": 3,
+    "skipped": 1,
+    "applicable": 50,
+    "pass_rate": 94.0,
+    "threshold": 95.0,
+    "critical_error_count": 0,
+    "passed_threshold": false
+  },
+  "categories": {
+    "artifact_ids": {
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "applicable": 8,
+      "pass_rate": 100.0
+    },
+    "diagrams": {
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "applicable": 12,
+      "pass_rate": 100.0
+    },
+    "generated_files": {
+      "passed": 0,
+      "failed": 0,
+      "skipped": 1,
+      "applicable": 0,
+      "pass_rate": null
+    },
+    "prd": {
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0,
+      "applicable": 17,
+      "pass_rate": 100.0
+    },
+    "references": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "applicable": 1,
+      "pass_rate": 100.0
+    },
+    "traceability": {
+      "passed": 9,
+      "failed": 3,
+      "skipped": 0,
+      "applicable": 12,
+      "pass_rate": 75.0
+    }
+  },
+  "critical_errors": [],
+  "checks": [
+    {
+      "category": "artifact_ids",
+      "check_id": "requirement_1_id",
+      "status": "pass",
+      "artifact": "REQ-001",
+      "detail": "Requirement ID: REQ-001",
+      "critical": false
+    },
+    {
+      "category": "artifact_ids",
+      "check_id": "requirement_2_id",
+      "status": "pass",
+      "artifact": "REQ-002",
+      "detail": "Requirement ID: REQ-002",
+      "critical": false
+    },
+    {
+      "category": "artifact_ids",
+      "check_id": "requirement_3_id",
+      "status": "pass",
+      "artifact": "REQ-003",
+      "detail": "Requirement ID: REQ-003",
+      "critical": false
+    },
+    {
+      "category": "artifact_ids",
+      "check_id": "story_1_id",
+      "status": "pass",
+      "artifact": "US-001",
+      "detail": "Story ID: US-001",
+      "critical": false
+    },
+    {
+      "category": "artifact_ids",
+      "check_id": "story_2_id",
+      "status": "pass",
+      "artifact": "US-002",
+      "detail": "Story ID: US-002",
+      "critical": false
+    },
+    {
+      "category": "artifact_ids",
+      "check_id": "story_3_id",
+      "status": "pass",
+      "artifact": "US-003",
+      "detail": "Story ID: US-003",
+      "critical": false
+    },
+    {
+      "category": "artifact_ids",
+      "check_id": "requirement_ids_unique",
+      "status": "pass",
+      "artifact": null,
+      "detail": "Requirement IDs are unique.",
+      "critical": false
+    },
+    {
+      "category": "artifact_ids",
+      "check_id": "story_ids_unique",
+      "status": "pass",
+      "artifact": null,
+      "detail": "Story IDs are unique.",
+      "critical": false
+    },
+    {
+      "category": "traceability",
+      "check_id": "REQ-001_has_story",
+      "status": "pass",
+      "artifact": "REQ-001",
+      "detail": "Requirement has a linked user story.",
+      "critical": false
+    },
+    {
+      "category": "traceability",
+      "check_id": "REQ-001_has_prd_link",
+      "status": "fail",
+      "artifact": "REQ-001",
+      "detail": "Requirement has no PRD-section reference.",
+      "critical": false
+    },
+    {
+      "category": "traceability",
+      "check_id": "REQ-002_has_story",
+      "status": "pass",
+      "artifact": "REQ-002",
+      "detail": "Requirement has a linked user story.",
+      "critical": false
+    },
+    {
+      "category": "traceability",
+      "check_id": "REQ-002_has_prd_link",
+      "status": "fail",
+      "artifact": "REQ-002",
+      "detail": "Requirement has no PRD-section reference.",
+      "critical": false
+    },
+    {
+      "category": "traceability",
+      "check_id": "REQ-003_has_story",
+      "status": "pass",
+      "artifact": "REQ-003",
+      "detail": "Requirement has a linked user story.",
+      "critical": false
+    },
+    {
+      "category": "traceability",
+      "check_id": "REQ-003_has_prd_link",
+      "status": "fail",
+      "artifact": "REQ-003",
+      "detail": "Requirement has no PRD-section reference.",
+      "critical": false
+    },
+    {
+      "category": "traceability",
+      "check_id": "US-001_has_criteria",
+      "status": "pass",
+      "artifact": "US-001",
+      "detail": "Story has acceptance criteria.",
+      "critical": false
+    },
+    {
+      "category": "traceability",
+      "check_id": "US-001_parent_exists",
+      "status": "pass",
+      "artifact": "US-001",
+      "detail": "Story parent requirement exists.",
+      "critical": false
+    },
+    {
+      "category": "traceability",
+      "check_id": "US-002_has_criteria",
+      "status": "pass",
+      "artifact": "US-002",
+      "detail": "Story has acceptance criteria.",
+      "critical": false
+    },
+    {
+      "category": "traceability",
+      "check_id": "US-002_parent_exists",
+      "status": "pass",
+      "artifact": "US-002",
+      "detail": "Story parent requirement exists.",
+      "critical": false
+    },
+    {
+      "category": "traceability",
+      "check_id": "US-003_has_criteria",
+      "status": "pass",
+      "artifact": "US-003",
+      "detail": "Story has acceptance criteria.",
+      "critical": false
+    },
+    {
+      "category": "traceability",
+      "check_id": "US-003_parent_exists",
+      "status": "pass",
+      "artifact": "US-003",
+      "detail": "Story parent requirement exists.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_title_exists",
+      "status": "pass",
+      "artifact": "title",
+      "detail": "Canonical PRD section exists.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_stakeholders_exists",
+      "status": "pass",
+      "artifact": "stakeholders",
+      "detail": "Canonical PRD section exists.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_version_history_exists",
+      "status": "pass",
+      "artifact": "version_history",
+      "detail": "Canonical PRD section exists.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_reviews_exists",
+      "status": "pass",
+      "artifact": "reviews",
+      "detail": "Canonical PRD section exists.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_contents_exists",
+      "status": "pass",
+      "artifact": "contents",
+      "detail": "Canonical PRD section exists.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_business_overview_exists",
+      "status": "pass",
+      "artifact": "business_overview",
+      "detail": "Canonical PRD section exists.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_product_scope_exists",
+      "status": "pass",
+      "artifact": "product_scope",
+      "detail": "Canonical PRD section exists.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_tech_ops_exists",
+      "status": "pass",
+      "artifact": "tech_ops",
+      "detail": "Canonical PRD section exists.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_appendix_exists",
+      "status": "pass",
+      "artifact": "appendix",
+      "detail": "Canonical PRD section exists.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_title_not_empty",
+      "status": "pass",
+      "artifact": "title",
+      "detail": "Required generated section contains content.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_stakeholders_not_empty",
+      "status": "pass",
+      "artifact": "stakeholders",
+      "detail": "Required generated section contains content.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_business_overview_not_empty",
+      "status": "pass",
+      "artifact": "business_overview",
+      "detail": "Required generated section contains content.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_product_scope_not_empty",
+      "status": "pass",
+      "artifact": "product_scope",
+      "detail": "Required generated section contains content.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_tech_ops_not_empty",
+      "status": "pass",
+      "artifact": "tech_ops",
+      "detail": "Required generated section contains content.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "section_appendix_not_empty",
+      "status": "pass",
+      "artifact": "appendix",
+      "detail": "Required generated section contains content.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "generated_prd_present",
+      "status": "pass",
+      "artifact": null,
+      "detail": "At least one generated PRD document exists.",
+      "critical": false
+    },
+    {
+      "category": "prd",
+      "check_id": "latest_prd_not_empty",
+      "status": "pass",
+      "artifact": "PRD v9",
+      "detail": "Latest PRD document contains content.",
+      "critical": false
+    },
+    {
+      "category": "references",
+      "check_id": "all_references_resolve",
+      "status": "pass",
+      "artifact": null,
+      "detail": "All artifact references resolve.",
+      "critical": false
+    },
+    {
+      "category": "diagrams",
+      "check_id": "diagram_1_syntax",
+      "status": "pass",
+      "artifact": "PRD v9",
+      "detail": "Supported Mermaid flowchart header found.",
+      "critical": false
+    },
+    {
+      "category": "diagrams",
+      "check_id": "diagram_1_renders",
+      "status": "pass",
+      "artifact": "PRD v9",
+      "detail": "Mermaid rendered successfully.",
+      "critical": false
+    },
+    {
+      "category": "diagrams",
+      "check_id": "diagram_2_syntax",
+      "status": "pass",
+      "artifact": "PRD v8",
+      "detail": "Supported Mermaid flowchart header found.",
+      "critical": false
+    },
+    {
+      "category": "diagrams",
+      "check_id": "diagram_2_renders",
+      "status": "pass",
+      "artifact": "PRD v8",
+      "detail": "Mermaid rendered successfully.",
+      "critical": false
+    },
+    {
+      "category": "diagrams",
+      "check_id": "diagram_3_syntax",
+      "status": "pass",
+      "artifact": "PRD v7",
+      "detail": "Supported Mermaid flowchart header found.",
+      "critical": false
+    },
+    {
+      "category": "diagrams",
+      "check_id": "diagram_3_renders",
+      "status": "pass",
+      "artifact": "PRD v7",
+      "detail": "Mermaid rendered successfully.",
+      "critical": false
+    },
+    {
+      "category": "diagrams",
+      "check_id": "diagram_4_syntax",
+      "status": "pass",
+      "artifact": "PRD v6",
+      "detail": "Supported Mermaid flowchart header found.",
+      "critical": false
+    },
+    {
+      "category": "diagrams",
+      "check_id": "diagram_4_renders",
+      "status": "pass",
+      "artifact": "PRD v6",
+      "detail": "Mermaid rendered successfully.",
+      "critical": false
+    },
+    {
+      "category": "diagrams",
+      "check_id": "diagram_5_syntax",
+      "status": "pass",
+      "artifact": "PRD v5",
+      "detail": "Supported Mermaid flowchart header found.",
+      "critical": false
+    },
+    {
+      "category": "diagrams",
+      "check_id": "diagram_5_renders",
+      "status": "pass",
+      "artifact": "PRD v5",
+      "detail": "Mermaid rendered successfully.",
+      "critical": false
+    },
+    {
+      "category": "diagrams",
+      "check_id": "diagram_6_syntax",
+      "status": "pass",
+      "artifact": "PRD v4",
+      "detail": "Supported Mermaid flowchart header found.",
+      "critical": false
+    },
+    {
+      "category": "diagrams",
+      "check_id": "diagram_6_renders",
+      "status": "pass",
+      "artifact": "PRD v4",
+      "detail": "Mermaid rendered successfully.",
+      "critical": false
+    },
+    {
+      "category": "generated_files",
+      "check_id": "exports_present",
+      "status": "skip",
+      "artifact": null,
+      "detail": "No exported files supplied.",
+      "critical": false
+    }
+  ],
+  "expert_review": {
+    "reviewer_count": 0,
+    "complete": false,
+    "invalid_scores": [],
+    "dimensions": {
+      "requirements_complete": {
+        "scores": [],
+        "average": null,
+        "passed": false
+      },
+      "traceability_correct": {
+        "scores": [],
+        "average": null,
+        "passed": false
+      },
+      "acceptance_criteria_testable": {
+        "scores": [],
+        "average": null,
+        "passed": false
+      },
+      "diagrams_match_requirements": {
+        "scores": [],
+        "average": null,
+        "passed": false
+      },
+      "prd_and_exports_complete": {
+        "scores": [],
+        "average": null,
+        "passed": false
+      }
+    },
+    "overall_average": null,
+    "passed": false,
+    "threshold": 4.0
+  },
+  "time_measurement": {
+    "run_count": 0,
+    "generation_seconds": {
+      "count": 0,
+      "average": null,
+      "median": null
+    },
+    "acceptance_seconds": {
+      "count": 0,
+      "average": null,
+      "median": null
+    },
+    "revisions": {
+      "count": 0,
+      "average": null,
+      "median": null
+    },
+    "prompts": {
+      "count": 0,
+      "average": null,
+      "median": null
+    }
+  }
+}

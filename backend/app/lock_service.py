@@ -14,7 +14,6 @@ from app.models import (
     RequirementModel,
     UserStoryModel,
     AcceptanceCriteriaModel,
-    ClarificationQuestionModel,
     AuditResultModel,
     PRDDocumentModel,
     PRDSectionModel

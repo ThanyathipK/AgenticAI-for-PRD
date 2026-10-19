@@ -601,7 +601,7 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
     return _rewrite_rows(body, rows)
 
 
-def _rewrite_rows(body: str, rows: List[Tuple[str, str]]) -> str:
+def _rewrite_rows(body: str, rows: List[tuple[str, str]]) -> str:
     """Replace tabular rows whose leading label matches a regex.
 
     The Krungsri template rows are one physical line each; rewriting by line

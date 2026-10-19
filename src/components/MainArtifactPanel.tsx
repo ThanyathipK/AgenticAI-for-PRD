@@ -8,9 +8,10 @@ import { ChevronDown } from "lucide-react";
 
 interface MainArtifactPanelProps {
   state: ReturnType<typeof useProjectState>;
+  userName: string;
 }
 
-export function MainArtifactPanel({ state }: MainArtifactPanelProps) {
+export function MainArtifactPanel({ state, userName }: MainArtifactPanelProps) {
   const { activeTab, projectId, documents } = state;
 
   return (
@@ -22,7 +23,7 @@ export function MainArtifactPanel({ state }: MainArtifactPanelProps) {
           <DocumentLibrary projectId={projectId} docs={documents} />
           <details className="mt-3 rounded-[10px] border border-outline bg-white">
             <summary className="cursor-pointer list-none px-4 py-3 text-xs font-semibold text-on-surface flex items-center justify-between">
-              Advanced traceability
+              Requirement hierarchy
               <ChevronDown className="w-4 h-4 text-on-surface-variant" />
             </summary>
             <div className="border-t border-outline p-3">
@@ -33,7 +34,7 @@ export function MainArtifactPanel({ state }: MainArtifactPanelProps) {
       )}
       {activeTab === "history" && (
         <>
-          <VersionHistory state={state} />
+          <VersionHistory state={state} userName={userName} />
           <DocumentLibrary projectId={projectId} docs={documents} />
         </>
       )}

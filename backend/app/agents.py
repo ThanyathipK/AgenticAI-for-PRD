@@ -1,27 +1,21 @@
-import logging
-import json
-import re
 import copy
-from typing import Dict, Any, List, Optional
-from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_core.prompts import PromptTemplate
+import json
+import logging
+import re
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
-from langgraph.graph import StateGraph, START, END
+from langchain_core.prompts import PromptTemplate
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.repositories import (
-    ConversationMessageRepository,
-    PRDSectionRepository,
-    RequirementStateRepository,
-)
-from app.repositories.base import compact_requirement_context
-from app.schemas import AuditorOutput, GatheredRequirements, ClarificationGathererBatch
-from app.document_processor import split_markdown_into_chunks
-from app.config import settings
-from app.input_validation import count_body_tokens, count_tokens
+
+from app.application_types import AuditFailure, RequirementMergeReport, WorkflowNodeOutcome
 from app.audit_checklist import load_active_audit_checklist
-from app.prompt_loader import load_prompt
-from app.request_priority import format_prioritized_input
-from app.llm_factory import build_llm, llm, parser
+from app.config import settings
+from app.document_processor import split_markdown_into_chunks
+from app.input_validation import count_body_tokens, count_tokens
+from app.llm_factory import build_llm, llm
 from app.llm_utils import invoke_llm_structured
 from app.merge_service import (
     collect_acceptance_criteria,
@@ -34,14 +28,29 @@ from app.prd_section_service import (
     prd_has_renderable_operational_sections,
     prd_is_sectioned_markdown,
 )
+from app.prompt_loader import load_prompt
+from app.repositories import (
+    ConversationMessageRepository,
+    PRDSectionRepository,
+    RequirementStateRepository,
+)
+from app.repositories.base import compact_requirement_context
+from app.request_priority import format_prioritized_input
 from app.requirement_codes import (
     # Requirement numbering is canonicalized in ONE place so no module ever
     # hardcodes a literal code such as ``"REQ-001"``.
     default_requirement_code as _default_requirement_code,
-    next_requirement_code as _generate_next_requirement_code,
-    normalize_requirement_code as _normalize_requirement_code,
+)
+from app.requirement_codes import (
     extract_requirement_codes as _extract_requirement_codes,
 )
+from app.requirement_codes import (
+    next_requirement_code as _generate_next_requirement_code,
+)
+from app.requirement_codes import (
+    normalize_requirement_code as _normalize_requirement_code,
+)
+from app.schemas import AuditorOutput, ClarificationGathererBatch, GatheredRequirements
 from app.semantic_service import (
     SEMANTIC_LOW_CONFIDENCE_THRESHOLD,
     classify_workflow,
@@ -51,18 +60,49 @@ from app.semantic_service import (
     extract_story_ticket_codes,
     match_requirement,
 )
+from app.services import diagram_service as _diagram_service
 from app.services.diagram_service import (
     generate_flow_diagram as _generate_flow_diagram_service,
-    sanitize_mermaid_diagram as _sanitize_mermaid_diagram,
 )
-from app.application_types import AuditFailure, RequirementMergeReport, WorkflowNodeOutcome
-from app.workflow_orchestration.routing import (
-    route_from_matcher,
-    route_from_router,
-    route_on_demand,
+from app.workflow_orchestration import deletion_targets as _deletion_targets
+from app.workflow_orchestration import routing as _workflow_routing
+from app.workflow_orchestration.audit_results import (
+    dedupe_dicts as _dedupe_dicts,
+)
+from app.workflow_orchestration.audit_results import (
+    merge_audit_passes as _merge_audit_passes_impl,
+)
+from app.workflow_orchestration.audit_results import (
+    prepare_audit_documents as _prepare_audit_documents,
+)
+from app.workflow_orchestration.deletion_targets import (
+    BARE_ARCHIVE_NUMBER_RE as _BARE_ARCHIVE_NUMBER_RE,
+)
+from app.workflow_orchestration.deletion_targets import (
+    bulk_archive_scope as _bulk_archive_scope,
+)
+from app.workflow_orchestration.deletion_targets import (
+    resolve_acceptance_criteria_targets as _resolve_acceptance_criteria_targets,
+)
+from app.workflow_orchestration.graph import build_prd_workflow
+from app.workflow_orchestration.prd_narrative import (
+    narrative_from_explicit_input as _prd_narrative_from_explicit_input,
+)
+from app.workflow_orchestration.prd_narrative import (
+    narrative_from_validated_audit as _prd_narrative_from_validated_audit,
+)
+from app.workflow_orchestration.prd_narrative import (
+    needs_narrative_refresh as _prd_needs_narrative_refresh,
 )
 from app.workflow_orchestration.state import AgentState, RequirementState
 
+# Compatibility facade: existing callers and tests import these names from
+# ``app.agents`` while their implementations now live in focused modules.
+_sanitize_mermaid_diagram = _diagram_service.sanitize_mermaid_diagram
+_acceptance_criterion_label = _deletion_targets.acceptance_criterion_label
+route_from_matcher = _workflow_routing.route_from_matcher
+route_from_router = _workflow_routing.route_from_router
+route_on_demand = _workflow_routing.route_on_demand
 
 # Set up logging configuration for the multi-agent framework
 logging.basicConfig(level=logging.INFO)
@@ -128,119 +168,6 @@ is {document_id, document_name, section, excerpt}. Each question is {checklist_c
 question_text, is_resolved, source_references}. Return at most 6 findings, 6 questions, 2 source references
 per item, and 3 proposed acceptance criteria per recommendation. Keep descriptions and rationales concise.
 Use null when unknown. Output JSON only, with no markdown or commentary."""
-
-def _bulk_archive_scope(raw_input: str) -> Optional[str]:
-    """Return an explicitly requested whole-project archive scope, if any."""
-    text = " ".join(str(raw_input or "").casefold().split())
-    if not re.search(r"\b(?:remove|delete|archive|retire|discard|drop)\b", text):
-        return None
-    if not re.search(r"\b(?:all|every|everything)\b", text):
-        return None
-    # This workflow archives requirements/stories, not individual criteria.
-    if re.search(r"\bacceptance\s+criteri(?:a|on)\b", text):
-        return None
-    if re.search(r"\b(?:requirements?|reqs?)\b", text):
-        return "ALL_REQUIREMENTS"
-    return "ALL_STORIES"
-
-
-_AC_REFERENCE_RE = re.compile(r"\bAC[\s_-]*(\d{1,4})\b", re.IGNORECASE)
-_AC_WORDING_RE = re.compile(r"\b(?:AC|acceptance\s+criteri(?:on|a))\b", re.IGNORECASE)
-_BARE_ARCHIVE_NUMBER_RE = re.compile(
-    r"^\s*(?:please\s+)?(?:remove|delete|archive|retire|discard|drop)\s+#?0*(\d{1,4})\s*[.!]?\s*$",
-    re.IGNORECASE,
-)
-
-
-def _acceptance_criterion_label(story_code: str, ordinal: int) -> str:
-    """Return the stable, user-facing reference for a criterion in a story."""
-    return f"{story_code}-AC-{ordinal:03d}"
-
-
-def _resolve_acceptance_criteria_targets(
-    raw_input: str, existing_stories: List[Dict[str, Any]]
-) -> Optional[Dict[str, Any]]:
-    """Resolve explicit AC references without falling back to story-level deletion."""
-    if not _AC_WORDING_RE.search(str(raw_input or "")):
-        return None
-
-    stories_by_code = {
-        normalize_ticket_code(story.get("ticket_code")): story
-        for story in existing_stories
-        if isinstance(story, dict) and normalize_ticket_code(story.get("ticket_code"))
-    }
-    requested_story_codes = [
-        code for code in extract_story_ticket_codes(raw_input) if code in stories_by_code
-    ]
-    ordinals = [int(value) for value in _AC_REFERENCE_RE.findall(raw_input)]
-    candidates: List[Dict[str, Any]] = []
-
-    if ordinals:
-        story_codes = requested_story_codes or sorted(stories_by_code)
-        for story_code in story_codes:
-            criteria = stories_by_code[story_code].get("acceptance_criteria") or []
-            for ordinal in ordinals:
-                if 1 <= ordinal <= len(criteria):
-                    candidates.append({
-                        "story_code": story_code,
-                        "ordinal": ordinal,
-                        "text": str(criteria[ordinal - 1]),
-                        "label": _acceptance_criterion_label(story_code, ordinal),
-                    })
-
-    # A criterion's full text is also a safe, unique reference when pasted into
-    # the command. This supports “remove acceptance criterion: Given ...”.
-    if not candidates:
-        folded_input = " ".join(str(raw_input or "").casefold().split())
-        for story_code, story in stories_by_code.items():
-            for ordinal, criterion in enumerate(story.get("acceptance_criteria") or [], start=1):
-                folded_criterion = " ".join(str(criterion).casefold().split())
-                if folded_criterion and folded_criterion in folded_input:
-                    candidates.append({
-                        "story_code": story_code,
-                        "ordinal": ordinal,
-                        "text": str(criterion),
-                        "label": _acceptance_criterion_label(story_code, ordinal),
-                    })
-
-    unique = {item["label"]: item for item in candidates}
-    candidates = list(unique.values())
-    if len(candidates) == 1:
-        return {
-            "matched_requirement_id": candidates[0]["story_code"],
-            "acceptance_criteria_targets": candidates,
-            "confidence": 1.0,
-            "reason": f"The user explicitly targeted {candidates[0]['label']}.",
-            "action": "DELETE",
-            "status": "MATCHED",
-            "candidates": [candidates[0]["label"]],
-        }
-    if len(candidates) > 1:
-        labels = [item["label"] for item in candidates]
-        return {
-            "matched_requirement_id": None,
-            "acceptance_criteria_targets": [],
-            "confidence": 0.0,
-            "reason": (
-                "That acceptance-criterion number exists in more than one story. "
-                f"Specify the story too, for example {labels[0]}."
-            ),
-            "action": "CLARIFY",
-            "status": "AMBIGUOUS",
-            "candidates": labels,
-        }
-    return {
-        "matched_requirement_id": None,
-        "acceptance_criteria_targets": [],
-        "confidence": 0.0,
-        "reason": (
-            "I could not match that acceptance criterion. Use a reference such as "
-            "US-001-AC-001, or include the full criterion text."
-        ),
-        "action": "CLARIFY",
-        "status": "LOW_CONFIDENCE",
-        "candidates": [],
-    }
 
 async def get_or_init_requirement_state(project_id: str, session: Optional[AsyncSession] = None, current_version: int = 1) -> RequirementState:
     """
@@ -382,19 +309,27 @@ async def workflow_router_node(state: AgentState) -> WorkflowNodeOutcome:
     #             request ("run auditor"/"validate" → auditor; "prd"/"diagram"/
     #             "architect"/"export" → architect). Only writes target_agent +
     #             agent_message and lets ROUTING 4.1 dispatch.
-    #             DISCREPANCY (documented, not changed): when neither keyword group
-    #             matches, target_agent keeps its incoming value (usually
-    #             "gatherer"), so route_from_router has no branch for it and the
-    #             command ends at END — after a message that says "Command routed
-    #             successfully".
+    #             Unknown commands terminate safely with an actionable clarification
+    #             instead of claiming an operation was routed when none will run.
     elif workflow_type == "COMMAND":
         logger.info("[WORKFLOW ROUTER] Handling as COMMAND. Routing backend command.")
         lower = raw_input.lower()
-        new_target = target_agent
+        new_target = None
         if any(w in lower for w in ["audit", "auditor", "validate"]):
             new_target = "auditor"
         elif any(w in lower for w in ["prd", "diagram", "architect", "export"]):
             new_target = "architect"
+
+        if new_target is None:
+            return {
+                "workflow_routing": router_result,
+                "target_agent": target_agent,
+                "agent_message": (
+                    "I couldn't identify a supported command. Try 'run audit' "
+                    "or 'generate PRD', or describe the requirement you want to change."
+                ),
+                "requirement_state": req_state,
+            }
 
         return {
             "workflow_routing": router_result,
@@ -1252,13 +1187,17 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
             for s in (r.get("user_stories") or [])
             if isinstance(s, dict) and s.get("status", "active") == "active"
         ]
+        epic_name = _resolve_epic_name(
+            req_state,
+            str(passed_structured.get("epic_name") or ""),
+            "",
+        )
         req_state["user_stories"] = active_flat
         req_state["acceptance_criteria"] = collect_acceptance_criteria(active_flat)
         req_state["epic_name"] = epic_name
         req_state["current_workflow_state"] = "gatherer_node"
         req_state["detected_intent"] = detected_intent
         version_number = req_state.get("version_number", 1)
-        epic_name = _resolve_epic_name(req_state, str(passed_structured.get("epic_name") or ""), "")
         structured_out = {
             "epic_name": epic_name,
             "version": version_number,
@@ -2017,6 +1956,7 @@ async def delete_requirement_node(state: AgentState) -> WorkflowNodeOutcome:
         criterion_rows_by_key: Dict[tuple[str, str], tuple[str, bool]] = {}
         if db_session is not None and codes_to_check:
             from sqlalchemy import String, cast, func, select
+
             from app.models import AcceptanceCriteriaModel, UserStoryModel
 
             locked_rows = await db_session.execute(
@@ -2252,121 +2192,14 @@ async def delete_requirement_node(state: AgentState) -> WorkflowNodeOutcome:
     }
 
 
-def _dedupe_dicts(items: List[Dict[str, Any]], key_fields: tuple[str, ...]) -> List[Dict[str, Any]]:
-    """Stable de-duplication for overlapping audit chunks."""
-    seen = set()
-    output = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        key = tuple(str(item.get(field) or "").strip().casefold() for field in key_fields)
-        if key in seen:
-            continue
-        seen.add(key)
-        output.append(item)
-    return output
-
-
-_DOCUMENT_INJECTION_RE = re.compile(
-    r"(?i)(ignore\s+(?:all\s+)?(?:previous|prior|auditor|system|developer)|"
-    r"return\s+(?:a\s+)?(?:critical|fake|pass|fail)|"
-    r"override\s+(?:the\s+)?(?:prompt|instructions)|"
-    r"(?:system|developer)\s+(?:prompt|message))"
-)
-
-
-def _prepare_audit_documents(documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Treat uploaded text as data and redact obvious prompt-injection lines."""
-    prepared = []
-    for document in documents:
-        body = str(document.get("content_markdown") or "")
-        suspicious = False
-        safe_lines = []
-        for line in body.splitlines():
-            if _DOCUMENT_INJECTION_RE.search(line):
-                suspicious = True
-                safe_lines.append("[Potential prompt-injection instruction redacted]")
-            else:
-                safe_lines.append(line)
-        prepared.append({
-            **document,
-            "source_type": document.get("source_type") or (
-                "Knowledge base" if str(document.get("document_id", "")).startswith("banking:")
-                else "Project file"
-            ),
-            "content_markdown": "\n".join(safe_lines),
-            "prompt_injection_redacted": suspicious,
-        })
-    return prepared
-
-
 def _merge_audit_passes(results: List[Dict[str, Any]], current_version: int) -> Dict[str, Any]:
     """Merge chunk output and enforce the risk-based verdict deterministically."""
-    passed = {str(check) for result in results for check in result.get("passed_checks", [])}
-    findings = _dedupe_dicts(
-        [finding for result in results for finding in result.get("findings", [])],
-        ("finding_type", "category", "target_requirement_id", "description"),
+    return _merge_audit_passes_impl(
+        results,
+        current_version,
+        checklist_id=ACTIVE_AUDIT_CHECKLIST.checklist_id,
+        checklist_version=ACTIVE_AUDIT_CHECKLIST.version,
     )
-    questions = _dedupe_dicts(
-        [question for result in results for question in result.get("clarification_questions", [])],
-        ("checklist_category", "target_user_story_id", "question_text"),
-    )
-    sources = _dedupe_dicts(
-        [source for finding in findings for source in finding.get("source_references", [])]
-        + [source for question in questions for source in question.get("source_references", [])],
-        ("document_id", "document_name", "section", "excerpt"),
-    )
-    for finding in findings:
-        finding["rule_id"] = str(finding.get("rule_id") or "ADHOC").upper()
-        finding["applicability"] = str(finding.get("applicability") or "unknown").lower()
-        finding["impact"] = str(finding.get("impact") or "warning").lower()
-        try:
-            finding["confidence"] = max(0.0, min(1.0, float(finding.get("confidence", 0.5))))
-        except (TypeError, ValueError):
-            finding["confidence"] = 0.5
-
-    impact_rank = {"blocking": 0, "warning": 1, "suggestion": 2}
-    severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    findings.sort(key=lambda item: (
-        impact_rank.get(item.get("impact"), 3),
-        severity_rank.get(str(item.get("severity") or "").lower(), 4),
-        -item.get("confidence", 0.0),
-    ))
-
-    blocking = [
-        finding for finding in findings
-        if finding["applicability"] == "applicable_required"
-        and finding["impact"] == "blocking"
-        and finding["confidence"] >= 0.7
-        and finding.get("evidence_status") == "supported"
-    ]
-    failed = {str(finding.get("category") or "Mandatory control") for finding in blocking}
-    contexts = [result.get("project_context") for result in results if isinstance(result.get("project_context"), dict)]
-    project_context = max(contexts, key=lambda item: float(item.get("confidence") or 0.0), default={})
-    if blocking:
-        verdict = "fail"
-    elif questions:
-        verdict = "needs_clarification"
-    elif findings:
-        verdict = "pass_with_warnings"
-    else:
-        verdict = "pass"
-    return {
-        # A pass requires both no substantiated blocker and no unanswered
-        # clarification. A question means the audit lacks enough information
-        # to establish a valid result.
-        "is_valid": not blocking and not questions,
-        "verdict": verdict,
-        "project_context": project_context,
-        "audit_version_reviewed": current_version,
-        "passed_checks": sorted(passed - failed),
-        "failed_checks": sorted(failed),
-        "findings": findings,
-        "source_references": sources,
-        "clarification_questions": questions,
-        "checklist_id": ACTIVE_AUDIT_CHECKLIST.checklist_id,
-        "checklist_version": ACTIVE_AUDIT_CHECKLIST.version,
-    }
 
 
 def _auditor_payload_token_budget(prompt: PromptTemplate, current_version: int) -> int:
@@ -3104,97 +2937,6 @@ async def auditor_node(state: AgentState) -> WorkflowNodeOutcome:
             "agent_message": failure["message"],
         }
 
-def _prd_narrative_from_validated_audit(requirement_state: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract only supported, high-confidence audit detail for the PRD tail."""
-    threshold = 0.70
-    technical_terms = ("technical", "performance", "security", "availability",
-                       "reliability", "operational", "integration", "privacy")
-    non_functional: List[str] = []
-    open_questions: List[str] = []
-
-    for finding in requirement_state.get("audit_findings") or []:
-        if not isinstance(finding, dict):
-            continue
-        try:
-            confidence = float(finding.get("confidence", 0.0))
-        except (TypeError, ValueError):
-            confidence = 0.0
-        if confidence < threshold or finding.get("evidence_status") != "supported":
-            continue
-        recommendation = finding.get("recommendation") or {}
-        summary = recommendation.get("summary") if isinstance(recommendation, dict) else ""
-        text = str(summary or finding.get("description") or "").strip()
-        if not text:
-            continue
-        if any(term in str(finding.get("category") or "").lower() for term in technical_terms):
-            non_functional.append(text)
-        if str(finding.get("impact") or "").lower() in {"blocking", "warning"}:
-            open_questions.append(text)
-
-    narrative: Dict[str, Any] = {}
-    if non_functional:
-        narrative["non_functional"] = "\n".join(
-            f"{index}. {item}" for index, item in enumerate(dict.fromkeys(non_functional), start=1)
-        )
-    if open_questions:
-        narrative["open_questions"] = "\n".join(
-            f"{index}. {item}" for index, item in enumerate(dict.fromkeys(open_questions), start=1)
-        )
-    return narrative
-
-
-def _prd_narrative_from_explicit_input(requirement_state: Dict[str, Any]) -> Dict[str, Any]:
-    """Flatten explicitly gathered PRD facts, keeping only confidence >= 0.70."""
-    narrative: Dict[str, Any] = {}
-    allowed = {
-        "exec_summary", "problem_statement", "business_objectives",
-        "expected_benefit", "success_metrics", "target_audience",
-        "user_flow", "scope_in", "scope_out",
-        "non_functional", "tps_volume", "growth", "launch_plan",
-        "dependencies", "go_to_market", "open_questions", "assumptions",
-        "glossary", "related_documents",
-    }
-    for key, field in (requirement_state.get("prd_narrative") or {}).items():
-        if key not in allowed or not isinstance(field, dict):
-            continue
-        try:
-            confidence = float(field.get("confidence", 0.0))
-        except (TypeError, ValueError):
-            confidence = 0.0
-        value = field.get("value")
-        if isinstance(value, list):
-            value = "\n".join(
-                f"{index}. {item}" for index, item in enumerate(value, start=1) if item
-            )
-        if confidence >= 0.70 and value:
-            narrative[key] = value
-    return narrative
-
-
-def _prd_needs_narrative_refresh(requirement_state: Dict[str, Any], existing_prd: str) -> bool:
-    """True when confirmed section 08/09 facts are absent from the stored PRD."""
-    confirmed = _prd_narrative_from_explicit_input(requirement_state)
-    if not confirmed:
-        return False
-    try:
-        from app.latex_service import prd_to_markdown
-        from app.prd_filler import extract_manual_export_fields
-        rendered = extract_manual_export_fields(prd_to_markdown(existing_prd)).get("narrative", {})
-    except Exception:
-        return True
-    for key, value in confirmed.items():
-        current = rendered.get(key)
-        if not current or str(current).strip().upper() == "TBD":
-            return True
-        expected_text = re.sub(r"\s+", " ", str(value)).strip().lower()
-        current_text = re.sub(r"\s+", " ", str(current)).strip().lower()
-        # A saved field may have numbering/line-break normalization, so a
-        # stable leading fragment is enough to establish that it was rendered.
-        if expected_text[:48] and expected_text[:48] not in current_text:
-            return True
-    return False
-
-
 # ARCHITECT 2.0 — Architect node (graph position: ROUTING 1.2 for
 #             target_agent="architect", ROUTING 4.1 for a COMMAND, or the on-demand
 #             ARCHITECT 1.2 request). Turns the validated requirement board into the
@@ -3578,7 +3320,18 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
     # ARCHITECT 3.3 — The fill itself (3.1 helper): cover page, stakeholders, version
     #             history, reviews, business overview, scope tables, technical appendix
     #             and glossary, from `data` + the version summary.
+    # On a brand-new project there is no ``generated_prd`` yet, but the new-
+    # project form has already persisted its cover, stakeholder, and business
+    # inputs as PRD sections.  Use that section draft for the first generation
+    # (and for later manual section edits) so v1.0 cannot replace user-entered
+    # intake values with template defaults.  This also covers both creation
+    # paths: "Skip & Create Empty" and "Create & Start Gatherer".
     previous_prd = req_state.get("generated_prd", "")
+    if stored_prd_sections:
+        from app.prd_section_service import stitch_markdown
+        persisted_section_draft = stitch_markdown(stored_prd_sections)
+        if persisted_section_draft.strip():
+            previous_prd = persisted_section_draft
     saved_intake = extract_intake_fields(previous_prd)
     # Manual content has priority. Otherwise use only supported audit findings
     # at >= 0.70 confidence; unknown operational facts stay TBD.
@@ -3624,17 +3377,19 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
     #             stale diagram when a requested refresh fails — a diagram hiccup can
     #             never lose the PRD or pair it with an older diagram revision.
     regenerate_diagram = regeneration_scope is None or bool(regeneration_scope.get("regenerate_diagram"))
-    # Architecture flows belong to Technical & Operational Considerations. If
-    # that section is locked, preserve both its text and current diagram and do
-    # not spend an LM Studio call generating content that cannot be applied.
-    if "tech_ops" in locked_section_keys:
-        regenerate_diagram = False
+    # A PRD-section lock protects that section's text only. The architecture
+    # diagram is a separately persisted artifact, so an explicit Generate PRD
+    # run must still refresh it even when ``tech_ops`` is locked. This keeps
+    # the diagram aligned with the current requirement board without changing
+    # governed PRD prose.
     fresh_diagram = (
         await _generate_flow_diagram(project_id, req_state, data)
         if regenerate_diagram and not empty_requirement_board else ""
     )
     if regenerate_diagram:
         req_state["generated_diagrams"] = fresh_diagram
+        if fresh_diagram:
+            req_state["diagram_generated_at"] = datetime.now(timezone.utc).isoformat()
     else:
         # An explicitly locked or out-of-scope diagram is governed content and
         # remains unchanged because no refresh was requested.
@@ -3652,7 +3407,9 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
     #             unlocked AI parts. The stitched markdown of ALL parts (AI + human)
     #             becomes the current generated_prd, which is what keeps human edits
     #             alive across every regeneration.
-    #             5.2 — fail-soft: section bookkeeping must never fail PRD generation.
+    #             5.2 — section + version writes are atomic. A persistence failure
+    #             rolls back and fails the workflow instead of reporting success
+    #             with an incomplete version ledger.
     # The section sync + version ledger need a live session. LangGraph now
     # carries ``db_session`` (it is declared in AgentState), but guard anyway:
     # when the node runs outside the graph without a session, open a short-lived
@@ -3711,11 +3468,10 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
                     if stored_markdown:
                         req_state["generated_prd"] = stored_markdown
             except Exception as section_sync_err:
-                # Never fail PRD generation because of section bookkeeping.
-                logger.error(
-                    f"[PRD SECTIONS] Failed to sync PRD sections for project {project_id}: "
-                    f"{str(section_sync_err)}"
-                )
+                await write_session.rollback()
+                raise RuntimeError(
+                    f"Architect could not persist PRD sections for project {project_id}."
+                ) from section_sync_err
 
         # Persist the FINAL document as an immutable PRD version record. The
         # version ALWAYS advances on every Generate PRD click — even when every
@@ -3727,7 +3483,8 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
         #             all record here): every Generate PRD appends an immutable
         #             prd_versions snapshot and advances version_number — even when the
         #             merged document is byte-identical because every changed section was
-        #             locked — so the ledger never collapses. 6.1 — fail-soft (logged).
+        #             locked — so the ledger never collapses. 6.1 — a ledger
+        #             failure rolls back section writes and fails the workflow.
         if write_session:
             try:
                 from app.version_service import record_prd_version
@@ -3740,7 +3497,19 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
                 )
                 logger.info(f"[PRD VERSION] Created new PRD version for project {project_id}")
             except Exception as version_err:
-                logger.error(f"[PRD VERSION] Failed to create PRD version: {str(version_err)}")
+                await write_session.rollback()
+                raise RuntimeError(
+                    f"Architect could not record the PRD version for project {project_id}."
+                ) from version_err
+
+        if owns_write_session and write_session is not None:
+            try:
+                await write_session.commit()
+            except Exception as commit_err:
+                await write_session.rollback()
+                raise RuntimeError(
+                    f"Architect could not commit PRD artifacts for project {project_id}."
+                ) from commit_err
     finally:
         if owns_write_session and write_session is not None:
             await write_session.close()
@@ -3773,6 +3542,7 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
         "prd_markdown": req_state["generated_prd"],
         "mermaid_diagram": req_state["generated_diagrams"],
         "diagram_regenerated": bool(fresh_diagram),
+        "diagram_generated_at": req_state.get("diagram_generated_at"),
         "agent_message": architect_msg,
         "skipped_locked_prd_sections": skipped_locked_titles,
     }
@@ -3821,70 +3591,13 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
 #   delete_requirement (DELETE flow).
 # GRAPH COMPILATION
 # ==========================================
-workflow = StateGraph(AgentState)
-
-# Append active node configurations
-workflow.add_node("router_node", workflow_router_node)
-workflow.add_node("requirement_matcher_node", requirement_matcher_node)
-workflow.add_node("gatherer_node", gatherer_node)
-workflow.add_node("auditor_node", auditor_node)
-workflow.add_node("architect_node", architect_node)
-workflow.add_node("delete_requirement_node", delete_requirement_node)
-
-# Set up conditional routing from START based on target_agent
-# ROUTING 1.3 — Entry edge: the on-demand agents bypass the classifier entirely
-#             (no LLM classification cost, and an empty raw_input cannot degrade
-#             into a CHAT/QUESTION answer). Everything else enters router_node.
-workflow.add_conditional_edges(
-    START,
-    route_on_demand,
-    {
-        "router_node": "router_node",
-        "requirement_matcher_node": "requirement_matcher_node",
-        "auditor_node": "auditor_node",
-        "architect_node": "architect_node",
-        "delete_requirement_node": "delete_requirement_node"
-    }
+# Keep the graph topology outside this compatibility module. Passing the nodes
+# in avoids an import cycle and preserves their established public locations.
+prd_workflow = build_prd_workflow(
+    router_node=workflow_router_node,
+    requirement_matcher_node=requirement_matcher_node,
+    gatherer_node=gatherer_node,
+    auditor_node=auditor_node,
+    architect_node=architect_node,
+    delete_requirement_node=delete_requirement_node,
 )
-
-# Route from router_node based on workflow classification
-# ROUTING 4.3 — Post-router dispatch table (see route_from_router 4.1).
-workflow.add_conditional_edges(
-    "router_node",
-    route_from_router,
-    {
-        "requirement_matcher_node": "requirement_matcher_node",
-        "auditor_node": "auditor_node",
-        "architect_node": "architect_node",
-        END: END
-    }
-)
-
-# Route from requirement_matcher_node to the appropriate mutation node or END
-# (if ambiguous / low confidence).
-# ROUTING 4.4 — Matcher gate: an ambiguous/low-confidence match (validation_status
-#             == "invalid", set by the matcher) ends the run with the clarification
-#             question instead of letting the gatherer rewrite the wrong story.
-workflow.add_conditional_edges(
-    "requirement_matcher_node",
-    route_from_matcher,
-    {
-        "gatherer_node": "gatherer_node",
-        "delete_requirement_node": "delete_requirement_node",
-        END: END
-    }
-)
-
-# Connect each on-demand agent directly to END to stop workflow execution
-workflow.add_edge("gatherer_node", END)
-workflow.add_edge("auditor_node", END)
-workflow.add_edge("architect_node", END)
-workflow.add_edge("delete_requirement_node", END)
-
-# ROUTING 4.5 — Terminal edges + compile: every worker node returns to END, so one
-#             invocation performs exactly ONE unit of work (classify-answer,
-#             audit, PRD, delete or gather→merge). Multi-step behaviour is driven
-#             by the CALLER issuing further requests, not by graph loops.
-# Export compiled graph workflow
-prd_workflow = workflow.compile()
-logger.info("StateGraph compiled successfully with requirement matcher agent and workflow router.")

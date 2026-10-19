@@ -110,10 +110,14 @@ class RequirementRepository:
                     f"at {req.locked_at.isoformat() if req.locked_at else 'unknown time'}. "
                     f"Unlock it before modifying."
                 )
-            if "title" in updates: req.title = updates["title"]
-            if "functional_requirement" in updates: req.functional_requirement = updates["functional_requirement"]
-            if "description" in updates: req.description = updates["description"]
-            if "status" in updates: req.status = updates["status"]
+            if "title" in updates:
+                req.title = updates["title"]
+            if "functional_requirement" in updates:
+                req.functional_requirement = updates["functional_requirement"]
+            if "description" in updates:
+                req.description = updates["description"]
+            if "status" in updates:
+                req.status = updates["status"]
             await session.flush()
             await session.refresh(req)
             return RequirementRepository._serialize(req)

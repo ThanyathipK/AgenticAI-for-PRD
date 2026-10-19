@@ -16,7 +16,13 @@
 // This hook keeps exposing the same `ProjectState` interface so the presentational
 // components (Dashboard, ChatPanel, PRDEditor, ArchitectureFlows, VersionHistory)
 // are unaffected.
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import type {
   AuditResult,
   ChatMessage,
@@ -26,21 +32,28 @@ import type {
   RequirementLockState,
   StructuredRequirements,
   VersionHistory,
-} from '../components/types';
-import type { PendingActionPayload, ProjectStatus, ProjectSummary } from '../api/types';
-import { api, detailFromBlobError } from '../api/client';
-import { handleError } from '../components/Toast';
-import type { UseDocumentsResult, DocumentExtractionProgress } from './useDocuments';
-import type { CreateProjectOptions, CreateProjectResult } from './useProjects';
-import type { AppView, WorkspaceTab } from './useWorkspaceUi';
-import { useArtifactLocks } from './useArtifactLocks';
-import { useChat } from './useChat';
-import { useDocuments } from './useDocuments';
-import { useLmStudioHealth } from './useLmStudioHealth';
-import { useProjectSync } from './useProjectSync';
-import { useProjects } from './useProjects';
-import { useRequirementStore } from './useRequirementStore';
-import { useWorkspaceUi } from './useWorkspaceUi';
+} from "../components/types";
+import type {
+  PendingActionPayload,
+  ProjectStatus,
+  ProjectSummary,
+} from "../api/types";
+import { api, detailFromBlobError } from "../api/client";
+import { handleError } from "../components/Toast";
+import type {
+  UseDocumentsResult,
+  DocumentExtractionProgress,
+} from "./useDocuments";
+import type { CreateProjectOptions, CreateProjectResult } from "./useProjects";
+import type { AppView, WorkspaceTab } from "./useWorkspaceUi";
+import { useArtifactLocks } from "./useArtifactLocks";
+import { useChat } from "./useChat";
+import { useDocuments } from "./useDocuments";
+import { useLmStudioHealth } from "./useLmStudioHealth";
+import { useProjectSync } from "./useProjectSync";
+import { useProjects } from "./useProjects";
+import { useRequirementStore } from "./useRequirementStore";
+import { useWorkspaceUi } from "./useWorkspaceUi";
 
 export interface ProjectState {
   // Project/chrome state
@@ -54,7 +67,9 @@ export interface ProjectState {
   historyCollapsed: boolean;
   setHistoryCollapsed: Dispatch<SetStateAction<boolean>>;
   projectContextMenu: { projectId: string; x: number; y: number } | null;
-  setProjectContextMenu: Dispatch<SetStateAction<{ projectId: string; x: number; y: number } | null>>;
+  setProjectContextMenu: Dispatch<
+    SetStateAction<{ projectId: string; x: number; y: number } | null>
+  >;
   renameProjectId: string | null;
   setRenameProjectId: Dispatch<SetStateAction<string | null>>;
   renameProjectName: string;
@@ -67,12 +82,19 @@ export interface ProjectState {
    * caller may close its dialog), or to a user-facing error message — e.g. a
    * duplicate-name conflict from the backend — for inline display.
    */
-  handleCreateProject: (name: string, options?: CreateProjectOptions) => Promise<CreateProjectResult>;
+  handleCreateProject: (
+    name: string,
+    options?: CreateProjectOptions,
+  ) => Promise<CreateProjectResult>;
   handleTogglePin: (projectId: string) => Promise<void>;
   /** Flags/unflags a project (dashboard ★ marker) — independent of pinning. */
   handleToggleFlag: (projectId: string) => Promise<void>;
   /** Sets the project's user-editable workflow status (dashboard table), optimistically. */
-  handleUpdateProjectStatus: (projectId: string, status: ProjectStatus, comment?: string) => Promise<boolean>;
+  handleUpdateProjectStatus: (
+    projectId: string,
+    status: ProjectStatus,
+    comment?: string,
+  ) => Promise<boolean>;
   /** Whether the styled "New Project" modal is shown (replaces native prompt()). */
   isCreateModalOpen: boolean;
   setIsCreateModalOpen: Dispatch<SetStateAction<boolean>>;
@@ -98,6 +120,7 @@ export interface ProjectState {
   isLoading: boolean;
   currentAgentNode: string | null;
   syncStatus: string;
+  diagramGeneratedAt: string | null;
   // Finding #40: LM Studio connectivity health (polled via GET /api/health)
   backendOnline: boolean | null;
   lmStudioOnline: boolean | null;
@@ -112,7 +135,10 @@ export interface ProjectState {
   handleUpdateAnswerValue: (key: string, value: string) => void;
   handleSubmitClarifications: (e: React.FormEvent) => Promise<void>;
   /** Optional project id is used by the new-project intake before React has re-rendered the selection. */
-  handleSendMessage: (textToSend?: string, projectIdOverride?: string) => Promise<void>;
+  handleSendMessage: (
+    textToSend?: string,
+    projectIdOverride?: string,
+  ) => Promise<void>;
   handleValidateRequirements: () => Promise<void>;
   handleGeneratePRD: () => Promise<void>;
   /**
@@ -129,7 +155,11 @@ export interface ProjectState {
   handleStopGeneration: () => void;
   handleDownloadDocx: () => Promise<void>;
   handlePrintPDF: () => void;
-  loadProjectState: (projId: string, retries?: number, delay?: number) => Promise<void>;
+  loadProjectState: (
+    projId: string,
+    retries?: number,
+    delay?: number,
+  ) => Promise<void>;
   // Uploaded-document knowledge base + DRAFT-only extraction handlers
   documents: UseDocumentsResult;
 
@@ -142,7 +172,11 @@ export interface ProjectState {
   setEditingSectionId: Dispatch<SetStateAction<string | null>>;
   editBuffer: string;
   setEditBuffer: Dispatch<SetStateAction<string>>;
-  handleSaveSection: (sectionId: string, newContent: string, baseContent?: string) => Promise<void>;
+  handleSaveSection: (
+    sectionId: string,
+    newContent: string,
+    baseContent?: string,
+  ) => Promise<void>;
   lockedRequirements: Record<string, RequirementLockState>;
   handleLockRequirement: (requirementCode: string) => Promise<void>;
   handleUnlockRequirement: (requirementCode: string) => Promise<void>;
@@ -197,7 +231,9 @@ export function useProjectState(
   const ui = useWorkspaceUi();
   const store = useRequirementStore(projectsApi.projectId);
   const locks = useArtifactLocks(store, projectsApi.projectId);
-  const [activeCascadeJobId, setActiveCascadeJobId] = useState<string | null>(null);
+  const [activeCascadeJobId, setActiveCascadeJobId] = useState<string | null>(
+    null,
+  );
   const cascadeStorageKey = projectsApi.projectId
     ? `agenticdia:active-cascade:${projectsApi.projectId}`
     : null;
@@ -212,9 +248,9 @@ export function useProjectState(
   // document_extraction_* frames, maps them to a DocumentExtractionProgress,
   // and forwards them into useDocuments' setter (registered below) so the
   // DocumentLibrary "chunk X/N" readout moves in real time during long runs.
-  const liveExtractionProgressRef = useRef<(p: DocumentExtractionProgress | null) => void>(
-    () => {},
-  );
+  const liveExtractionProgressRef = useRef<
+    (p: DocumentExtractionProgress | null) => void
+  >(() => {});
 
   // PROJECT 2.1 — Trigger: `projectsApi.projectId` (set by PROJECT 1.5 when the
   //              list loads, or by a sidebar/dashboard click) is handed to
@@ -229,25 +265,25 @@ export function useProjectState(
     {
       onDocumentExtractionStarted: (data) => {
         // Optimistically pick the mode from the measured token_count vs budget.
-        const documentId = String(data?.document_id ?? '');
+        const documentId = String(data?.document_id ?? "");
         if (!documentId) return;
         const tokenCount = Number(data?.token_count ?? 0);
         const budget = Number(data?.budget ?? 0);
         liveExtractionProgressRef.current({
           documentId,
-          mode: tokenCount > 0 && tokenCount > budget ? 'chunked' : 'full',
+          mode: tokenCount > 0 && tokenCount > budget ? "chunked" : "full",
           chunkIndex: 0,
           chunkCount: 0,
         });
       },
       onDocumentExtractionProgress: (data) => {
-        const documentId = String(data?.document_id ?? '');
+        const documentId = String(data?.document_id ?? "");
         const chunkIndex = Number(data?.chunk_index ?? 0);
         const chunkCount = Number(data?.chunk_count ?? 0);
         if (!documentId || chunkIndex < 1) return;
         liveExtractionProgressRef.current({
           documentId,
-          mode: String(data?.mode ?? 'chunked'),
+          mode: String(data?.mode ?? "chunked"),
           chunkIndex,
           chunkCount,
         });
@@ -285,24 +321,26 @@ export function useProjectState(
       try {
         const job = await api.getGenerationJob(projectId, jobId);
         if (cancelled) return;
-        if (['completed', 'failed', 'cancelled'].includes(job.status)) {
+        if (["completed", "failed", "cancelled"].includes(job.status)) {
           setActiveCascadeJobId(null);
-          if (cascadeStorageKey) window.localStorage.removeItem(cascadeStorageKey);
+          if (cascadeStorageKey)
+            window.localStorage.removeItem(cascadeStorageKey);
           store.setSyncStatus(
-            job.status === 'completed'
-              ? 'Requirements update finished. Validate and Generate PRD are available.'
-              : 'Requirements update stopped. Validate and Generate PRD are available.',
+            job.status === "completed"
+              ? "Requirements update finished. Validate and Generate PRD are available."
+              : "Requirements update stopped. Validate and Generate PRD are available.",
           );
           await loadProjectStateRef.current(projectId);
           return;
         }
-        store.setSyncStatus('Applying the confirmed requirements update…');
+        store.setSyncStatus("Applying the confirmed requirements update…");
         timer = window.setTimeout(poll, 1200);
       } catch {
         if (!cancelled) {
           // A missing/expired job no longer owns the backend generation slot.
           setActiveCascadeJobId(null);
-          if (cascadeStorageKey) window.localStorage.removeItem(cascadeStorageKey);
+          if (cascadeStorageKey)
+            window.localStorage.removeItem(cascadeStorageKey);
         }
       }
     };
@@ -311,7 +349,12 @@ export function useProjectState(
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [activeCascadeJobId, cascadeStorageKey, projectsApi.projectId, store.setSyncStatus]);
+  }, [
+    activeCascadeJobId,
+    cascadeStorageKey,
+    projectsApi.projectId,
+    store.setSyncStatus,
+  ]);
 
   // Agent-action gating (Validate Requirements / Generate PRD): a brand-new
   // project with NO knowledge documents and NO gathered requirements has
@@ -324,19 +367,19 @@ export function useProjectState(
   // Failed conversions (notably OCR-only PDFs) have no usable text and must
   // not enable Validate merely because their metadata row is visible.
   const hasKnowledgeContent = documents.documents.some(
-    document => document.status === 'processed' && document.token_count > 0,
+    (document) => document.status === "processed" && document.token_count > 0,
   );
   const hasPendingRequirementUpdate = projectsApi.pendingActions.length > 0;
   const agentActionsBlockedReason = hasPendingRequirementUpdate
-    ? 'Save or cancel the pending requirements update first'
+    ? "Save or cancel the pending requirements update first"
     : activeCascadeJobId
-      ? 'Please wait while the confirmed requirements update finishes'
-      : '';
+      ? "Please wait while the confirmed requirements update finishes"
+      : "";
   const canRunAgentActions =
-    Boolean(projectsApi.projectId)
-    && (hasRequirementContent || hasKnowledgeContent)
-    && !hasPendingRequirementUpdate
-    && !activeCascadeJobId;
+    Boolean(projectsApi.projectId) &&
+    (hasRequirementContent || hasKnowledgeContent) &&
+    !hasPendingRequirementUpdate &&
+    !activeCascadeJobId;
 
   const chat = useChat(store, {
     projectId: projectsApi.projectId,
@@ -349,76 +392,92 @@ export function useProjectState(
     agentActionsBlockedReason,
   });
 
-
   // Shared plumbing for the two file exports. The generated PRD is LaTeX
   // (template-krungsrinimble.tex), so the finished PDF/DOCX is COMPILED
   // server-side (Tectonic / Pandoc) — the browser never re-parses it as
   // markdown, which is what previously made exports follow template.md.
-  const exportCompiledFile = async (fmt: 'pdf' | 'docx') => {
+  const exportCompiledFile = async (fmt: "pdf" | "docx") => {
     const pid = projectsApi.projectId;
     if (!pid) {
-      store.setSyncStatus('Select a project before exporting.');
+      store.setSyncStatus("Select a project before exporting.");
       return;
     }
     const projectName =
-      projectsApi.projects.find(p => p.id === pid)?.name || 'Krungsri Nimble PRD';
+      projectsApi.projects.find((p) => p.id === pid)?.name ||
+      "Krungsri Nimble PRD";
 
     store.setSyncStatus(
-      fmt === 'pdf'
-        ? 'Compiling the Krungsri Nimble LaTeX PRD to PDF (Tectonic)...'
-        : 'Converting the Krungsri Nimble LaTeX PRD to Word (Pandoc)...',
+      fmt === "pdf"
+        ? "Compiling the Krungsri Nimble LaTeX PRD to PDF (Tectonic)..."
+        : "Converting the Krungsri Nimble LaTeX PRD to Word (Pandoc)...",
     );
 
     try {
       const download =
-        fmt === 'pdf'
-          ? await api.exportPrdPdf(pid, store.prdMarkdown, store.currentVersion, projectName)
-          : await api.exportPrdDocx(pid, store.prdMarkdown, store.currentVersion, projectName);
+        fmt === "pdf"
+          ? await api.exportPrdPdf(
+              pid,
+              store.prdMarkdown,
+              store.currentVersion,
+              projectName,
+            )
+          : await api.exportPrdDocx(
+              pid,
+              store.prdMarkdown,
+              store.currentVersion,
+              projectName,
+            );
 
       // The server resolves the latest immutable PRD snapshot and supplies its
       // SemVer filename. This local name is only a defensive fallback.
       const now = new Date();
-      const pad = (n: number) => String(n).padStart(2, '0');
+      const pad = (n: number) => String(n).padStart(2, "0");
       const dateStamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
       const timeStamp = `${pad(now.getHours())}${pad(now.getMinutes())}`;
       const stem = `PRD_${projectName
-        .replace(/[^A-Za-z0-9._-]+/g, '_')
+        .replace(/[^A-Za-z0-9._-]+/g, "_")
         .slice(0, 48)
-        .replace(/^_+|_+$/g, '')}`;
-      const link = document.createElement('a');
+        .replace(/^_+|_+$/g, "")}`;
+      const link = document.createElement("a");
       link.href = URL.createObjectURL(download.blob);
       const latestSemVer = store.versionHistory[0]?.semVersion;
       const fallbackVersion = latestSemVer || String(store.currentVersion);
-      link.download = download.filename || `${stem}_V${fallbackVersion}_${dateStamp}_${timeStamp}.${fmt}`;
+      link.download =
+        download.filename ||
+        `${stem}_V${fallbackVersion}_${dateStamp}_${timeStamp}.${fmt}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(link.href);
 
       store.setSyncStatus(
-        fmt === 'pdf' ? 'PRD PDF exported from the .tex template.' : 'PRD Word Document (.docx) exported from the .tex template.',
+        fmt === "pdf"
+          ? "PRD PDF exported from the .tex template."
+          : "PRD Word Document (.docx) exported from the .tex template.",
       );
     } catch (err) {
       const detail = await detailFromBlobError(err);
       if (detail) {
         handleError(detail, err);
-        store.setSyncStatus(`Failed to generate ${fmt.toUpperCase()} document.`);
-      } else if (fmt === 'pdf') {
-        handleError('Failed to generate the PDF document.', err);
-        store.setSyncStatus('Failed to generate PDF document.');
+        store.setSyncStatus(
+          `Failed to generate ${fmt.toUpperCase()} document.`,
+        );
+      } else if (fmt === "pdf") {
+        handleError("Failed to generate the PDF document.", err);
+        store.setSyncStatus("Failed to generate PDF document.");
       } else {
-        handleError('Failed to generate the DOCX document.', err);
-        store.setSyncStatus('Failed to generate DOCX document.');
+        handleError("Failed to generate the DOCX document.", err);
+        store.setSyncStatus("Failed to generate DOCX document.");
       }
     }
   };
 
   const handleDownloadDocx = async () => {
-    await exportCompiledFile('docx');
+    await exportCompiledFile("docx");
   };
 
   const handlePrintPDF = async () => {
-    await exportCompiledFile('pdf');
+    await exportCompiledFile("pdf");
   };
 
   return {
@@ -481,6 +540,7 @@ export function useProjectState(
     activeView: ui.activeView,
     setActiveView: ui.setActiveView,
     mermaidDiagram: store.mermaidDiagram,
+    diagramGeneratedAt: store.diagramGeneratedAt,
     versionHistory: store.versionHistory,
     selectedHistVersion: ui.selectedHistVersion,
     setSelectedHistVersion: ui.setSelectedHistVersion,
@@ -509,7 +569,8 @@ export function useProjectState(
       const normalizedJobId = jobId ?? null;
       setActiveCascadeJobId(normalizedJobId);
       if (cascadeStorageKey) {
-        if (normalizedJobId) window.localStorage.setItem(cascadeStorageKey, normalizedJobId);
+        if (normalizedJobId)
+          window.localStorage.setItem(cascadeStorageKey, normalizedJobId);
         else window.localStorage.removeItem(cascadeStorageKey);
       }
     },

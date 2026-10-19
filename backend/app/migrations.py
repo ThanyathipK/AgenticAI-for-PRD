@@ -9,7 +9,6 @@ so this module simply delegates to Alembic's command API.
 """
 import asyncio
 import logging
-import uuid
 from pathlib import Path
 
 from alembic import command
@@ -18,8 +17,6 @@ from alembic.config import Config
 # NOTE: app.auth / app.repositories.user imports were removed together with
 # the retired bootstrap seeder — user rows are created exclusively through
 # POST /api/auth/register now.
-from app.config import settings
-from app.database import AsyncSessionLocal
 
 logger = logging.getLogger("app.migrations")
 

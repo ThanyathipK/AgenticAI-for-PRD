@@ -61,6 +61,37 @@ def _patch(monkeypatch, req_state):
     monkeypatch.setattr(agents, "_generate_flow_diagram", fake_diagram)
 
 
+class TrackingSession:
+    def __init__(self):
+        self.commits = 0
+        self.rollbacks = 0
+        self.closes = 0
+
+    async def commit(self):
+        self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+    async def close(self):
+        self.closes += 1
+
+
+def _patch_architect_persistence(monkeypatch, *, sync, record, session=None):
+    async def no_stored_sections(*_args, **_kwargs):
+        return []
+
+    async def semver(*_args, **_kwargs):
+        return "1.0.0"
+
+    monkeypatch.setattr(agents.PRDSectionRepository, "get_by_project", no_stored_sections)
+    monkeypatch.setattr("app.version_service.resolve_document_semver", semver)
+    monkeypatch.setattr("app.prd_section_service.sync_sections_from_prd", sync)
+    monkeypatch.setattr("app.version_service.record_prd_version", record)
+    if session is not None:
+        monkeypatch.setattr("app.database.AsyncSessionLocal", lambda: session)
+
+
 @pytest.mark.asyncio
 async def test_architect_fills_template_from_full_project_dataset(monkeypatch):
     """The generated PRD is the OFFICIAL template body with the project's own
@@ -72,6 +103,7 @@ async def test_architect_fills_template_from_full_project_dataset(monkeypatch):
         "current_version": 2,
         "structured_requirements": {},
         "version_history_summaries": "No previous revision logs available.",
+        "stage_artifacts_only": True,
     })
 
     prd = result["prd_markdown"]
@@ -94,6 +126,72 @@ async def test_architect_fills_template_from_full_project_dataset(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_first_prd_uses_user_intake_saved_in_sections(monkeypatch):
+    """The first ledger document has no generated_prd to read from yet.
+
+    Intake saved by either new-project action must therefore come from the
+    persisted section draft, including every non-empty user-entered field.
+    """
+    state = copy.deepcopy(REQ_STATE)
+    state["prd_narrative"] = {"sentinel": {"value": "present"}}
+    _patch(monkeypatch, state)
+
+    async def saved_intake_sections(*_args, **_kwargs):
+        return [
+            {
+                "section_key": "title", "title": "Cover", "section_order": 1,
+                "content": (
+                    "## Cover\n\n|Field|Value|\n|---|---|\n"
+                    "|**PMO No:**|900123|\n|**PMO Name:**|PromptPay Refund Portal|\n"
+                    "|**Author:**|Nok Product Owner|"
+                ),
+            },
+            {
+                "section_key": "stakeholders", "title": "Stakeholders", "section_order": 2,
+                "content": (
+                    "### Stakeholders\n\n|Role|Name|\n|---|---|\n"
+                    "|Product Owner|Nok Product Owner|\n"
+                    "|Solution Architecture|Payments Architecture|"
+                ),
+            },
+            {
+                "section_key": "business_overview", "title": "Business Overview", "section_order": 6,
+                "content": (
+                    "### 1. Business & Strategic Overview\n\n|Topic|Details|\n|---|---|\n"
+                    "|Introduction & Executive Summary|Refund intake summary|\n"
+                    "|Problem Statement|Refund handling is too slow|\n"
+                    "|Success Metrics|90|"
+                ),
+            },
+        ]
+
+    async def semver(*_args, **_kwargs):
+        return "1.0.0"
+
+    monkeypatch.setattr(agents.PRDSectionRepository, "get_by_project", saved_intake_sections)
+    monkeypatch.setattr("app.version_service.resolve_document_semver", semver)
+
+    result = await agents.architect_node({
+        "project_id": "p1",
+        "current_version": 1,
+        "structured_requirements": {},
+        "version_history_summaries": "No previous revision logs available.",
+        "stage_artifacts_only": True,
+        "db_session": TrackingSession(),
+    })
+
+    prd = result["prd_markdown"]
+    # Numeric-only values are real user input, not list numbering or a
+    # template placeholder, and must survive the first generation unchanged.
+    assert "900123" in prd
+    assert "Nok Product Owner" in prd
+    assert "Payments Architecture" in prd
+    assert "Refund intake summary" in prd
+    assert "Refund handling is too slow" in prd
+    assert "90" in prd
+
+
+@pytest.mark.asyncio
 async def test_architect_regenerates_instead_of_merging_legacy_prd(monkeypatch):
     """A stored PRD that does NOT follow the Krungsri template must be thrown
     away and regenerated as a fresh filled template - never merged."""
@@ -106,6 +204,7 @@ async def test_architect_regenerates_instead_of_merging_legacy_prd(monkeypatch):
         "project_id": "p1",
         "current_version": 2,
         "structured_requirements": {},
+        "stage_artifacts_only": True,
     })
 
     assert "# Core Banking PRD" not in result["prd_markdown"]
@@ -149,6 +248,89 @@ async def test_architect_raises_on_empty_dataset(monkeypatch):
             "current_version": 2,
             "structured_requirements": {},
         })
+
+
+@pytest.mark.asyncio
+async def test_architect_rolls_back_and_fails_when_section_sync_fails(monkeypatch):
+    _patch(monkeypatch, REQ_STATE)
+    session = TrackingSession()
+    version_called = False
+
+    async def fail_sync(*_args, **_kwargs):
+        raise RuntimeError("section store unavailable")
+
+    async def record(*_args, **_kwargs):
+        nonlocal version_called
+        version_called = True
+
+    _patch_architect_persistence(monkeypatch, sync=fail_sync, record=record)
+
+    with pytest.raises(RuntimeError, match="could not persist PRD sections"):
+        await agents.architect_node({
+            "project_id": "p1",
+            "current_version": 2,
+            "structured_requirements": {},
+            "db_session": session,
+        })
+
+    assert session.rollbacks == 1
+    assert session.commits == 0
+    assert version_called is False
+
+
+@pytest.mark.asyncio
+async def test_architect_rolls_back_section_changes_when_version_write_fails(monkeypatch):
+    _patch(monkeypatch, REQ_STATE)
+    session = TrackingSession()
+
+    async def sync(*_args, **_kwargs):
+        return "# Stored sections"
+
+    async def fail_record(*_args, **_kwargs):
+        raise RuntimeError("version store unavailable")
+
+    _patch_architect_persistence(monkeypatch, sync=sync, record=fail_record)
+
+    with pytest.raises(RuntimeError, match="could not record the PRD version"):
+        await agents.architect_node({
+            "project_id": "p1",
+            "current_version": 2,
+            "structured_requirements": {},
+            "db_session": session,
+        })
+
+    assert session.rollbacks == 1
+    assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_architect_commits_and_closes_session_it_owns(monkeypatch):
+    _patch(monkeypatch, REQ_STATE)
+    session = TrackingSession()
+
+    async def sync(*_args, **_kwargs):
+        return "# Stored sections"
+
+    async def record(*_args, **_kwargs):
+        return {"version_number": 1}
+
+    _patch_architect_persistence(
+        monkeypatch,
+        sync=sync,
+        record=record,
+        session=session,
+    )
+
+    result = await agents.architect_node({
+        "project_id": "p1",
+        "current_version": 2,
+        "structured_requirements": {},
+    })
+
+    assert result["prd_markdown"] == "# Stored sections"
+    assert session.commits == 1
+    assert session.rollbacks == 0
+    assert session.closes == 1
 
 
 @pytest.mark.asyncio
@@ -327,7 +509,7 @@ async def test_architect_skips_lm_when_every_scoped_section_is_locked(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_architect_preserves_locked_tech_section_and_skips_diagram_lm(monkeypatch):
+async def test_architect_preserves_locked_tech_section_and_refreshes_diagram(monkeypatch):
     state = copy.deepcopy(REQ_STATE)
     state["generated_diagrams"] = "flowchart TD\n  OLD[Preserved]"
     _patch(monkeypatch, state)
@@ -348,11 +530,11 @@ async def test_architect_preserves_locked_tech_section_and_skips_diagram_lm(monk
             },
         ]
 
-    async def forbidden_diagram(*_args, **_kwargs):
-        raise AssertionError("locked tech section must prevent diagram LM generation")
+    async def refreshed_diagram(*_args, **_kwargs):
+        return "flowchart TD\n  CURRENT[Refreshed from requirements]"
 
     monkeypatch.setattr(agents.PRDSectionRepository, "get_by_project", sections)
-    monkeypatch.setattr(agents, "_generate_flow_diagram", forbidden_diagram)
+    monkeypatch.setattr(agents, "_generate_flow_diagram", refreshed_diagram)
 
     result = await agents.architect_node({
         "project_id": "p1",
@@ -363,7 +545,7 @@ async def test_architect_preserves_locked_tech_section_and_skips_diagram_lm(monk
     })
 
     assert result["prd_markdown"]
-    assert result["mermaid_diagram"] == "flowchart TD\n  OLD[Preserved]"
-    assert result["diagram_regenerated"] is False
+    assert result["mermaid_diagram"] == "flowchart TD\n  CURRENT[Refreshed from requirements]"
+    assert result["diagram_regenerated"] is True
     assert "Technical & Operational Considerations" in result["agent_message"]
     assert "existing content was preserved" in result["agent_message"]

@@ -7,10 +7,10 @@
 // a "store", not a god-hook: cross-cutting concerns (SSE sync, chat handlers,
 // lock actions) live in dedicated hooks that receive this store as a parameter,
 // and `useProjectState` composes everything.
-import { useEffect, useRef, useState } from 'react';
-import type { Dispatch, SetStateAction } from 'react';
-import { api } from '../api/client';
-import { toVersionHistoryList } from '../api/transforms';
+import { useEffect, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
+import { api } from "../api/client";
+import { toVersionHistoryList } from "../api/transforms";
 import type {
   ArtifactLockState,
   AuditResult,
@@ -20,13 +20,13 @@ import type {
   RequirementLockState,
   StructuredRequirements,
   VersionHistory,
-} from '../components/types';
-import { handleError } from '../components/Toast';
+} from "../components/types";
+import { handleError } from "../components/Toast";
 import {
   formatUserStoriesToMarkdown,
   getSafeSectionContent,
   parsePRDToSections,
-} from '../utils/markdown';
+} from "../utils/markdown";
 
 // ----------------------------------------------------------------------------
 // Initial demo state (preserved from the former Dashboard monolith)
@@ -36,23 +36,23 @@ import {
 // the previously hard-coded fake "10:24 AM" (display-only; no logic depends on
 // this value — see scripts/unit.test.ts, which never asserts on a timestamp).
 const BOOT_TIME = new Date().toLocaleTimeString([], {
-  hour: '2-digit',
-  minute: '2-digit',
+  hour: "2-digit",
+  minute: "2-digit",
 });
 
 const INITIAL_MESSAGES: ChatMessage[] = [
   {
-    id: 'init-1',
-    role: 'system',
+    id: "init-1",
+    role: "system",
     content:
-      'Requirements Engine Initialized. Multi-Agent workflow is ready to ingest raw Product Owner specifications.',
+      "Requirements Engine Initialized. Multi-Agent workflow is ready to ingest raw Product Owner specifications.",
     timestamp: BOOT_TIME,
   },
   {
-    id: 'init-2',
-    role: 'assistant',
+    id: "init-2",
+    role: "assistant",
     content:
-      'Hello! I am your Technical Product Owner Assistant. Share your raw, conversational, or messy requirement text and I will structure it, run a compliance audit, and compile a formal PRD for you.',
+      "Hello! I am your Technical Product Owner Assistant. Share your raw, conversational, or messy requirement text and I will structure it, run a compliance audit, and compile a formal PRD for you.",
     timestamp: BOOT_TIME,
   },
 ];
@@ -62,7 +62,7 @@ const INITIAL_MESSAGES: ChatMessage[] = [
 // diagrams here made every fresh project display fake "generated" documents
 // before any LLM invocation had ever happened.
 const INITIAL_STRUCTURED_REQUIREMENTS: StructuredRequirements = {
-  epic_name: '',
+  epic_name: "",
   version: 1,
   user_stories: [],
 };
@@ -75,9 +75,9 @@ const INITIAL_AUDIT_RESULT: AuditResult = {
   clarification_questions: [],
 };
 
-const INITIAL_PRD_MARKDOWN = '';
+const INITIAL_PRD_MARKDOWN = "";
 
-const INITIAL_MERMAID = '';
+const INITIAL_MERMAID = "";
 
 // ----------------------------------------------------------------------------
 // Official Krungsri Nimble PRD template
@@ -94,10 +94,10 @@ export async function getPrdTemplateMarkdown(): Promise<string> {
   if (cachedPrdTemplate !== null) return cachedPrdTemplate;
   try {
     const resp = await api.getPrdTemplate();
-    cachedPrdTemplate = resp.template_latex || '';
+    cachedPrdTemplate = resp.template_latex || "";
   } catch {
     // The template is cosmetic — an unreachable backend surfaces its own errors.
-    cachedPrdTemplate = '';
+    cachedPrdTemplate = "";
   }
   return cachedPrdTemplate;
 }
@@ -125,6 +125,7 @@ export interface RequirementStore {
   editingSectionId: string | null;
   editBuffer: string;
   mermaidDiagram: string;
+  diagramGeneratedAt: string | null;
   versionHistory: VersionHistory[];
   currentVersion: number;
   lockedArtifacts: Record<string, ArtifactLockState>;
@@ -145,10 +146,15 @@ export interface RequirementStore {
   setEditingSectionId: Dispatch<SetStateAction<string | null>>;
   setEditBuffer: Dispatch<SetStateAction<string>>;
   setMermaidDiagram: Dispatch<SetStateAction<string>>;
+  setDiagramGeneratedAt: Dispatch<SetStateAction<string | null>>;
   setVersionHistory: Dispatch<SetStateAction<VersionHistory[]>>;
   setCurrentVersion: Dispatch<SetStateAction<number>>;
-  setLockedArtifacts: Dispatch<SetStateAction<Record<string, ArtifactLockState>>>;
-  setLockedRequirements: Dispatch<SetStateAction<Record<string, RequirementLockState>>>;
+  setLockedArtifacts: Dispatch<
+    SetStateAction<Record<string, ArtifactLockState>>
+  >;
+  setLockedRequirements: Dispatch<
+    SetStateAction<Record<string, RequirementLockState>>
+  >;
   setSyncStatus: Dispatch<SetStateAction<string>>;
   setIsProcessing: Dispatch<SetStateAction<boolean>>;
   setIsLoading: Dispatch<SetStateAction<boolean>>;
@@ -158,7 +164,11 @@ export interface RequirementStore {
 
   // actions
   resetProjectState: () => void;
-  handleSaveSection: (sectionId: string, newContent: string, baseContent?: string) => Promise<void>;
+  handleSaveSection: (
+    sectionId: string,
+    newContent: string,
+    baseContent?: string,
+  ) => Promise<void>;
   /** Fetch the per-part PRD section lock/ownership map from the backend. */
   loadSectionLocks: (projId: string) => Promise<void>;
   /** Fetch the immutable PRD version ledger (AI + manual snapshots). */
@@ -177,34 +187,48 @@ export interface RequirementStore {
 // Hook
 // ----------------------------------------------------------------------------
 
-export function useRequirementStore(projectId: string | null): RequirementStore {
+export function useRequirementStore(
+  projectId: string | null,
+): RequirementStore {
   const [structuredRequirements, setStructuredRequirements] =
     useState<StructuredRequirements>(INITIAL_STRUCTURED_REQUIREMENTS);
-  const [auditResult, setAuditResult] = useState<AuditResult>(INITIAL_AUDIT_RESULT);
+  const [auditResult, setAuditResult] =
+    useState<AuditResult>(INITIAL_AUDIT_RESULT);
   const [prdMarkdown, setPrdMarkdown] = useState<string>(INITIAL_PRD_MARKDOWN);
-  const [prdMarkdownDisplay, setPrdMarkdownDisplay] = useState<string>(INITIAL_PRD_MARKDOWN);
+  const [prdMarkdownDisplay, setPrdMarkdownDisplay] =
+    useState<string>(INITIAL_PRD_MARKDOWN);
   // PRD-SECTION 1.1 — Parts load (trigger: project open via useProjectSync). The response
   //             carries the nine parts in document order; `editingSectionId` (declared
   //             just below) is what stops an incoming SSE-driven document from
   //             overwriting the part the user is currently typing in (EVENTS flow).
   const [sections, setSections] = useState<PRDSection[]>([]);
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
-  const [editBuffer, setEditBuffer] = useState<string>('');
+  const [editBuffer, setEditBuffer] = useState<string>("");
   const [mermaidDiagram, setMermaidDiagram] = useState<string>(INITIAL_MERMAID);
-  const [versionHistory, setVersionHistory] =
-    useState<VersionHistory[]>(INITIAL_VERSION_HISTORY);
+  const [diagramGeneratedAt, setDiagramGeneratedAt] = useState<string | null>(
+    null,
+  );
+  const [versionHistory, setVersionHistory] = useState<VersionHistory[]>(
+    INITIAL_VERSION_HISTORY,
+  );
   const [currentVersion, setCurrentVersion] = useState<number>(1);
-  const [lockedArtifacts, setLockedArtifacts] =
-    useState<Record<string, ArtifactLockState>>({});
-  const [lockedRequirements, setLockedRequirements] =
-    useState<Record<string, RequirementLockState>>({});
+  const [lockedArtifacts, setLockedArtifacts] = useState<
+    Record<string, ArtifactLockState>
+  >({});
+  const [lockedRequirements, setLockedRequirements] = useState<
+    Record<string, RequirementLockState>
+  >({});
   // Per-part PRD section lock/ownership state (mirrors prd_sections rows).
-  const [sectionLocks, setSectionLocks] = useState<Record<string, PrdSectionLockState>>({});
-  const [syncStatus, setSyncStatus] = useState<string>('Synced with Local LLM');
+  const [sectionLocks, setSectionLocks] = useState<
+    Record<string, PrdSectionLockState>
+  >({});
+  const [syncStatus, setSyncStatus] = useState<string>("Synced with Local LLM");
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [currentAgentNode, setCurrentAgentNode] = useState<string | null>(null);
-  const [clarificationAnswers, setClarificationAnswers] = useState<Record<string, string>>({});
+  const [clarificationAnswers, setClarificationAnswers] = useState<
+    Record<string, string>
+  >({});
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const activeProjectIdRef = useRef(projectId);
@@ -231,7 +255,7 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
   useEffect(() => {
     const src = prdMarkdown;
     if (!src) {
-      setPrdMarkdownDisplay('');
+      setPrdMarkdownDisplay("");
       return;
     }
     let cancelled = false;
@@ -254,20 +278,22 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
 
   // Sync sections whenever the PRD preview or structuredRequirements.user_stories changes
   useEffect(() => {
-    setSections(prevSections => {
+    setSections((prevSections) => {
       const remoteRaw = getSafeSectionContent(prdMarkdownDisplay);
       const remoteSections = parsePRDToSections(remoteRaw);
 
       if (prevSections.length === 0) {
-        return remoteSections.map(sec => {
+        return remoteSections.map((sec) => {
           if (
-            sec.id === 'user_stories'
-            && structuredRequirements.user_stories
-            && structuredRequirements.user_stories.length > 0
+            sec.id === "user_stories" &&
+            structuredRequirements.user_stories &&
+            structuredRequirements.user_stories.length > 0
           ) {
             return {
               ...sec,
-              content: formatUserStoriesToMarkdown(structuredRequirements.user_stories),
+              content: formatUserStoriesToMarkdown(
+                structuredRequirements.user_stories,
+              ),
             };
           }
           return sec;
@@ -275,15 +301,21 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
       }
 
       let changed = false;
-      const updated = prevSections.map(sec => {
+      const updated = prevSections.map((sec) => {
         // If this is the active editing section, do not overwrite it with remote updates
         if (editingSectionId === sec.id) {
           return sec;
         }
 
         // Specially format Section 3 if we have structured user stories
-        if (sec.id === 'user_stories' && structuredRequirements.user_stories && structuredRequirements.user_stories.length > 0) {
-          const formattedStories = formatUserStoriesToMarkdown(structuredRequirements.user_stories);
+        if (
+          sec.id === "user_stories" &&
+          structuredRequirements.user_stories &&
+          structuredRequirements.user_stories.length > 0
+        ) {
+          const formattedStories = formatUserStoriesToMarkdown(
+            structuredRequirements.user_stories,
+          );
           if (sec.content !== formattedStories) {
             changed = true;
             return { ...sec, content: formattedStories };
@@ -291,7 +323,7 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
           return sec;
         }
 
-        const remoteSec = remoteSections.find(rs => rs.id === sec.id);
+        const remoteSec = remoteSections.find((rs) => rs.id === sec.id);
         if (remoteSec) {
           const safeRemoteContent = getSafeSectionContent(remoteSec.content);
           if (sec.content !== safeRemoteContent) {
@@ -304,7 +336,9 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
       });
 
       // If any new sections were added remotely that weren't in prevSections, append them
-      const missingSections = remoteSections.filter(rs => !prevSections.some(ps => ps.id === rs.id));
+      const missingSections = remoteSections.filter(
+        (rs) => !prevSections.some((ps) => ps.id === rs.id),
+      );
       if (missingSections.length > 0) {
         changed = true;
         return [...updated, ...missingSections];
@@ -312,17 +346,25 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
 
       return changed ? updated : prevSections;
     });
-  }, [prdMarkdownDisplay, structuredRequirements.user_stories, editingSectionId]);
+  }, [
+    prdMarkdownDisplay,
+    structuredRequirements.user_stories,
+    editingSectionId,
+  ]);
 
   // (Chat auto-scroll moved into ChatPanel — see the note in useChat.ts.)
 
   // PRD-SECTION 1.3 — Part save handler. Optimistically replaces the part locally, then
   //             PATCHes ONLY that part with the edit base so the server can three-way
   //             merge (PRD-SECTION 3.5).
-  const handleSaveSection = async (sectionId: string, newContent: string, baseContent?: string) => {
+  const handleSaveSection = async (
+    sectionId: string,
+    newContent: string,
+    baseContent?: string,
+  ) => {
     // 1. Update the local sections state
-    const updatedSections = sections.map(s =>
-      s.id === sectionId ? { ...s, content: newContent } : s
+    const updatedSections = sections.map((s) =>
+      s.id === sectionId ? { ...s, content: newContent } : s,
     );
     setSections(updatedSections);
 
@@ -332,39 +374,55 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
     // edit" and never clobbers concurrent AI updates. Falls back to the
     // legacy whole-document save if the section endpoint is unavailable.
     if (projectId) {
-      setSyncStatus('Saving section edit...');
+      setSyncStatus("Saving section edit...");
       try {
-        const res = await api.updatePrdSection(projectId, sectionId, newContent, { base_content: baseContent });
+        const res = await api.updatePrdSection(
+          projectId,
+          sectionId,
+          newContent,
+          { base_content: baseContent },
+        );
         setPrdMarkdown(res.document_markdown);
         setPrdMarkdownDisplay(res.document_markdown);
         // Refresh per-part lock/version/ownership metadata (version_number
         // advanced; a manual save flips the part to human-owned -> "Manual").
-        setSectionLocks(prev => ({
+        setSectionLocks((prev) => ({
           ...prev,
           [sectionId]: {
             ...(prev[sectionId] ?? {
-              review_status: 'draft',
-              content_source: 'ai',
+              review_status: "draft",
+              content_source: "ai",
               ai_generatable: true,
             }),
-            ...(res.section.is_locked !== undefined ? { is_locked: res.section.is_locked } : {}),
-            ...(res.section.review_status ? { review_status: res.section.review_status } : {}),
-            ...(res.section.content_source ? { content_source: res.section.content_source } : {}),
-            ...(res.section.ai_generatable !== undefined ? { ai_generatable: res.section.ai_generatable } : {}),
-            version_number: res.section.version_number ?? prev[sectionId]?.version_number ?? null,
+            ...(res.section.is_locked !== undefined
+              ? { is_locked: res.section.is_locked }
+              : {}),
+            ...(res.section.review_status
+              ? { review_status: res.section.review_status }
+              : {}),
+            ...(res.section.content_source
+              ? { content_source: res.section.content_source }
+              : {}),
+            ...(res.section.ai_generatable !== undefined
+              ? { ai_generatable: res.section.ai_generatable }
+              : {}),
+            version_number:
+              res.section.version_number ??
+              prev[sectionId]?.version_number ??
+              null,
           },
         }));
         setSyncStatus(
           res.section.ai_generatable === false
-            ? 'Section saved. Marked Manual; Generate PRD will preserve it.'
-            : 'Section saved & versioned.',
+            ? "Section saved. Marked Manual; Generate PRD will preserve it."
+            : "Section saved & versioned.",
         );
       } catch (err) {
         // The section endpoint is authoritative. Falling back to a whole-document
         // write on lock/conflict/network errors can overwrite newer remote edits.
         setSections(sections);
-        handleError('Failed to save manual edits to the database.', err);
-        setSyncStatus('Save failed. The server copy was not changed.');
+        handleError("Failed to save manual edits to the database.", err);
+        setSyncStatus("Save failed. The server copy was not changed.");
         return;
       }
 
@@ -410,10 +468,15 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
     try {
       const payload = await api.getPrdVersions(projId);
       if (activeProjectIdRef.current !== projId) return;
-      console.log('[VersionHistory] Loaded', payload?.length, 'versions for project', projId);
+      console.log(
+        "[VersionHistory] Loaded",
+        payload?.length,
+        "versions for project",
+        projId,
+      );
       setVersionHistory(toVersionHistoryList(payload));
     } catch (err) {
-      console.warn('[VersionHistory] Failed to load:', err);
+      console.warn("[VersionHistory] Failed to load:", err);
     }
   };
 
@@ -428,7 +491,9 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
   //             locks are reloaded so the timeline shows the appended row. Locked parts
   //             keep their current content (the backend enforces the lock contract).
   //             Resolves true only on success so the ConfirmModal closes.
-  const handleRestoreVersion = async (versionNumber: number): Promise<boolean> => {
+  const handleRestoreVersion = async (
+    versionNumber: number,
+  ): Promise<boolean> => {
     if (!projectId) return false;
     setSyncStatus(`Restoring version ${versionNumber}...`);
     try {
@@ -438,12 +503,17 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
       setCurrentVersion(res.new_version_number);
       // Reload the ledger + per-part metadata so the timeline shows the NEW
       // appended version and section lock/version info stays accurate.
-      await Promise.all([loadVersionHistory(projectId), loadSectionLocks(projectId)]);
-      setSyncStatus(`Restored from version ${versionNumber}. New version ${res.new_version_number} created.`);
+      await Promise.all([
+        loadVersionHistory(projectId),
+        loadSectionLocks(projectId),
+      ]);
+      setSyncStatus(
+        `Restored from version ${versionNumber}. New version ${res.new_version_number} created.`,
+      );
       return true;
     } catch (err) {
       handleError(`Failed to restore version ${versionNumber}.`, err);
-      setSyncStatus('Restore failed.');
+      setSyncStatus("Restore failed.");
       return false;
     }
   };
@@ -457,38 +527,45 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
     const current = sectionLocks[sectionId];
     const wasLocked = current?.is_locked ?? false;
     // Optimistic update
-    setSectionLocks(prev => ({
+    setSectionLocks((prev) => ({
       ...prev,
       [sectionId]: {
         ...(prev[sectionId] ?? {
-          review_status: 'draft',
-          content_source: 'ai',
+          review_status: "draft",
+          content_source: "ai",
           ai_generatable: true,
         }),
         is_locked: !wasLocked,
-        locked_by: wasLocked ? null : 'user',
+        locked_by: wasLocked ? null : "user",
       },
     }));
-    setSyncStatus(wasLocked ? 'Unlocking PRD part...' : 'Locking PRD part...');
+    setSyncStatus(wasLocked ? "Unlocking PRD part..." : "Locking PRD part...");
     try {
       if (wasLocked) {
         await api.unlockPrdSection(projectId, sectionId);
-        setSyncStatus('PRD part unlocked. AI can regenerate it again.');
+        setSyncStatus("PRD part unlocked. AI can regenerate it again.");
       } else {
         await api.lockPrdSection(projectId, sectionId);
-        setSyncStatus('PRD part locked. Protected from edits and AI regeneration.');
+        setSyncStatus(
+          "PRD part locked. Protected from edits and AI regeneration.",
+        );
       }
     } catch (err) {
       // Revert on failure
-      setSectionLocks(prev => ({
+      setSectionLocks((prev) => ({
         ...prev,
-        [sectionId]: { ...(prev[sectionId] as PrdSectionLockState), is_locked: wasLocked },
+        [sectionId]: {
+          ...(prev[sectionId] as PrdSectionLockState),
+          is_locked: wasLocked,
+        },
       }));
       handleError(
-        wasLocked ? 'Failed to unlock the PRD part.' : 'Failed to lock the PRD part.',
+        wasLocked
+          ? "Failed to unlock the PRD part."
+          : "Failed to lock the PRD part.",
         err,
       );
-      setSyncStatus('Lock action failed.');
+      setSyncStatus("Lock action failed.");
     }
   };
 
@@ -498,41 +575,51 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
   //             regenerate the part again on the next run.
   const handleHandSectionToAi = async (sectionId: string) => {
     if (!projectId) return;
-    const section = sections.find(s => s.id === sectionId);
+    const section = sections.find((s) => s.id === sectionId);
     if (!section) return;
-    setSyncStatus('Handing PRD part back to the AI...');
+    setSyncStatus("Handing PRD part back to the AI...");
     try {
-      const res = await api.updatePrdSection(projectId, sectionId, section.content, {
-        base_content: section.content,
-        ai_generatable: true,
-        // Distinct author so this hand-off is not mistaken for a manual edit
-        // by the ownership backfill (it must stay AI-generatable).
-        updated_by: 'ai_handoff',
-        change_summary: 'Handed the part back to AI regeneration.',
-      });
+      const res = await api.updatePrdSection(
+        projectId,
+        sectionId,
+        section.content,
+        {
+          base_content: section.content,
+          ai_generatable: true,
+          // Distinct author so this hand-off is not mistaken for a manual edit
+          // by the ownership backfill (it must stay AI-generatable).
+          updated_by: "ai_handoff",
+          change_summary: "Handed the part back to AI regeneration.",
+        },
+      );
       setPrdMarkdown(res.document_markdown);
       setPrdMarkdownDisplay(res.document_markdown);
-      setSectionLocks(prev => ({
+      setSectionLocks((prev) => ({
         ...prev,
         [sectionId]: {
-          ...(prev[sectionId] ?? { review_status: 'draft' }),
+          ...(prev[sectionId] ?? { review_status: "draft" }),
           content_source: res.section.content_source,
           ai_generatable: res.section.ai_generatable,
-          version_number: res.section.version_number ?? prev[sectionId]?.version_number ?? null,
+          version_number:
+            res.section.version_number ??
+            prev[sectionId]?.version_number ??
+            null,
         },
       }));
-      setSyncStatus('PRD part handed back to the AI. Generate PRD will refresh it.');
+      setSyncStatus(
+        "PRD part handed back to the AI. Generate PRD will refresh it.",
+      );
       await loadVersionHistory(projectId);
     } catch (err) {
-      handleError('Failed to hand the PRD part back to the AI.', err);
-      setSyncStatus('Could not hand the part back to the AI.');
+      handleError("Failed to hand the PRD part back to the AI.", err);
+      setSyncStatus("Could not hand the part back to the AI.");
     }
   };
 
   // Legacy helper (kept for parity): clears the requirement-engine domain state.
   // Note: pending-actions reset lives in `useProjects`, which owns that slice.
   const resetProjectState = () => {
-    setStructuredRequirements({ epic_name: '', version: 0, user_stories: [] });
+    setStructuredRequirements({ epic_name: "", version: 0, user_stories: [] });
     setAuditResult({
       is_valid: false,
       audit_version_reviewed: 0,
@@ -540,14 +627,15 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
       failed_checks: [],
       clarification_questions: [],
     });
-    setPrdMarkdown('');
-    setPrdMarkdownDisplay('');
-    setMermaidDiagram('');
+    setPrdMarkdown("");
+    setPrdMarkdownDisplay("");
+    setMermaidDiagram("");
+    setDiagramGeneratedAt(null);
     setCurrentVersion(1);
     setCurrentAgentNode(null);
     setMessages([]);
     setVersionHistory([]);
-    setSyncStatus('Switched project. Loading...');
+    setSyncStatus("Switched project. Loading...");
     setSections([]);
     setSectionLocks({});
     setClarificationAnswers({});
@@ -562,6 +650,7 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
     editingSectionId,
     editBuffer,
     mermaidDiagram,
+    diagramGeneratedAt,
     versionHistory,
     currentVersion,
     lockedArtifacts,
@@ -580,6 +669,7 @@ export function useRequirementStore(projectId: string | null): RequirementStore 
     setEditingSectionId,
     setEditBuffer,
     setMermaidDiagram,
+    setDiagramGeneratedAt,
     setVersionHistory,
     setCurrentVersion,
     setLockedArtifacts,

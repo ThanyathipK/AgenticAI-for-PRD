@@ -132,6 +132,50 @@ def _story_codes_by_requirement(requirements):
 
 
 @pytest.mark.asyncio
+async def test_structured_draft_without_raw_input_preserves_epic_and_skips_llm(monkeypatch):
+    """Frontend draft re-sync must not reference epic_name before assignment."""
+    _saved, llm_calls = _patch(monkeypatch, REQ_STATE, llm_result={})
+
+    result = await agents.gatherer_node({
+        "project_id": "p1",
+        "raw_input": "",
+        "current_version": 5,
+        "structured_requirements": {
+            "epic_name": "Refund Request Submission",
+            "version": 5,
+            "requirements": copy.deepcopy(REQ_STATE["requirements"]),
+        },
+    })
+
+    assert result["requirement_state"]["epic_name"] == "Refund Request Submission"
+    assert result["structured_requirements"]["epic_name"] == "Refund Request Submission"
+    assert _story_codes_by_requirement(result["structured_requirements"]["requirements"]) == {
+        "REQ-001": ["US-001", "US-002"],
+        "REQ-002": ["US-003"],
+    }
+    assert llm_calls == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_command_requests_clarification_instead_of_claiming_success(monkeypatch):
+    _patch(monkeypatch, REQ_STATE, llm_result={})
+
+    async def command_workflow(_raw_input):
+        return {"workflow": "COMMAND", "confidence": 0.95, "reason": "test"}
+
+    monkeypatch.setattr(agents, "classify_workflow", command_workflow)
+    result = await agents.workflow_router_node({
+        "project_id": "p1",
+        "raw_input": "perform the operation",
+        "target_agent": "gatherer",
+    })
+
+    assert result["target_agent"] == "gatherer"
+    assert "couldn't identify a supported command" in result["agent_message"]
+    assert "successfully" not in result["agent_message"]
+
+
+@pytest.mark.asyncio
 async def test_matcher_resolves_explicit_parent_requirement_without_story_guess(monkeypatch):
     _patch(monkeypatch, REQ_STATE, llm_result={})
 

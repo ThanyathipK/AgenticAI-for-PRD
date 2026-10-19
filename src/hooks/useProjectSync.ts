@@ -1,13 +1,13 @@
 // useProjectSync — project-state loading + real-time SSE sync, extracted from
 // the former useProjectState god-hook. Writes through the shared
 // `RequirementStore` and the typed `api` client.
-import { useEffect, useRef } from 'react';
-import type { Dispatch, SetStateAction } from 'react';
-import { api } from '../api/client';
+import { useEffect, useRef } from "react";
+import type { Dispatch, SetStateAction } from "react";
+import { api } from "../api/client";
 import type {
   PendingActionPayload,
   RequirementStatePayload,
-} from '../api/types';
+} from "../api/types";
 import {
   epicNameFromRequirements,
   toAuditResult,
@@ -16,16 +16,20 @@ import {
   toRequirementItems,
   toStructuredRequirements,
   toUserStories,
-} from '../api/transforms';
-import { getSafeSectionContent } from '../utils/markdown';
-import { handleWarning } from '../components/Toast';
-import { readStoredToken } from './useAuth';
-import { getPrdTemplateMarkdown } from './useRequirementStore';
-import type { RequirementStore } from './useRequirementStore';
-import type { WorkspaceTab } from './useWorkspaceUi';
+} from "../api/transforms";
+import { getSafeSectionContent } from "../utils/markdown";
+import { handleWarning } from "../components/Toast";
+import { readStoredToken } from "./useAuth";
+import { getPrdTemplateMarkdown } from "./useRequirementStore";
+import type { RequirementStore } from "./useRequirementStore";
+import type { WorkspaceTab } from "./useWorkspaceUi";
 
 export interface UseProjectSyncResult {
-  loadProjectState: (projId: string, retries?: number, delay?: number) => Promise<void>;
+  loadProjectState: (
+    projId: string,
+    retries?: number,
+    delay?: number,
+  ) => Promise<void>;
 }
 
 /**
@@ -69,7 +73,9 @@ export function useProjectSync(
   const prdSyncHoldRef = useRef(false);
   // Points at the SSE effect's full-state refresh so non-SSE code paths (an
   // edit finished, the hold cleared) can pull the latest document on demand.
-  const refreshFromServerRef = useRef<((force?: boolean) => Promise<void>) | null>(null);
+  const refreshFromServerRef = useRef<
+    ((force?: boolean) => Promise<void>) | null
+  >(null);
 
   // Apply queued PRD updates the moment the hold clears. The hold flags only
   // change through renders, so without this the latest version would sit until
@@ -86,14 +92,18 @@ export function useProjectSync(
   //              repository 2.3.2 / init branch 2.3.3 → 2.4 store mapping.
   //              Reused verbatim by the SSE full refresh and the PRD preview
   //              catch-up, so PROJECT 2.x is also the read path of EVENTS.
-  const loadProjectState = async (projId: string, retries = 5, delay = 1000) => {
+  const loadProjectState = async (
+    projId: string,
+    retries = 5,
+    delay = 1000,
+  ) => {
     let retryScheduled = false;
     // Fresh load — drop any queued PRD update / hold left over from a previous
     // project so the catch-up logic can never leak across projects.
     prdSyncPendingRef.current = false;
     prdSyncHoldRef.current = false;
     store.setIsLoading(true);
-    store.setSyncStatus('Loading project state from Supabase...');
+    store.setSyncStatus("Loading project state from Supabase...");
 
     // Clear lock states when loading a new project to prevent state pollution
     store.setLockedArtifacts({});
@@ -110,7 +120,7 @@ export function useProjectSync(
         .listPendingActions(projId)
         .then((actions) => actions || [])
         .catch((err) => {
-          handleWarning('Could not load pending actions.', err);
+          handleWarning("Could not load pending actions.", err);
           return null; // null = failed; distinguish from an intentionally empty list
         });
       // Load per-part PRD section lock/ownership metadata (non-blocking).
@@ -130,17 +140,20 @@ export function useProjectSync(
         store.setStructuredRequirements(toStructuredRequirements(payload));
 
         // Update locked artifacts from requirements - ONLY use backend data for new project
-        const { lockedArtifacts, lockedRequirements } = toLockMaps(payload.requirements);
+        const { lockedArtifacts, lockedRequirements } = toLockMaps(
+          payload.requirements,
+        );
         store.setLockedArtifacts(lockedArtifacts);
         store.setLockedRequirements(lockedRequirements);
 
         store.setCurrentVersion(payload.version_number || 1);
         store.setAuditResult(toAuditResult(payload));
-        const loadedPrd = getSafeSectionContent(payload.generated_prd || '');
+        const loadedPrd = getSafeSectionContent(payload.generated_prd || "");
         store.setPrdMarkdown(loadedPrd);
-        store.setMermaidDiagram(payload.generated_diagrams || '');
+        store.setMermaidDiagram(payload.generated_diagrams || "");
+        store.setDiagramGeneratedAt(payload.diagram_generated_at || null);
         store.setCurrentAgentNode(payload.current_workflow_state || null);
-        setActiveTab('prd');
+        setActiveTab("prd");
 
         // No generated PRD yet -> show the official Krungsri Nimble template
         // skeleton in the right panel; Generate PRD fills it in afterwards.
@@ -168,7 +181,7 @@ export function useProjectSync(
           }
         });
 
-        store.setSyncStatus('Synced with Supabase Cloud');
+        store.setSyncStatus("Synced with Supabase Cloud");
       }
     } catch (err) {
       if (activeProjectIdRef.current !== projId) return;
@@ -183,8 +196,11 @@ export function useProjectSync(
           }
         }, delay);
       } else {
-        handleWarning('Failed to load project state from the server. Working locally.', err);
-        store.setSyncStatus('Failed to sync with Supabase. Working locally.');
+        handleWarning(
+          "Failed to load project state from the server. Working locally.",
+          err,
+        );
+        store.setSyncStatus("Failed to sync with Supabase. Working locally.");
       }
     } finally {
       if (activeProjectIdRef.current === projId && !retryScheduled) {
@@ -195,7 +211,7 @@ export function useProjectSync(
 
   // Load project state whenever the selected project changes.
   useEffect(() => {
-    if (projectId && projectId !== 'null') {
+    if (projectId && projectId !== "null") {
       // PROJECT 2.1 — Trigger: the selected project changed (PROJECT 1.5
       //              auto-select, sidebar row click, or dashboard row open)
       //              → PROJECT 2.2. Effect depends on projectId only.
@@ -210,7 +226,7 @@ export function useProjectSync(
   // Replaces the previous 3s polling: the backend pushes a change event through
   // the `/api/project/{id}/sse` stream and we refresh state once per real change.
   useEffect(() => {
-    if (!projectId || projectId === 'null') return;
+    if (!projectId || projectId === "null") return;
 
     let isSubscribed = true;
     let refreshInFlight = false;
@@ -222,13 +238,14 @@ export function useProjectSync(
       if (refreshInFlight && !force) return;
       refreshInFlight = true;
       try {
-        const payload: RequirementStatePayload = await api.getProjectState(projectId);
+        const payload: RequirementStatePayload =
+          await api.getProjectState(projectId);
         if (!isSubscribed) return;
 
         if (payload) {
           // 1. Sync structured requirements & user stories if different
           if (payload.requirements && payload.user_stories) {
-            store.setStructuredRequirements(prev => {
+            store.setStructuredRequirements((prev) => {
               const currentStoriesStr = JSON.stringify(prev.user_stories);
               const newStoriesStr = JSON.stringify(payload.user_stories);
 
@@ -237,17 +254,30 @@ export function useProjectSync(
 
               const currentReqsStr = JSON.stringify(prev.requirements);
               const newReqsStr = JSON.stringify(newRequirements);
-              const epicName = payload.epic_name || epicNameFromRequirements(payload.requirements, '');
+              const epicName =
+                payload.epic_name ||
+                epicNameFromRequirements(payload.requirements, "");
 
               // Always update if stories/epic/requirements changed, OR if lock states changed
-              const hasLockChanges = newRequirements && prev.requirements
-                ? newRequirements.some((nr, i) => {
-                    const pr = prev.requirements?.[i];
-                    return pr && (nr.is_locked !== pr.is_locked || nr.locked_by !== pr.locked_by || nr.locked_at !== pr.locked_at);
-                  })
-                : false;
+              const hasLockChanges =
+                newRequirements && prev.requirements
+                  ? newRequirements.some((nr, i) => {
+                      const pr = prev.requirements?.[i];
+                      return (
+                        pr &&
+                        (nr.is_locked !== pr.is_locked ||
+                          nr.locked_by !== pr.locked_by ||
+                          nr.locked_at !== pr.locked_at)
+                      );
+                    })
+                  : false;
 
-              if (currentStoriesStr !== newStoriesStr || prev.epic_name !== epicName || currentReqsStr !== newReqsStr || hasLockChanges) {
+              if (
+                currentStoriesStr !== newStoriesStr ||
+                prev.epic_name !== epicName ||
+                currentReqsStr !== newReqsStr ||
+                hasLockChanges
+              ) {
                 return {
                   epic_name: epicName,
                   version: payload.version_number || 1,
@@ -260,18 +290,27 @@ export function useProjectSync(
           }
 
           // 2. Sync version number if changed
-          if (payload.version_number !== undefined && payload.version_number !== currentVersionRef.current) {
+          if (
+            payload.version_number !== undefined &&
+            payload.version_number !== currentVersionRef.current
+          ) {
             store.setCurrentVersion(payload.version_number);
           }
 
           // 3. Sync audit validation result
           if (payload.validation_status) {
-            store.setAuditResult(prev => {
-              const currentQsStr = JSON.stringify(prev.clarification_questions || []);
-              const newQsStr = JSON.stringify(payload.clarification_questions || []);
+            store.setAuditResult((prev) => {
+              const currentQsStr = JSON.stringify(
+                prev.clarification_questions || [],
+              );
+              const newQsStr = JSON.stringify(
+                payload.clarification_questions || [],
+              );
               const currentFindingsStr = JSON.stringify(prev.findings || []);
-              const newFindingsStr = JSON.stringify(payload.audit_findings || []);
-              const isPassed = payload.validation_status === 'valid';
+              const newFindingsStr = JSON.stringify(
+                payload.audit_findings || [],
+              );
+              const isPassed = payload.validation_status === "valid";
 
               const newPassed = payload.passed_checks || [];
               const newFailed = payload.failed_checks || [];
@@ -285,12 +324,15 @@ export function useProjectSync(
                 return {
                   is_valid: isPassed,
                   audit_version_reviewed: payload.version_number || 1,
-                  clarification_questions: payload.clarification_questions || [],
+                  clarification_questions:
+                    payload.clarification_questions || [],
                   passed_checks: newPassed,
                   failed_checks: newFailed,
                   findings: payload.audit_findings || [],
                   source_references: payload.audit_source_references || [],
-                  verdict: payload.audit_verdict || (isPassed ? 'pass' : 'needs_clarification'),
+                  verdict:
+                    payload.audit_verdict ||
+                    (isPassed ? "pass" : "needs_clarification"),
                   project_context: payload.audit_project_context,
                   checklist_id: payload.audit_checklist_id,
                   checklist_version: payload.audit_checklist_version,
@@ -308,10 +350,11 @@ export function useProjectSync(
           // confirmation (see the hold computation).
           let pendingActionsList: PendingActionPayload[] = [];
           try {
-            pendingActionsList = (await api.listPendingActions(projectId)) || [];
+            pendingActionsList =
+              (await api.listPendingActions(projectId)) || [];
             if (isSubscribed) setPendingActions(pendingActionsList);
           } catch (err) {
-            handleWarning('Could not load pending actions.', err);
+            handleWarning("Could not load pending actions.", err);
           }
 
           // A staged MERGE whose PRD draft differs from the persisted document
@@ -321,9 +364,13 @@ export function useProjectSync(
           // the action is confirmed or discarded (the pending action then
           // disappears from the list).
           prdSyncHoldRef.current = pendingActionsList.some((action) => {
-            if (action.action_type !== 'MERGE') return false;
-            const staged = (action.proposed_changes ?? {})['generated_prd'];
-            return typeof staged === 'string' && staged !== '' && staged !== payload.generated_prd;
+            if (action.action_type !== "MERGE") return false;
+            const staged = (action.proposed_changes ?? {})["generated_prd"];
+            return (
+              typeof staged === "string" &&
+              staged !== "" &&
+              staged !== payload.generated_prd
+            );
           });
 
           // 5–6. Apply the PRD and diagram as one artifact snapshot. Previously
@@ -331,15 +378,15 @@ export function useProjectSync(
           // the diagram updated immediately, which could display two different
           // revisions. Empty server values are authoritative too, so a removed
           // diagram cannot remain stale in the UI.
-          const safeGeneratedPRD = getSafeSectionContent(payload.generated_prd || '');
-          const diagram = payload.generated_diagrams || '';
-          const artifactsChanged = (
-            safeGeneratedPRD !== prdMarkdownRef.current
-            || diagram !== mermaidDiagramRef.current
+          const safeGeneratedPRD = getSafeSectionContent(
+            payload.generated_prd || "",
           );
-          const artifactsHeld = (
-            editingSectionIdRef.current !== null || prdSyncHoldRef.current
-          );
+          const diagram = payload.generated_diagrams || "";
+          const artifactsChanged =
+            safeGeneratedPRD !== prdMarkdownRef.current ||
+            diagram !== mermaidDiagramRef.current;
+          const artifactsHeld =
+            editingSectionIdRef.current !== null || prdSyncHoldRef.current;
 
           if (artifactsChanged && artifactsHeld) {
             prdSyncPendingRef.current = true;
@@ -348,20 +395,25 @@ export function useProjectSync(
             // An empty persisted PRD means the project has no generated
             // document. Keep the official blank skeleton as the visual
             // fallback, while clearing the paired diagram from the same state.
-            const nextPrd = safeGeneratedPRD || await getPrdTemplateMarkdown();
-            if (!isSubscribed || activeProjectIdRef.current !== projectId) return;
+            const nextPrd =
+              safeGeneratedPRD || (await getPrdTemplateMarkdown());
+            if (!isSubscribed || activeProjectIdRef.current !== projectId)
+              return;
             if (nextPrd !== prdMarkdownRef.current) {
               store.setPrdMarkdown(nextPrd);
             }
             if (diagram !== mermaidDiagramRef.current) {
               store.setMermaidDiagram(diagram);
             }
+            store.setDiagramGeneratedAt(payload.diagram_generated_at || null);
           }
 
           // 7. Sync active agent node
           const workflowState = payload.current_workflow_state;
           if (workflowState) {
-            store.setCurrentAgentNode(prev => (prev !== workflowState ? workflowState : prev));
+            store.setCurrentAgentNode((prev) =>
+              prev !== workflowState ? workflowState : prev,
+            );
           }
 
           // 8. Sync per-part PRD section lock/ownership metadata (non-blocking)
@@ -369,10 +421,10 @@ export function useProjectSync(
           // 9. Sync the immutable PRD version ledger (non-blocking)
           if (isSubscribed) store.loadVersionHistory(projectId);
 
-          store.setSyncStatus('Synced via live updates');
+          store.setSyncStatus("Synced via live updates");
         }
       } catch (err) {
-        handleWarning('Live sync encountered an error and will retry.', err);
+        handleWarning("Live sync encountered an error and will retry.", err);
       } finally {
         refreshInFlight = false;
       }
@@ -411,7 +463,7 @@ export function useProjectSync(
     };
 
     source.onopen = () => {
-      if (isSubscribed) store.setSyncStatus('Live updates connected');
+      if (isSubscribed) store.setSyncStatus("Live updates connected");
     };
     source.onmessage = (event) => {
       if (!isSubscribed) return;
@@ -422,7 +474,7 @@ export function useProjectSync(
         // The stream's first frame is a `connected` handshake, not a state
         // change — `loadProjectState` already fetched the full state when the
         // project opened, so it must NOT trigger a redundant re-download.
-        if (message.event === 'connected') return;
+        if (message.event === "connected") return;
 
         // High-frequency document-extraction frames: forward them to the
         // DocumentLibrary so users see live chunk progress (chunk X/N) on big
@@ -430,11 +482,11 @@ export function useProjectSync(
         // extraction would otherwise fire one heavy state download (PRD markdown
         // + chat history) per chunk while the backend is already busy serving
         // the local LLM.
-        if (message.event === 'document_extraction_started') {
+        if (message.event === "document_extraction_started") {
           options?.onDocumentExtractionStarted?.(message.data);
           return;
         }
-        if (message.event === 'document_extraction_progress') {
+        if (message.event === "document_extraction_progress") {
           options?.onDocumentExtractionProgress?.(message.data);
           return;
         }
@@ -445,7 +497,7 @@ export function useProjectSync(
     };
     source.onerror = () => {
       // EventSource reconnects automatically; surface a subtle status while down.
-      if (isSubscribed) store.setSyncStatus('Live updates reconnecting...');
+      if (isSubscribed) store.setSyncStatus("Live updates reconnecting...");
     };
 
     return () => {

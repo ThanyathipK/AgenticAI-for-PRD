@@ -8,7 +8,7 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
-from sqlalchemy import String, cast, delete, func, select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -209,6 +209,11 @@ class RequirementStateRepository:
             or model.generated_diagrams
             or ""
         )
+        diagram_generated_at = None
+        if (latest_prd or {}).get("mermaid_diagram"):
+            diagram_generated_at = (latest_prd or {}).get("updated_at") or (latest_prd or {}).get("created_at")
+        elif model.generated_diagrams and model.__dict__.get("updated_at"):
+            diagram_generated_at = model.__dict__["updated_at"].isoformat()
 
         return {
             "project_id": str(model.project_id),
@@ -233,6 +238,7 @@ class RequirementStateRepository:
             "audit_checklist_version": latest_audit.get("checklist_version", "1.0.0"),
             "generated_prd": generated_prd if generated_prd else "",
             "generated_diagrams": generated_diagrams if generated_diagrams else "",
+            "diagram_generated_at": diagram_generated_at,
             "current_workflow_state": model.current_workflow_state,
             "requirements_revision": model.requirements_revision,
             "version_number": version_num,

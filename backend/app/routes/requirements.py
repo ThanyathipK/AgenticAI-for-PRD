@@ -495,7 +495,7 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
                     len(batch_result.get("classifications") or []),
                     len(batch_result.get("proposed_requirements") or []),
                 )
-            except Exception as exc:
+            except Exception:
                 # A local-model formatting failure must never discard stakeholder
                 # answers. Save them as audit evidence and stage a clearly marked
                 # no-change review rather than making the form look nonfunctional.
@@ -932,7 +932,7 @@ async def _process_requirements_pipeline(
                 #             outage (contrast with the fail-soft steps below).
                 conv_history = await ConversationMessageRepository.get_conversation_history(request.project_id)
             except Exception as db_err:
-                logger.exception(f"[GENERAL_CHAT] Failed to load conversation history from DB")
+                logger.exception("[GENERAL_CHAT] Failed to load conversation history from DB")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to load conversation history from database: {str(db_err)}",
@@ -1556,6 +1556,7 @@ async def _process_requirements_pipeline(
             "audit_result": audit_out,
             "prd_markdown": req_state.get("generated_prd", ""),
             "mermaid_diagram": req_state.get("generated_diagrams", ""),
+            "diagram_generated_at": final_state.get("diagram_generated_at") or req_state.get("diagram_generated_at"),
             "message": agent_message,
             "pending_merge": pending_action_id is not None,
             "pending_action_id": pending_action_id,

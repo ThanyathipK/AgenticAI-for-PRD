@@ -39,7 +39,8 @@ export interface ProjectStatusRequest {
 }
 
 /** Workflow statuses editable from the dashboard projects table. */
-export type ProjectStatus = 'draft' | 'in_review_hpo' | 'in_review_po' | 'approved' | 'revised';
+export type ProjectStatus =
+  "draft" | "in_review_hpo" | "in_review_po" | "approved" | "revised";
 
 export interface ProjectReviewEventPayload {
   id: string;
@@ -58,7 +59,7 @@ export interface ProjectReviewEventPayload {
 
 export interface ProjectHealthPayload {
   project_id: string;
-  status: 'ready' | 'attention_required' | 'blocked' | 'approved';
+  status: "ready" | "attention_required" | "blocked" | "approved";
   workflow_status: ProjectStatus;
   /** @deprecated Use coverage_breakdown.requirement_traceability_percent. */
   coverage_percent: number;
@@ -81,9 +82,25 @@ export interface ProjectHealthPayload {
     requirements_without_diagram: number;
     active_waivers: number;
   };
-  audit: { verdict?: string | null; version_reviewed?: number | null; checklist_version?: string | null; stale: boolean; updated_at?: string | null };
-  approval: { prd_version?: number | null; audit_version?: number | null; approved_at?: string | null };
-  issues: Array<{ kind: string; label: string; count: number; destination: string; severity: string }>;
+  audit: {
+    verdict?: string | null;
+    version_reviewed?: number | null;
+    checklist_version?: string | null;
+    stale: boolean;
+    updated_at?: string | null;
+  };
+  approval: {
+    prd_version?: number | null;
+    audit_version?: number | null;
+    approved_at?: string | null;
+  };
+  issues: Array<{
+    kind: string;
+    label: string;
+    count: number;
+    destination: string;
+    severity: string;
+  }>;
   generated_at: string;
 }
 
@@ -98,7 +115,7 @@ export interface AuditWaiverPayload {
   approved_by?: string | null;
   approved_by_name: string;
   expires_at: string;
-  status: 'active' | 'expired' | 'revoked' | string;
+  status: "active" | "expired" | "revoked" | string;
   revoked_reason?: string | null;
   revoked_at?: string | null;
   created_at?: string | null;
@@ -111,12 +128,23 @@ export interface AuditRunPayload {
   audit_version_reviewed: number;
   is_valid: boolean;
   verdict: string;
-  findings: Array<AuditFindingPayload & { finding_key: string; lifecycle: 'new' | 'reopened' | 'unchanged'; waiver?: AuditWaiverPayload | null }>;
+  findings: Array<
+    AuditFindingPayload & {
+      finding_key: string;
+      lifecycle: "new" | "reopened" | "unchanged";
+      waiver?: AuditWaiverPayload | null;
+    }
+  >;
   passed_checks: string[];
   failed_checks: string[];
   checklist_id: string;
   checklist_version: string;
-  comparison: { new: string[]; reopened: string[]; unchanged: string[]; resolved: string[] };
+  comparison: {
+    new: string[];
+    reopened: string[];
+    unchanged: string[];
+    resolved: string[];
+  };
   created_at?: string | null;
 }
 
@@ -187,7 +215,7 @@ export interface ClarificationQuestionPayload {
   is_resolved?: boolean;
   source_references?: AuditSourceReferencePayload[];
   provenance?: {
-    type: 'Project file' | 'Knowledge base' | 'System analysis';
+    type: "Project file" | "Knowledge base" | "System analysis";
     document?: string | null;
     section?: string | null;
     analyzed_target?: string | null;
@@ -201,7 +229,7 @@ export interface AuditSourceReferencePayload {
   document_name: string;
   section?: string | null;
   excerpt?: string | null;
-  source_type?: 'Project file' | 'Knowledge base' | null;
+  source_type?: "Project file" | "Knowledge base" | null;
 }
 
 export interface AuditFindingPayload {
@@ -213,8 +241,12 @@ export interface AuditFindingPayload {
   description: string;
   source_references: AuditSourceReferencePayload[];
   evidence_status: string;
-  applicability: 'applicable_required' | 'applicable_recommended' | 'not_applicable' | 'unknown';
-  impact: 'blocking' | 'warning' | 'suggestion';
+  applicability:
+    | "applicable_required"
+    | "applicable_recommended"
+    | "not_applicable"
+    | "unknown";
+  impact: "blocking" | "warning" | "suggestion";
   confidence: number;
   rationale?: string | null;
   recommendation?: {
@@ -246,7 +278,7 @@ export interface AuditResultPayload {
   findings?: AuditFindingPayload[];
   source_references?: AuditSourceReferencePayload[];
   clarification_questions?: ClarificationQuestionPayload[];
-  verdict?: 'pass' | 'pass_with_warnings' | 'needs_clarification' | 'fail';
+  verdict?: "pass" | "pass_with_warnings" | "needs_clarification" | "fail";
   project_context?: AuditProjectContextPayload;
   checklist_id?: string;
   checklist_version?: string;
@@ -373,17 +405,14 @@ export interface ImpactAnalysisPayload {
  * single `{ epic_name }` object — the field type reflects that defensive shape.
  */
 export type RequirementsField =
-  | RequirementPayload[]
-  | { epic_name?: string }
-  | null
-  | undefined;
+  RequirementPayload[] | { epic_name?: string } | null | undefined;
 
 export interface RequirementStatePayload {
   passed_checks?: string[];
   failed_checks?: string[];
   audit_findings?: AuditFindingPayload[];
   audit_source_references?: AuditSourceReferencePayload[];
-  audit_verdict?: AuditResultPayload['verdict'];
+  audit_verdict?: AuditResultPayload["verdict"];
   audit_project_context?: AuditProjectContextPayload;
   audit_checklist_id?: string;
   audit_checklist_version?: string;
@@ -399,6 +428,7 @@ export interface RequirementStatePayload {
   validation_status?: string | null;
   generated_prd?: string;
   generated_diagrams?: string;
+  diagram_generated_at?: string | null;
   current_workflow_state?: string | null;
   version_number?: number;
   updated_at?: string | null;
@@ -407,7 +437,7 @@ export interface RequirementStatePayload {
   pending_merge?: boolean;
   clarification_answer_classifications?: Array<{
     question_id: string;
-    classification: 'UPDATE' | 'ADD' | 'REMOVE' | 'NO_CHANGE' | 'FOLLOW_UP';
+    classification: "UPDATE" | "ADD" | "REMOVE" | "NO_CHANGE" | "FOLLOW_UP";
     target_requirement_id?: string | null;
     rationale?: string;
     follow_up_question?: string | null;
@@ -447,6 +477,7 @@ export interface ProcessRequirementsResponse {
   audit_result?: AuditResultPayload | null;
   prd_markdown?: string | null;
   mermaid_diagram?: string | null;
+  diagram_generated_at?: string | null;
   message?: string | null;
   pending_merge?: boolean | null;
   pending_action_id?: string | null;
@@ -502,7 +533,7 @@ export interface ConfirmActionResponse {
   status: string;
   requirement_state?: RequirementStatePayload;
   cascade_job_id?: string | null;
-  cascade_status?: 'queued' | 'not_required' | 'deferred' | string | null;
+  cascade_status?: "queued" | "not_required" | "deferred" | string | null;
 }
 
 export interface ActionStatusResponse {
@@ -516,7 +547,7 @@ export interface ActionStatusResponse {
 // explicit action whose output stays a DRAFT pending_action until confirmed.
 // ----------------------------------------------------------------------------
 
-export type DocumentFormat = 'docx' | 'pdf' | 'md' | 'txt';
+export type DocumentFormat = "docx" | "pdf" | "md" | "txt";
 
 export interface UploadedDocumentPayload {
   id: string;
@@ -527,9 +558,10 @@ export interface UploadedDocumentPayload {
   content_markdown?: string | null;
   file_size_bytes: number;
   token_count: number;
-  status: 'processed' | 'failed' | string;
+  status: "processed" | "failed" | string;
   uploaded_by: string;
-  extraction_status: 'not_extracted' | 'extraction_pending' | 'extraction_applied' | string;
+  extraction_status:
+    "not_extracted" | "extraction_pending" | "extraction_applied" | string;
   created_at: string;
   updated_at: string;
   /** Present on scanned-PDF failures: explicit needs-OCR message. */
@@ -541,8 +573,8 @@ export interface DocumentMarkdownPayload extends UploadedDocumentPayload {
 }
 
 export interface ProcessDocumentResponse {
-  status: 'draft_ready' | 'failed' | string;
-  mode: 'full' | 'chunked' | string;
+  status: "draft_ready" | "failed" | string;
+  mode: "full" | "chunked" | string;
   chunk_count: number;
   processed_tokens: number;
   pending_action_id?: string | null;
@@ -568,7 +600,7 @@ export interface DocumentDeleteResponse {
 
 export interface ConvertedPrdMarkdownPayload {
   markdown: string;
-  source_kind: 'latex' | 'markdown' | string;
+  source_kind: "latex" | "markdown" | string;
 }
 
 // ----------------------------------------------------------------------------
@@ -588,7 +620,7 @@ export interface PrdSectionPayload {
   content: string;
   section_order: number;
   /** 'template' | 'ai' | 'human' — who owns the content. */
-  content_source: 'template' | 'ai' | 'human' | string;
+  content_source: "template" | "ai" | "human" | string;
   /** False => the Architect agent never regenerates this part. */
   ai_generatable: boolean;
   /** 'draft' | 'satisfied' | 'approved'. */
@@ -612,7 +644,6 @@ export interface PrdSectionUpdateResponse {
   /** Full PRD markdown stitched from ALL parts after the edit. */
   document_markdown: string;
 }
-
 
 // ----------------------------------------------------------------------------
 // PRD version ledger (`/api/project/{id}/prd-versions*`)
@@ -679,7 +710,6 @@ export interface PrdVersionRestorePayload {
   restored_sections: number;
   preserved_locked_sections: number;
 }
-
 
 // ============================================================================
 // Requirement Traceability Matrix (derived, read-only)
@@ -756,11 +786,11 @@ export interface TraceabilityPayload {
 }
 
 export type DependencyArtifactType =
-  | 'requirement'
-  | 'user_story'
-  | 'acceptance_criterion'
-  | 'prd_section'
-  | 'diagram';
+  | "requirement"
+  | "user_story"
+  | "acceptance_criterion"
+  | "prd_section"
+  | "diagram";
 
 export interface ArtifactReferencePayload {
   artifact_type: DependencyArtifactType;
@@ -782,7 +812,14 @@ export interface DependencyGraphPayload {
     relationship: string;
     evidence: Record<string, unknown>;
   }>;
-  summary: { nodes: number; edges: number; requirements: number; stories: number; sections: number; diagrams: number };
+  summary: {
+    nodes: number;
+    edges: number;
+    requirements: number;
+    stories: number;
+    sections: number;
+    diagrams: number;
+  };
   rebuilt_at: string;
 }
 
@@ -794,12 +831,17 @@ export interface RegenerationPlanPayload {
   skipped_prd_sections: string[];
   regenerate_diagrams: string[];
   affected_node_ids: string[];
-  summary: { stories: number; sections: number; skipped_sections: number; diagrams: number };
+  summary: {
+    stories: number;
+    sections: number;
+    skipped_sections: number;
+    diagrams: number;
+  };
 }
 
 export interface RegenerationResultPayload {
   run_id: string;
-  status: 'completed' | 'no_changes' | 'failed' | string;
+  status: "completed" | "no_changes" | "failed" | string;
   plan: RegenerationPlanPayload;
   generated_prd?: string;
   generated_diagrams?: string;
@@ -809,8 +851,9 @@ export interface RegenerationResultPayload {
 export interface GenerationJobPayload<T = unknown> {
   id: string;
   project_id: string;
-  job_type: 'architect' | 'regeneration';
-  status: 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
+  job_type: "architect" | "regeneration";
+  status:
+    "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
   progress_stage: string;
   result?: T | null;
   error_message?: string | null;
@@ -831,14 +874,14 @@ export interface BankingKnowledgeDocumentPayload {
   jurisdiction: string;
   tags: string[];
   version: number;
-  status: 'draft' | 'approved' | 'retired' | string;
+  status: "draft" | "approved" | "retired" | string;
   approved_by?: string | null;
   approved_at?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   content_markdown?: string;
   chunk_count?: number;
-  embedding_status?: 'ready' | 'lexical_only';
+  embedding_status?: "ready" | "lexical_only";
 }
 
 // ----------------------------------------------------------------------------
@@ -894,7 +937,7 @@ export interface AuthMessageResponse {
 /** Roles offered by the sign-up form (mirrors the roles documented in init.sql
  *  and enforced server-side by POST /api/auth/register). */
 export const AUTH_ROLES = [
-  'Technical Product Owner',
-  'Business Analyst',
-  'Product Owner',
+  "Technical Product Owner",
+  "Business Analyst",
+  "Product Owner",
 ] as const;

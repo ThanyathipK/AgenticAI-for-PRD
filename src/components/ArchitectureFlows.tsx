@@ -1,26 +1,35 @@
-import { useCallback, useEffect, useId, useState } from 'react';
-import { AlertTriangle, Download, FileCode, ImageDown, LoaderCircle, Network } from 'lucide-react';
-import { ProjectState } from '../hooks/useProjectState';
-import { Tooltip } from './Tooltip';
+import { useCallback, useEffect, useId, useState } from "react";
+import {
+  AlertTriangle,
+  Clock3,
+  Download,
+  FileCode,
+  ImageDown,
+  LoaderCircle,
+  Network,
+} from "lucide-react";
+import { ProjectState } from "../hooks/useProjectState";
+import { Tooltip } from "./Tooltip";
 
 let mermaidPromise: ReturnType<typeof importMermaid> | null = null;
 
 async function importMermaid() {
-  const { default: mermaid } = await import('mermaid');
+  const { default: mermaid } = await import("mermaid");
   mermaid.initialize({
     startOnLoad: false,
-    securityLevel: 'strict',
-    theme: 'base',
+    securityLevel: "strict",
+    theme: "base",
     themeVariables: {
-      primaryColor: '#ffffff',
-      primaryTextColor: '#171717',
-      primaryBorderColor: '#8a6a50',
-      lineColor: '#8a6a50',
-      secondaryColor: '#ece7dc',
-      tertiaryColor: '#f7f5f0',
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      primaryColor: "#ffffff",
+      primaryTextColor: "#171717",
+      primaryBorderColor: "#8a6a50",
+      lineColor: "#8a6a50",
+      secondaryColor: "#ece7dc",
+      tertiaryColor: "#f7f5f0",
+      fontFamily:
+        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     },
-    flowchart: { htmlLabels: false, curve: 'basis', useMaxWidth: true },
+    flowchart: { htmlLabels: false, curve: "basis", useMaxWidth: true },
   });
   return mermaid;
 }
@@ -30,6 +39,31 @@ function loadMermaid() {
   return mermaidPromise;
 }
 
+function formatGeneratedAt(value: string | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function isDiagramOutOfDate(
+  diagramGeneratedAt: string | null,
+  projectUpdatedAt: string | null | undefined,
+): boolean {
+  if (!diagramGeneratedAt || !projectUpdatedAt) return false;
+  const diagramTime = new Date(diagramGeneratedAt).getTime();
+  const projectTime = new Date(projectUpdatedAt).getTime();
+  // State persistence immediately after generation can be milliseconds later.
+  return (
+    Number.isFinite(diagramTime) &&
+    Number.isFinite(projectTime) &&
+    projectTime - diagramTime > 5_000
+  );
+}
+
 interface MermaidDiagramProps {
   source: string;
   zoom: number;
@@ -37,20 +71,25 @@ interface MermaidDiagramProps {
   onRendered: (svg: string) => void;
 }
 
-function MermaidDiagram({ source, zoom, onError, onRendered }: MermaidDiagramProps) {
+function MermaidDiagram({
+  source,
+  zoom,
+  onError,
+  onRendered,
+}: MermaidDiagramProps) {
   const reactId = useId();
-  const [svg, setSvg] = useState('');
+  const [svg, setSvg] = useState("");
 
   useEffect(() => {
     let active = true;
-    setSvg('');
-    onRendered('');
+    setSvg("");
+    onRendered("");
     onError(null);
 
     const render = async () => {
       try {
         const mermaid = await loadMermaid();
-        const id = `project-flow-${reactId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+        const id = `project-flow-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
         const result = await mermaid.render(id, source);
         if (active) {
           setSvg(result.svg);
@@ -58,7 +97,11 @@ function MermaidDiagram({ source, zoom, onError, onRendered }: MermaidDiagramPro
         }
       } catch (error) {
         if (!active) return;
-        onError(error instanceof Error ? error.message : 'The Mermaid source could not be rendered.');
+        onError(
+          error instanceof Error
+            ? error.message
+            : "The Mermaid source could not be rendered.",
+        );
       }
     };
 
@@ -80,7 +123,10 @@ function MermaidDiagram({ source, zoom, onError, onRendered }: MermaidDiagramPro
   return (
     <div
       className="min-w-full transition-transform duration-300 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-none"
-      style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center' }}
+      style={{
+        transform: `scale(${zoom / 100})`,
+        transformOrigin: "top center",
+      }}
       // Mermaid sanitizes labels in strict security mode. This SVG is the
       // library's intended browser output and never includes raw user HTML.
       dangerouslySetInnerHTML={{ __html: svg }}
@@ -91,6 +137,7 @@ function MermaidDiagram({ source, zoom, onError, onRendered }: MermaidDiagramPro
 export function ArchitectureFlows({ state }: { state: ProjectState }) {
   const {
     mermaidDiagram,
+    diagramGeneratedAt,
     diagramZoom,
     setDiagramZoom,
     isLoading,
@@ -99,20 +146,30 @@ export function ArchitectureFlows({ state }: { state: ProjectState }) {
     projects,
   } = state;
   const [renderError, setRenderError] = useState<string | null>(null);
-  const [renderedSvg, setRenderedSvg] = useState('');
-  const handleRenderError = useCallback((message: string | null) => setRenderError(message), []);
+  const [renderedSvg, setRenderedSvg] = useState("");
+  const handleRenderError = useCallback(
+    (message: string | null) => setRenderError(message),
+    [],
+  );
   const handleRendered = useCallback((svg: string) => setRenderedSvg(svg), []);
   const source = mermaidDiagram.trim();
+  const generatedAtLabel = formatGeneratedAt(diagramGeneratedAt);
+  const activeProject = projects.find((project) => project.id === projectId);
+  const diagramIsOutOfDate = isDiagramOutOfDate(
+    diagramGeneratedAt,
+    activeProject?.updated_at,
+  );
   const isWaitingForFirstDiagram = !source && (isLoading || isProcessing);
-  const projectName = projects.find((project) => project.id === projectId)?.name || 'project';
-  const safeProjectName = projectName
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]+/g, '_')
-    .replace(/^_+|_+$/g, '') || 'project';
+  const projectName = activeProject?.name || "project";
+  const safeProjectName =
+    projectName
+      .trim()
+      .replace(/[^a-zA-Z0-9._-]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "project";
 
   const downloadBlob = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
     link.download = filename;
     document.body.appendChild(link);
@@ -125,7 +182,7 @@ export function ArchitectureFlows({ state }: { state: ProjectState }) {
     if (!source) return;
     const markdown = `# ${projectName} — Project Flowchart\n\n\`\`\`mermaid\n${source}\n\`\`\`\n`;
     downloadBlob(
-      new Blob([markdown], { type: 'text/markdown;charset=utf-8' }),
+      new Blob([markdown], { type: "text/markdown;charset=utf-8" }),
       `${safeProjectName}_flowchart.md`,
     );
   };
@@ -133,7 +190,7 @@ export function ArchitectureFlows({ state }: { state: ProjectState }) {
   const handleDownloadDiagram = () => {
     if (!renderedSvg) return;
     downloadBlob(
-      new Blob([renderedSvg], { type: 'image/svg+xml;charset=utf-8' }),
+      new Blob([renderedSvg], { type: "image/svg+xml;charset=utf-8" }),
       `${safeProjectName}_flowchart.svg`,
     );
   };
@@ -145,7 +202,24 @@ export function ArchitectureFlows({ state }: { state: ProjectState }) {
           <div className="flex min-w-0 items-center gap-2">
             <Network className="h-5 w-5 shrink-0 text-primary" />
             <div className="min-w-0">
-              <h3 className="text-sm font-bold text-on-surface">Project Flowchart</h3>
+              <h3 className="text-sm font-bold text-on-surface">
+                Project Flowchart
+              </h3>
+              {source && (
+                <p className="mt-0.5 flex items-center gap-1 text-[10.5px] text-on-surface-variant">
+                  <Clock3 className="h-3 w-3" />
+                  {generatedAtLabel
+                    ? `Last generated ${generatedAtLabel}`
+                    : "Generation time unavailable"}
+                  {generatedAtLabel && (
+                    <span
+                      className={`ml-1 rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase ${diagramIsOutOfDate ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}
+                    >
+                      {diagramIsOutOfDate ? "Out of date" : "Up to date"}
+                    </span>
+                  )}
+                </p>
+              )}
             </div>
           </div>
 
@@ -179,17 +253,27 @@ export function ArchitectureFlows({ state }: { state: ProjectState }) {
                 <div className="flex rounded-xl bg-black/5 p-1">
                   <Tooltip label="Zoom out" side="bottom">
                     <button
-                      onClick={() => setDiagramZoom((previous) => Math.max(70, previous - 15))}
+                      onClick={() =>
+                        setDiagramZoom((previous) =>
+                          Math.max(70, previous - 15),
+                        )
+                      }
                       aria-label="Zoom out"
                       className="cursor-pointer rounded px-2.5 py-1 text-xs font-semibold transition-all hover:bg-white"
                     >
                       −
                     </button>
                   </Tooltip>
-                  <span className="flex items-center px-3 font-mono text-xs font-bold">{diagramZoom}%</span>
+                  <span className="flex items-center px-3 font-mono text-xs font-bold">
+                    {diagramZoom}%
+                  </span>
                   <Tooltip label="Zoom in" side="bottom">
                     <button
-                      onClick={() => setDiagramZoom((previous) => Math.min(150, previous + 15))}
+                      onClick={() =>
+                        setDiagramZoom((previous) =>
+                          Math.min(150, previous + 15),
+                        )
+                      }
                       aria-label="Zoom in"
                       className="cursor-pointer rounded px-2.5 py-1 text-xs font-semibold transition-all hover:bg-white"
                     >
@@ -207,20 +291,28 @@ export function ArchitectureFlows({ state }: { state: ProjectState }) {
             <div className="flex min-h-72 flex-col items-center justify-center gap-2 text-center">
               <LoaderCircle className="h-7 w-7 animate-spin text-primary" />
               <span className="text-sm font-bold text-on-surface">
-                {isLoading ? 'Loading project flowchart…' : 'Generating project flowchart…'}
+                {isLoading
+                  ? "Loading project flowchart…"
+                  : "Generating project flowchart…"}
               </span>
               <p className="max-w-sm text-xs text-on-surface-variant">
-                The Architect is building the Mermaid flow from this project's requirements and user stories.
+                The Architect is building the Mermaid flow from this project's
+                requirements and user stories.
               </p>
             </div>
           ) : renderError ? (
             <div className="flex min-h-72 flex-col items-center justify-center gap-2 text-center">
               <AlertTriangle className="h-7 w-7 text-red-600" />
-              <span className="text-sm font-bold text-on-surface">Flowchart could not be rendered</span>
+              <span className="text-sm font-bold text-on-surface">
+                Flowchart could not be rendered
+              </span>
               <p className="max-w-lg text-xs text-on-surface-variant">
-                The saved Mermaid source is invalid. Generate the PRD again to refresh the project flowchart.
+                The saved Mermaid source is invalid. Generate the PRD again to
+                refresh the project flowchart.
               </p>
-              <p className="max-w-lg break-words font-mono text-[10px] text-red-700">{renderError}</p>
+              <p className="max-w-lg break-words font-mono text-[10px] text-red-700">
+                {renderError}
+              </p>
             </div>
           ) : source ? (
             <MermaidDiagram
@@ -232,9 +324,13 @@ export function ArchitectureFlows({ state }: { state: ProjectState }) {
           ) : (
             <div className="flex min-h-72 flex-col items-center justify-center gap-2 text-center">
               <FileCode className="h-7 w-7 text-primary/40" />
-              <span className="text-sm font-bold text-on-surface">No flowchart generated yet</span>
+              <span className="text-sm font-bold text-on-surface">
+                No flowchart generated yet
+              </span>
               <p className="max-w-sm text-xs text-on-surface-variant">
-                Add and validate requirements, then use Generate PRD. The Architect will create and save a Mermaid flowchart for this project.
+                Add and validate requirements, then use Generate PRD. The
+                Architect will create and save a Mermaid flowchart for this
+                project.
               </p>
             </div>
           )}
@@ -246,9 +342,6 @@ export function ArchitectureFlows({ state }: { state: ProjectState }) {
           <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-bold text-on-surface">
             <FileCode className="h-4.5 w-4.5 text-primary" />
             Mermaid source
-            <span className="rounded border border-primary/20 bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-primary">
-              Saved with project
-            </span>
           </summary>
           <pre className="mt-3 overflow-x-auto rounded-[10px] border border-[#5b21b6] bg-[#2f343c] p-4 font-mono text-xs text-[#6fd08c]">
             <code>{source}</code>

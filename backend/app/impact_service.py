@@ -19,11 +19,11 @@ as the Traceability service applies (``extract_codes``), so the impact window
 and the traceability matrix always agree on what references what.
 """
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.merge_service import normalize_ticket_code, normalize_title, titles_match
+from app.merge_service import normalize_ticket_code, titles_match
 from app.repositories.prd import PRDDocumentRepository
 from app.repositories.prd_section import PRDSectionRepository
 from app.repositories.requirement_state import RequirementStateRepository

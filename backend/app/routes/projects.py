@@ -53,7 +53,6 @@ from app.prompt_loader import load_prd_template, load_prd_latex_template
 from app.event_manager import event_manager
 from app.review_service import get_review_history
 from app.review_service import governed_state_changed, mark_revised_if_approved
-from app.repositories.base import serialize_project
 
 logger = logging.getLogger("app.routes.projects")
 

@@ -1078,7 +1078,7 @@ async def match_requirement(raw_input: str, detected_intent: str, current_storie
     return {
         "matched_requirement_id": None,
         "confidence": 0.80,
-        "reason": f"Fallback due to parsing failure",
+        "reason": "Fallback due to parsing failure",
         "action": "NEW",
         "status": "MATCHED",
         "candidates": None

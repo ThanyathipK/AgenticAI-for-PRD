@@ -36,7 +36,6 @@ from app.repositories import (
     PRDDocumentRepository,
     PRDSectionRepository,
     PRDSectionVersionRepository,
-    PRDVersionRepository,
     RequirementStateRepository,
 )
 from app.schemas import (

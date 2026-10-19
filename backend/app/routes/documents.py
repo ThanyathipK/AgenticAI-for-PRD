@@ -60,8 +60,6 @@ from app.schemas import (
     UploadedDocumentResponse,
 )
 from app.services.document_ingestion_service import (
-    ALLOWED_FORMATS,
-    GENERIC_MIME_TYPES as _GENERIC_MIME_TYPES,
     NEEDS_OCR_MESSAGE,
     DocumentIngestionService,
 )

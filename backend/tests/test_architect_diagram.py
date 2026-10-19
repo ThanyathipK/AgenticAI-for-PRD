@@ -75,6 +75,7 @@ def _run_architect():
         "current_version": 2,
         "structured_requirements": {},
         "version_history_summaries": "No previous revision logs available.",
+        "stage_artifacts_only": True,
     })
 
 

@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.lock_service import LockService
 from app.models import (
     AuditResultModel,
     ClarificationQuestionModel,

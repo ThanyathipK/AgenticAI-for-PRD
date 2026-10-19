@@ -122,6 +122,7 @@ export default function Dashboard() {
     isAuthModalOpen,
     setIsAuthModalOpen,
   } = useAuth();
+  const userDisplayName = authUser?.full_name || authUser?.email || 'User';
   // AUTH 1.6 — Authenticated application state: because AUTH 1.5 flipped
   //            authUser, this hook re-scopes the project list to that user
   //            (`GET /api/project …`). Client-side gating only — every one of
@@ -626,7 +627,7 @@ export default function Dashboard() {
       <div id="split-container" className="flex-1 min-w-0 min-h-0 flex flex-col md:flex-row overflow-hidden bg-white" ref={splitContainerRef}>
         
         {/* LEFT PANEL: Conversational Timeline & Human-In-The-Loop */}
-        <ChatPanel state={state} />
+        <ChatPanel state={state} userName={userDisplayName} />
 
         {/* RESIZABLE DIVIDER */}
         <div
@@ -778,7 +779,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            <MainArtifactPanel state={state} />
+            <MainArtifactPanel state={state} userName={userDisplayName} />
 
           </div>
         </section>

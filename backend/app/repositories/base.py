@@ -287,6 +287,8 @@ def serialize_prd_document(prd: PRDDocumentModel) -> Dict[str, Any]:
         "version": prd.version,
         "prd_markdown": prd.prd_markdown,
         "mermaid_diagram": prd.mermaid_diagram,
+        "created_at": prd.created_at.isoformat() if prd.created_at else None,
+        "updated_at": prd.updated_at.isoformat() if prd.updated_at else None,
     }
 
 

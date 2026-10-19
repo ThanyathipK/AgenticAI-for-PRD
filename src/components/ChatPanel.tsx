@@ -20,9 +20,10 @@ import { ProjectState } from '../hooks/useProjectState';
 import { ChatEmptyState } from './ChatEmptyState';
 import { Tooltip } from './Tooltip';
 import { highlightMatch } from '../utils/highlight';
+import { displayUserName } from '../utils/actorName';
 import { renderInlineFormatting } from './MarkdownRenderer';
 
-export function ChatPanel({ state }: { state: ProjectState }) {
+export function ChatPanel({ state, userName }: { state: ProjectState; userName: string }) {
   const {
     messages,
     chatEndRef,
@@ -245,7 +246,7 @@ export function ChatPanel({ state }: { state: ProjectState }) {
                 <div className={`flex flex-col gap-1 max-w-[88%] ${isUser ? 'items-end' : 'items-start'}`}>
                   {/* Name card */}
                   <span className="text-[10px] text-[#a89b91] font-semibold tracking-[0.02em]">
-                    {isUser ? 'YOU' : 'AI'}, {msg.timestamp}
+                    {isUser ? displayUserName(userName) : 'AI'}, {msg.timestamp}
                   </span>
 
                   {/* Chat text box */}

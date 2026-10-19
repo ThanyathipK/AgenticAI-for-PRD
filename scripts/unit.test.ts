@@ -56,6 +56,7 @@ import { detailFromBlobError, detailFromJsonError } from '../src/api/client';
 import { handleError, handleWarning, notify } from '../src/components/Toast';
 import { renderInlineFormatting } from '../src/components/MarkdownRenderer';
 import { getPrdTemplateMarkdown } from '../src/hooks/useRequirementStore';
+import { displayUserName, displayVersionAuthor } from '../src/utils/actorName';
 import type { UserStory, RequirementItem } from '../src/components/types';
 import type { RequirementPayload, UserStoryPayload } from '../src/api/types';
 
@@ -64,6 +65,14 @@ import type { RequirementPayload, UserStoryPayload } from '../src/api/types';
 // deterministic in every timezone.
 // ----------------------------------------------------------------------------
 const NOW = new Date('2024-01-15T12:00:00');
+
+test('actor labels use the signed-in name only for human entries', () => {
+  assert.equal(displayUserName('  Ada Lovelace  '), 'Ada Lovelace');
+  assert.equal(displayVersionAuthor('user', 'Ada Lovelace'), 'Ada Lovelace');
+  assert.equal(displayVersionAuthor('YOU', 'Ada Lovelace'), 'Ada Lovelace');
+  assert.equal(displayVersionAuthor('automated_agent', 'Ada Lovelace'), 'automated_agent');
+  assert.equal(displayVersionAuthor('ai_merge', 'Ada Lovelace'), 'ai_merge');
+});
 
 test('formatDate: empty string for missing or invalid input', () => {
   assert.equal(formatDate(null), '');
