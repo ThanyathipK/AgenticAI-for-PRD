@@ -24,7 +24,6 @@ Alembic migration ``0004`` provisions the table; ``DocumentRepository`` owns
 persistence; serialization lives in ``repositories/base.py``.
 """
 import asyncio
-import io
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
@@ -59,6 +58,12 @@ from app.schemas import (
     DocumentMarkdownResponse,
     DocumentProcessResponse,
     UploadedDocumentResponse,
+)
+from app.services.document_ingestion_service import (
+    ALLOWED_FORMATS,
+    GENERIC_MIME_TYPES as _GENERIC_MIME_TYPES,
+    NEEDS_OCR_MESSAGE,
+    DocumentIngestionService,
 )
 
 logger = logging.getLogger("app.routes.documents")
@@ -129,40 +134,12 @@ async def _persist_extraction_message(
 # DOC-UPLOAD 3.1 — The upload allow-list (DOC-UPLOAD 1.1's `accept` attribute mirrors it):
 #             only these four formats can enter the knowledge base, each with the MIME
 #             types accepted for it. Anything else is a 400 at 3.4.
-ALLOWED_FORMATS = {
-    "docx": {
-        "original_format": "docx",
-        "mime_types": {
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        },
-    },
-    "pdf": {
-        "original_format": "pdf",
-        "mime_types": {"application/pdf"},
-    },
-    "md": {
-        "original_format": "md",
-        "mime_types": {"text/markdown", "text/x-markdown", "text/plain"},
-    },
-    "txt": {
-        "original_format": "txt",
-        "mime_types": {"text/plain"},
-    },
-}
-
 # DOC-UPLOAD 3.2 — Generic content-types tolerated for ANY supported format (curl uploads,
 #             drag&drop, browsers that send octet-stream) once the extension itself has
 #             validated in 3.4.
-_GENERIC_MIME_TYPES = {"", "application/octet-stream", "binary/octet-stream"}
-
 # DOC-UPLOAD 3.3 — OCR is explicitly OUT OF SCOPE. A PDF with no extractable text is
 #             surfaced with this clear message and, uniquely for this error, persisted as a
 #             traceable `failed` record (2.1.5) rather than aborting the upload.
-NEEDS_OCR_MESSAGE = (
-    "This PDF contains no extractable text and appears to be a scanned document. "
-    "OCR is out of scope. Please upload a text-based PDF or a markdown/plain-text "
-    "rendition instead."
-)
 # DOC-UPLOAD 3.4 — Extension + MIME validation (step 2.1.2). Extension decides the
 #             format; a declared MIME that contradicts the extension is a 400 (an empty or
 #             generic MIME is tolerated per 3.2). Returns the descriptor used for
@@ -174,27 +151,7 @@ def _resolve_upload_format(filename: str, content_type: str) -> Dict:
         HTTPException: 400 for an unsupported extension or a mismatched MIME
             type.
     """
-    lower_name = (filename or "").lower()
-    ext = lower_name.rsplit(".", 1)[-1] if "." in lower_name else ""
-    entry = ALLOWED_FORMATS.get(ext)
-    if not entry:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Unsupported file type '.{ext}'. Supported formats: "
-                "docx, pdf, md, txt."
-            ),
-        )
-    mime = (content_type or "").strip().lower()
-    if mime and mime not in entry["mime_types"] and mime not in _GENERIC_MIME_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"MIME type '{content_type}' does not match the file extension "
-                f"'.{ext}'. Expected one of: {', '.join(sorted(entry['mime_types']))}."
-            ),
-        )
-    return {"original_format": entry["original_format"], "mime_type": mime or None}
+    return DocumentIngestionService.resolve_upload_format(filename, content_type)
 
 
 def _validate_binary_signature(raw: bytes, original_format: str) -> None:
@@ -204,16 +161,7 @@ def _validate_binary_signature(raw: bytes, original_format: str) -> None:
     UTF-8 handling used for Markdown and plain text. Full parsing remains the
     authoritative structural validation performed by the existing converters.
     """
-    if original_format == "pdf" and not raw.startswith(b"%PDF-"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File contents do not match the declared PDF format.",
-        )
-    if original_format == "docx" and not raw.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File contents do not match the declared DOCX format.",
-        )
+    DocumentIngestionService.validate_binary_signature(raw, original_format)
 
 
 # DOC-UPLOAD 3.5 — Streaming size cap (step 2.1.3): reads the upload in 1 MB slices and
@@ -228,19 +176,7 @@ async def _read_upload_with_size_cap(file: UploadFile) -> bytes:
     abuse, NOT tokens. ``token_count`` is measured on the converted markdown and
     the full content is always persisted regardless of token size.
     """
-    max_bytes = settings.MAX_UPLOAD_MB * 1024 * 1024
-    buf = bytearray()
-    while True:
-        chunk = await file.read(1024 * 1024)
-        if not chunk:
-            break
-        buf.extend(chunk)
-        if len(buf) > max_bytes:
-            raise HTTPException(
-                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                detail=f"File exceeds the maximum upload size of {settings.MAX_UPLOAD_MB}MB.",
-            )
-    return bytes(buf)
+    return await DocumentIngestionService.read_upload_with_size_cap(file)
 
 
 # DOC-UPLOAD 3.6 — Canonical conversion, run off the event loop by 2.1.4:
@@ -256,63 +192,7 @@ def _convert_to_markdown(raw: bytes, original_format: str) -> str:
       clear 'needs-OCR' error (OCR is out of scope — never a silent stub).
     - md/txt -> passthrough as-is.
     """
-    if not raw:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The uploaded file is empty.",
-        )
-
-    if original_format in ("md", "txt"):
-        return raw.decode("utf-8", errors="replace")
-
-    if original_format == "docx":
-        try:
-            import mammoth  # type: ignore
-        except ImportError as exc:  # pragma: no cover - dependency install guard
-            logger.error("mammoth is not installed; cannot convert docx files.")
-            raise HTTPException(
-                status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                detail="DOCX conversion is unavailable on this server (mammoth missing).",
-            ) from exc
-        try:
-            result = mammoth.convert_to_markdown(io.BytesIO(raw))
-            return result.value or ""
-        except Exception as exc:
-            logger.error("DOCX conversion failed: %s", exc)
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Could not read this DOCX file: {exc}",
-            ) from exc
-
-    # pdf
-    try:
-        from pypdf import PdfReader  # type: ignore
-    except ImportError as exc:  # pragma: no cover - dependency install guard
-        logger.error("pypdf is not installed; cannot extract PDF text.")
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="PDF extraction is unavailable on this server (pypdf missing).",
-        ) from exc
-    try:
-        reader = PdfReader(io.BytesIO(raw))
-        pages = []
-        for page in reader.pages:
-            pages.append((page.extract_text() or "").strip())
-    except Exception as exc:
-        logger.error("PDF extraction failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Could not read this PDF file: {exc}",
-        ) from exc
-
-    text = "\n\n".join(p for p in pages if p)
-    if not text.strip():
-        # Scanned / image-only PDF -> explicit, loud 'needs-OCR' signal.
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=NEEDS_OCR_MESSAGE,
-        )
-    return text
+    return DocumentIngestionService.convert_to_markdown(raw, original_format)
 
 
 # ==========================================

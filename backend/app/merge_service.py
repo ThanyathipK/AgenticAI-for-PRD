@@ -33,6 +33,8 @@ import json
 import re
 from typing import Dict, Any, List, Optional, Set, Tuple
 
+from app.application_types import RequirementMergeReport, SemanticChangePayload
+
 
 # ==========================================
 # NORMALIZATION / TICKET HELPERS
@@ -308,9 +310,9 @@ def _match_incoming_story(
 def merge_user_stories_with_report(
     existing_stories: List[Dict[str, Any]],
     new_incoming_stories: List[Dict[str, Any]],
-    semantic_recs: Optional[List[Dict[str, Any]]] = None,
+    semantic_recs: Optional[List[SemanticChangePayload]] = None,
     protected_ids: Optional[List[str]] = None,
-) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+) -> Tuple[List[Dict[str, Any]], RequirementMergeReport]:
     """
     Performs an INCREMENTAL reconciliation of newly generated user stories
     against the persisted ones WITHOUT overwriting existing data.
@@ -375,7 +377,7 @@ def merge_user_stories_with_report(
 
     matched_existing_ptrs: Set[int] = set()
     merged_stories: List[Dict[str, Any]] = []
-    merge_report: Dict[str, Dict[str, Any]] = {}
+    merge_report: RequirementMergeReport = {}
 
     # 1. Process incoming stories
     for inc in new_incoming_stories:
@@ -563,7 +565,7 @@ def merge_user_stories_with_report(
 def merge_user_stories(
     existing_stories: List[Dict[str, Any]],
     new_incoming_stories: List[Dict[str, Any]],
-    semantic_recs: Optional[List[Dict[str, Any]]] = None,
+    semantic_recs: Optional[List[SemanticChangePayload]] = None,
     protected_ids: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """

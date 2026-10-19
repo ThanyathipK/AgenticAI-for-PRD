@@ -11,10 +11,14 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit",
+    "lint": "npm run lint:types && npm run lint:eslint",
+    "lint:types": "tsc --noEmit",
+    "lint:eslint": "eslint src/hooks/chat src/components/MainArtifactPanel.tsx src/components/WorkspaceNavigation.tsx scripts/frontend_workflows.test.ts",
+    "format:check": "prettier --check src/hooks/chat src/components/MainArtifactPanel.tsx src/components/WorkspaceNavigation.tsx scripts/frontend_workflows.test.ts",
+    "format:write": "prettier --write src/hooks/chat src/components/MainArtifactPanel.tsx src/components/WorkspaceNavigation.tsx scripts/frontend_workflows.test.ts",
     "schema:parse": "tsx scripts/parse_check.ts",
     "schema:drift": "./venv/bin/python backend/check_schema_drift.py",
-    "test": "tsx --test scripts/unit.test.ts scripts/auth.test.ts scripts/requirement_locks.test.ts"
+    "test": "tsx --test scripts/unit.test.ts scripts/auth.test.ts scripts/requirement_locks.test.ts scripts/frontend_workflows.test.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
@@ -27,13 +31,18 @@
     "react-dom": "^19.0.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.21",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "prettier": "^3.9.10",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
+    "typescript-eslint": "^8.71.2",
     "vite": "^6.2.3"
   }
 }

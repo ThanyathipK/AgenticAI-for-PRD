@@ -6,6 +6,9 @@
 
 **Agentic, banking-grade requirements engineering** · local LLM (LM Studio) · FastAPI + LangGraph · Supabase PostgreSQL · React 19
 
+Architectural policies and the invariants that refactors must preserve are
+recorded in [`docs/adr`](docs/adr/README.md).
+
 </div>
 
 Agentic AI turns plain-English banking product briefs into **audited, versioned, engineering-ready requirements**. You sign in, describe a feature in the workspace chat — or upload an existing brief / BRD document (DOCX, PDF, Markdown, TXT) into the project's knowledge base. A LangGraph workflow of specialist agents (Router, Matcher, Gatherer, Auditor, Architect) runs against a model served locally by [LM Studio](https://lmstudio.ai). Requirement mutations are staged for confirmation, while audits and generated PRD/diagram artifacts are persisted directly. A derived **traceability matrix** reports coverage across requirements, stories, criteria, PRD sections, and diagrams.

@@ -13,10 +13,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.auth import AuthenticatedUser
+from app.application_types import BackgroundJobState
 from app.database import AsyncSessionLocal
 from app.models import GenerationJobModel, UserModel
 from app.schemas import ProcessRequirementsRequest
 from app.config import settings
+from app.errors import classify_exception
+from app.observability import LogContext, log_event
 
 logger = logging.getLogger("app.generation_jobs")
 
@@ -42,7 +45,7 @@ def _public_failure(exc: Exception) -> str:
     return "workflow_error: The background workflow failed. Check the server log for details."
 
 
-def serialize_job(job: GenerationJobModel) -> dict[str, Any]:
+def serialize_job(job: GenerationJobModel) -> BackgroundJobState:
     return {
         "id": str(job.id),
         "project_id": str(job.project_id),
@@ -58,7 +61,7 @@ def serialize_job(job: GenerationJobModel) -> dict[str, Any]:
     }
 
 
-async def create_job(project_id: str, user_id: str, job_type: str, payload: dict[str, Any], session) -> dict[str, Any]:
+async def create_job(project_id: str, user_id: str, job_type: str, payload: dict[str, Any], session) -> BackgroundJobState:
     existing = await session.scalar(
         select(GenerationJobModel).where(
             GenerationJobModel.project_id == uuid.UUID(str(project_id)),
@@ -156,6 +159,7 @@ async def _execute(job: GenerationJobModel, session) -> dict[str, Any]:
 
 async def _run_job(job_id: str) -> None:
     started = time.perf_counter()
+    log_context = LogContext(job_id=job_id, workflow="background_generation")
     logger.info("[JOB][%s][LOAD][START] Loading queued generation job", job_id)
     async with AsyncSessionLocal() as session:
         job = await session.get(GenerationJobModel, uuid.UUID(job_id))
@@ -170,6 +174,12 @@ async def _run_job(job_id: str) -> None:
             logger.info("[JOB][%s][CANCEL][DONE] Cancelled before execution", job_id)
             return
         job.status = "running"
+        log_context = LogContext(
+            project_id=str(job.project_id),
+            user_id=str(job.requested_by_user_id),
+            workflow=str(job.job_type),
+            job_id=job_id,
+        )
         job.progress_stage = "model_processing"
         job.started_at = job.started_at or datetime.now(timezone.utc)
         await session.commit()
@@ -236,6 +246,7 @@ async def _run_job(job_id: str) -> None:
             )
         except Exception as exc:
             failed_stage = job.progress_stage
+            policy = classify_exception(exc)
             await session.rollback()
             job = await session.get(GenerationJobModel, uuid.UUID(job_id))
             if job is not None:
@@ -248,6 +259,17 @@ async def _run_job(job_id: str) -> None:
                 "[JOB][%s][FAILED] stage=%s elapsed_ms=%.1f",
                 job_id, failed_stage,
                 (time.perf_counter() - started) * 1000,
+            )
+            log_event(
+                logger,
+                logging.ERROR,
+                "background_job.failed",
+                log_context,
+                exc_info=True,
+                kind=policy.kind.value,
+                retryable=policy.retryable,
+                rollback=policy.rollback,
+                stage=failed_stage,
             )
 
 

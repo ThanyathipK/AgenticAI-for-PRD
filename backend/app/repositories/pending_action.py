@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import PendingActionModel
+from app.application_types import PendingMutation
 from app.repositories.base import as_uuid, serialize_pending_action
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ class PendingActionRepository:
     #             "gatherer_node", status WAITING_CONFIRMATION (model default); the
     #             caller supplies expires_at (never enforced — see the class note).
     @staticmethod
-    async def create(project_id: str, data: Dict[str, Any], expires_at: datetime, session: AsyncSession) -> Dict[str, Any]:
+    async def create(project_id: str, data: PendingMutation, expires_at: datetime, session: AsyncSession) -> Dict[str, Any]:
         pid = as_uuid(project_id)
         action = PendingActionModel(
             project_id=pid,

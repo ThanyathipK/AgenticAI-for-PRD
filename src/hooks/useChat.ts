@@ -3,9 +3,8 @@
 // (send, validate, generate PRD, clarifications). Domain state lives in the
 // shared `RequirementStore`; project info and pending-actions are injected
 // through `deps`.
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import axios from 'axios';
 import { api } from '../api/client';
 import type { PendingActionPayload, ProcessRequirementsResponse, ProjectSummary } from '../api/types';
 import {
@@ -17,6 +16,17 @@ import type { VersionHistory } from '../components/types';
 import { handleError } from '../components/Toast';
 import type { RequirementStore } from './useRequirementStore';
 import type { WorkspaceTab } from './useWorkspaceUi';
+import {
+  extractErrorDetail,
+  isAbortError,
+  isPayloadTooLargeError,
+  isRateLimitError,
+  isUnauthorizedError,
+  payloadTooLargeContent,
+  rateLimitedContent,
+} from './chat/agentErrors';
+import { runBackgroundAgentJob } from './chat/backgroundJobs';
+import { useAgentCancellation } from './chat/useAgentCancellation';
 
 export interface ChatDeps {
   projectId: string | null;
@@ -57,110 +67,16 @@ export interface UseChatResult {
 
 const nowTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-const activeJobKey = (projectId: string, jobType: 'auditor' | 'architect') =>
-  `agenticdia:active-job:${projectId}:${jobType}`;
-
 const questionAnswerKey = (question: { id?: string }, index: number) =>
   question.id || `q-${index}`;
-
-const waitForPoll = (signal: AbortSignal, delayMs = 1000): Promise<void> =>
-  new Promise((resolve, reject) => {
-    const onAbort = () => {
-      window.clearTimeout(timer);
-      reject(new DOMException('Generation cancelled', 'AbortError'));
-    };
-    const timer = window.setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, delayMs);
-    if (signal.aborted) {
-      onAbort();
-      return;
-    }
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
-
-// --- Rate-limit (HTTP 429) awareness ---------------------------------------
-// A 429 from the backend is a transient "slow down" signal (Finding #39), NOT a
-// backend outage. These helpers let callers distinguish the two so they surface
-// a "please wait" notice instead of the automatic local-sandbox fallback.
-
-const isRateLimitError = (err: unknown): boolean => {
-  if (!err || typeof err !== 'object') return false;
-  return (err as { response?: { status?: number } }).response?.status === 429;
-};
-
-const extractRetryAfter = (err: unknown): number | null => {
-  if (!err || typeof err !== 'object') return null;
-  const headers = (err as { response?: { headers?: Record<string, unknown> & { get?: (k: string) => unknown } } }).response?.headers;
-  const raw =
-    headers?.['retry-after'] ??
-    headers?.['Retry-After'] ??
-    (typeof headers?.get === 'function' ? headers.get('retry-after') : undefined);
-  if (raw === undefined || raw === null) return null;
-  const seconds = Number(raw);
-  return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : null;
-};
-
-const rateLimitedContent = (err: unknown): string => {
-  const wait = extractRetryAfter(err);
-  const suffix = wait === null
-    ? 'A short time window will restore access.'
-    : `Please wait about ${wait} second(s) before continuing.`;
-  return `Rate limit reached. Too many requests in a short window. ${suffix}`;
-};
-
-// --- Payload-too-large (HTTP 413) awareness ---------------------------------
-// A 413 from the backend means the request payload — the project's full
-// structured requirements, user stories and acceptance criteria serialized to
-// JSON — exceeded MAX_CONTEXT_TOKENS before any agent ran (Finding #39 guard).
-// It is a *content size* problem, not a crash: nothing was saved or changed.
-// These helpers surface an actionable notice instead of the generic
-// "generation failed" message.
-const isPayloadTooLargeError = (err: unknown): boolean => {
-  if (!err || typeof err !== 'object') return false;
-  return (err as { response?: { status?: number } }).response?.status === 413;
-};
-
-const isUnauthorizedError = (err: unknown): boolean => {
-  if (!err || typeof err !== 'object') return false;
-  return (err as { response?: { status?: number } }).response?.status === 401;
-};
-
-const extractErrorDetail = (err: unknown): string | null => {
-  if (!err || typeof err !== 'object') return null;
-  const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
-  return typeof detail === 'string' ? detail : null;
-};
-
-const payloadTooLargeContent = (err: unknown): string => {
-  const measured = extractErrorDetail(err);
-  return [
-    'Project too large for the current context budget.',
-    'The project\'s requirements, user stories and acceptance criteria exceed the LLM context budget (`MAX_CONTEXT_TOKENS`). The request was rejected before any agent ran. Nothing was saved or changed.',
-    '',
-    'How to resolve:',
-    '- Trim the project: remove or merge redundant user stories or acceptance criteria, or',
-    '- Raise `MAX_CONTEXT_TOKENS` in `backend/.env` (e.g. `16384`) if the loaded LM Studio model supports a larger context window.',
-    measured ? `\n${measured}` : '',
-  ].filter(Boolean).join('\n');
-};
-
-// --- Stop-button (request abort) awareness ----------------------------------
-// When the user presses Stop we cancel the axios request. Axios then rejects
-// with a CanceledError — that is an intentional user action, NOT a failure, so
-// every handler surfaces a neutral "stopped" notice instead of an error toast.
-const isAbortError = (err: unknown): boolean =>
-  axios.isCancel(err) || (err as { code?: string; name?: string })?.code === 'ERR_CANCELED'
-  || (err as { name?: string })?.name === 'AbortError';
 
 export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult {
   const [rawInput, setRawInput] = useState<string>('');
 
-  // Abort controller for whichever agent request is currently in flight.
-  // The Stop button aborts it; each handler creates a fresh controller per run.
-  const abortRef = useRef<AbortController | null>(null);
-  const backgroundJobRef = useRef<string | null>(null);
+  const cancellation = useAgentCancellation(
+    () => deps.projectId,
+    store.setSyncStatus,
+  );
 
   // (Chat auto-scroll moved into ChatPanel, which owns the scroll container:
   // it only follows the timeline while the user is near the bottom and shows a
@@ -220,8 +136,7 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
     store.setSyncStatus('Detecting intent...');
     store.setCurrentAgentNode(null);
 
-    const controller = new AbortController();
-    abortRef.current = controller;
+    const controller = cancellation.beginRequest();
 
     try {
       // The backend handles intent detection internally and routes accordingly:
@@ -387,7 +302,7 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
       }]);
       store.setSyncStatus('Request failed. Nothing was saved.');
     } finally {
-      if (abortRef.current === controller) abortRef.current = null;
+      cancellation.finishRequest(controller);
       store.setIsLoading(false);
       store.setIsProcessing(false);
       store.setCurrentAgentNode(null);
@@ -419,8 +334,7 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
     store.setSyncStatus('Running Technical Audit...');
     store.setCurrentAgentNode('auditor_node');
 
-    const controller = new AbortController();
-    abortRef.current = controller;
+    const controller = cancellation.beginRequest();
 
     try {
       const request = {
@@ -435,35 +349,14 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
         current_version: deps.currentVersion,
         version_history_summaries: 'No previous history.',
       };
-      const storageKey = activeJobKey(projectId, 'auditor');
-      const savedJobId = window.localStorage.getItem(storageKey);
-      let job;
-      if (savedJobId) {
-        try {
-          job = await api.getGenerationJob<ProcessRequirementsResponse>(projectId, savedJobId);
-        } catch (resumeError) {
-          if (isUnauthorizedError(resumeError)) throw resumeError;
-          window.localStorage.removeItem(storageKey);
-          job = await api.startAgentJob(request);
-        }
-      } else {
-        job = await api.startAgentJob(request);
-      }
-      window.localStorage.setItem(storageKey, job.id);
-      backgroundJobRef.current = job.id;
-      let pollDelayMs = 1000;
-      while (!['completed', 'failed', 'cancelled'].includes(job.status)) {
-        await waitForPoll(controller.signal, pollDelayMs);
-        job = await api.getGenerationJob<ProcessRequirementsResponse>(projectId, job.id);
-        store.setSyncStatus(`Running Technical Audit… ${job.progress_stage.replaceAll('_', ' ')}`);
-        pollDelayMs = Math.min(5000, pollDelayMs + 500);
-      }
-      window.localStorage.removeItem(storageKey);
-      if (job.status === 'cancelled') throw new DOMException('Generation cancelled', 'AbortError');
-      if (job.status === 'failed' || !job.result) {
-        throw new Error(job.error_message || 'Background audit failed.');
-      }
-      const data = job.result;
+      const data = await runBackgroundAgentJob<ProcessRequirementsResponse>({
+        projectId,
+        jobType: 'auditor',
+        request,
+        signal: controller.signal,
+        onJobId: cancellation.setBackgroundJob,
+        onProgress: stage => store.setSyncStatus(`Running Technical Audit… ${stage}`),
+      });
 
       // AUDIT 5.2 — Verdict mapping (api/transforms): audit_result → UI model
       //            (is_valid, passed/failed checks, clarification questions).
@@ -617,8 +510,7 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
       }]);
       store.setSyncStatus('Audit failed. No changes were saved.');
     } finally {
-      if (abortRef.current === controller) abortRef.current = null;
-      backgroundJobRef.current = null;
+      cancellation.finishRequest(controller);
       store.setIsLoading(false);
       store.setIsProcessing(false);
       store.setCurrentAgentNode(null);
@@ -648,8 +540,7 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
     store.setSyncStatus('Compiling enterprise PRD document...');
     store.setCurrentAgentNode('architect_node');
 
-    const controller = new AbortController();
-    abortRef.current = controller;
+    const controller = cancellation.beginRequest();
 
     try {
       const request = {
@@ -670,35 +561,14 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
         current_version: deps.currentVersion,
         version_history_summaries: buildVersionHistorySummaries(),
       };
-      const storageKey = activeJobKey(projectId, 'architect');
-      const savedJobId = window.localStorage.getItem(storageKey);
-      let job;
-      if (savedJobId) {
-        try {
-          job = await api.getGenerationJob<ProcessRequirementsResponse>(projectId, savedJobId);
-        } catch (resumeError) {
-          if (isUnauthorizedError(resumeError)) throw resumeError;
-          window.localStorage.removeItem(storageKey);
-          job = await api.startAgentJob(request);
-        }
-      } else {
-        job = await api.startAgentJob(request);
-      }
-      window.localStorage.setItem(storageKey, job.id);
-      backgroundJobRef.current = job.id;
-      let pollDelayMs = 1000;
-      while (!['completed', 'failed', 'cancelled'].includes(job.status)) {
-        await waitForPoll(controller.signal, pollDelayMs);
-        job = await api.getGenerationJob<ProcessRequirementsResponse>(projectId, job.id);
-        store.setSyncStatus(`Compiling enterprise PRD document… ${job.progress_stage.replaceAll('_', ' ')}`);
-        pollDelayMs = Math.min(5000, pollDelayMs + 500);
-      }
-      window.localStorage.removeItem(storageKey);
-      if (job.status === 'cancelled') throw new DOMException('Generation cancelled', 'AbortError');
-      if (job.status === 'failed' || !job.result) {
-        throw new Error(job.error_message || 'Background PRD generation failed.');
-      }
-      const data = job.result;
+      const data = await runBackgroundAgentJob<ProcessRequirementsResponse>({
+        projectId,
+        jobType: 'architect',
+        request,
+        signal: controller.signal,
+        onJobId: cancellation.setBackgroundJob,
+        onProgress: stage => store.setSyncStatus(`Compiling enterprise PRD document… ${stage}`),
+      });
 
       // ARCHITECT 1.5 — Response applied to UI state: the filled PRD markdown and the
       //            refreshed Mermaid diagram replace the stored ones, a success bubble
@@ -787,8 +657,7 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
       }]);
       store.setSyncStatus('PRD generation failed. No document saved.');
     } finally {
-      if (abortRef.current === controller) abortRef.current = null;
-      backgroundJobRef.current = null;
+      cancellation.finishRequest(controller);
       store.setIsLoading(false);
       store.setIsProcessing(false);
       store.setCurrentAgentNode(null);
@@ -799,25 +668,7 @@ export function useChat(store: RequirementStore, deps: ChatDeps): UseChatResult 
   // hard-cancel the running workflow task (best-effort), then aborts the local
   // axios request so the UI unlocks immediately instead of waiting for the LLM
   // workflow to finish.
-  const handleStopGeneration = () => {
-    const controller = abortRef.current;
-    if (!controller) return;
-    const projectId = deps.projectId;
-    if (projectId) {
-      const jobId = backgroundJobRef.current;
-      const cancellation = jobId
-        ? api.cancelGenerationJob(projectId, jobId)
-        : api.cancelProcessRequirements(projectId);
-      void cancellation.catch(() => {
-        // Best-effort only: if this loses a race with completion (or fails),
-        // the local abort below still unblocks the UI instantly.
-      });
-    }
-    controller.abort();
-    abortRef.current = null;
-    backgroundJobRef.current = null;
-    store.setSyncStatus('Stopping generation...');
-  };
+  const handleStopGeneration = cancellation.stop;
 
   // (Removed) The former `simulateAgentWorkflowFallback` fabricated a fake user
   // story + version bump locally whenever any backend call failed. It silently

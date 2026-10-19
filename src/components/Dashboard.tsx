@@ -17,28 +17,15 @@ import {
   Check,
   XCircle,
   Pencil,
-  FileText,
-  Network,
-  GitBranch,
-  Clock,
-  Download,
-  Printer,
   LayoutGrid,
   Lock,
   Pin,
   PinOff,
-  ChevronDown,
 } from 'lucide-react';
 import { useProjectState } from '../hooks/useProjectState';
 import { isLockableRequirementId } from '../hooks/useArtifactLocks';
-import type { WorkspaceTab } from '../hooks/useWorkspaceUi';
 import { ChatPanel } from './ChatPanel';
-import { PRDEditor } from './PRDEditor';
-import { ArchitectureFlows } from './ArchitectureFlows';
-import { RequirementTraceability } from './RequirementTraceability';
-import { VersionHistory } from './VersionHistory';
 import { ConfirmationPanel } from './ConfirmationPanel';
-import { DocumentLibrary } from './DocumentLibrary';
 import { BUSINESS_TOPICS, NewProjectModal, STAKEHOLDER_ROLES } from './NewProjectModal';
 import { ConfirmModal } from './ConfirmModal';
 import { AuthPanel } from './AuthPanel';
@@ -49,6 +36,8 @@ import { Tooltip, TooltipBubble } from './Tooltip';
 import { highlightMatch } from '../utils/highlight';
 import { api } from '../api/client';
 import type { ProjectIntake } from './NewProjectModal';
+import { WorkspaceNavigation } from './WorkspaceNavigation';
+import { MainArtifactPanel } from './MainArtifactPanel';
 
 const escapeTableCell = (value: string) => value.replaceAll('|', '\\|').replaceAll('\n', '<br>');
 
@@ -116,16 +105,6 @@ const seedPrdIntake = async (projectId: string, projectName: string, intake: Pro
   }
 };
 
-// Workspace tabs (PRD Documents / Requirements / Flows / Versions). Declared
-// once and shared by both the desktop pill navigation and the tablet/mobile
-// dropdown selector so the active-tab behavior can never drift apart.
-const TAB_ITEMS: ReadonlyArray<{ id: WorkspaceTab; label: string; icon: typeof FileText }> = [
-  { id: 'prd', label: 'PRD Documents', icon: FileText },
-  { id: 'trace', label: 'Requirements', icon: GitBranch },
-  { id: 'flows', label: 'Flows', icon: Network },
-  { id: 'history', label: 'Versions', icon: Clock },
-];
-
 export default function Dashboard() {
   // AUTH 1.3 — Frontend session owner instantiated once for the whole app
   //            (src/hooks/useAuth.ts). It provides the LOGIN callbacks wired to
@@ -192,7 +171,6 @@ export default function Dashboard() {
     handleUnlockRequirement,
     lockableRequirements,
     refreshLockableRequirements,
-    documents,
   } = state;
 
   // ---- Sidebar project search (pure presentation state) --------------------
@@ -201,7 +179,6 @@ export default function Dashboard() {
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const [exportMenuOpen, setExportMenuOpen] = useState<boolean>(false);
   // Use one sidebar state at every viewport size. Previously narrow screens
   // switched to a separate overlay drawer, so the same control had different
   // behavior depending on the window width.
@@ -225,24 +202,6 @@ export default function Dashboard() {
     }
   }, [isSearchOpen]);
 
-  useEffect(() => {
-    if (!exportMenuOpen) return;
-    const handlePointer = (e: MouseEvent) => {
-      const target = e.target;
-      if (target instanceof Element && target.closest('[data-export-menu]')) return;
-      setExportMenuOpen(false);
-    };
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setExportMenuOpen(false);
-    };
-    document.addEventListener('mousedown', handlePointer);
-    document.addEventListener('keydown', handleKey);
-    return () => {
-      document.removeEventListener('mousedown', handlePointer);
-      document.removeEventListener('keydown', handleKey);
-    };
-  }, [exportMenuOpen]);
-
   const handleToggleProjectSearch = () => {
     // Search is a per-user, server-scoped query — meaningless (and 401) before
     // login, so the toggle is a no-op for signed-out visitors.
@@ -263,43 +222,6 @@ export default function Dashboard() {
   // Pinned chats sort first; the list below renders them as two clearly
   // separated sections ("Pinned" vs "Recent Projects") instead of one blend.
   const visibleProjects = [...projects].sort((a, b) => Number(!!b.is_pinned) - Number(!!a.is_pinned));
-
-  const exportMenu = () => (
-    <div data-export-menu className="relative shrink-0 no-print">
-      <button
-        type="button"
-        onClick={() => setExportMenuOpen((open) => !open)}
-        aria-label="Export document"
-        aria-haspopup="menu"
-        aria-expanded={exportMenuOpen}
-        className="workspace-export-button h-[38px] px-2.5 rounded-[8px] bg-white border border-export-border hover:bg-export-hover text-xs font-semibold text-export-text transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
-      >
-        <Download className="w-3.5 h-3.5 shrink-0" />
-        <span className="workspace-export-label">Export</span>
-        <ChevronDown className={`workspace-export-chevron w-3 h-3 shrink-0 transition-transform ${exportMenuOpen ? 'rotate-180' : ''}`} />
-      </button>
-      {exportMenuOpen && (
-        <div role="menu" className="absolute right-0 top-full mt-1.5 z-50 w-40 rounded-[10px] border border-outline bg-white p-1 shadow-xl">
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => { setExportMenuOpen(false); handleDownloadDocx(); }}
-            className="w-full rounded-[7px] px-3 py-2 text-left text-xs font-semibold text-on-surface hover:bg-tab-hover flex items-center gap-2"
-          >
-            <Download className="w-3.5 h-3.5 text-primary" /> DOCX
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => { setExportMenuOpen(false); handlePrintPDF(); }}
-            className="w-full rounded-[7px] px-3 py-2 text-left text-xs font-semibold text-on-surface hover:bg-tab-hover flex items-center gap-2"
-          >
-            <Printer className="w-3.5 h-3.5 text-primary" /> PDF
-          </button>
-        </div>
-      )}
-    </div>
-  );
 
   return (
     <div className="flex-1 flex overflow-hidden h-full">
@@ -718,31 +640,12 @@ export default function Dashboard() {
               Versions) modeled on the PRD nav reference; each tab is wired to its
               live workspace panel, and the DOCX/PDF exports sit at the pill's right
               edge (inside it) like the reference's Export button. */}
-          <div className="h-[50px] bg-white border-b border-outline shrink-0 select-none flex items-center">
-            <div className="workspace-toolbar flex flex-1 min-w-0 items-center gap-1.5 px-2 sm:px-3">
-              <nav aria-label="Workspace views" className="flex flex-[1_1_0%] min-w-0 items-center gap-0.5 p-[3px] h-[38px] bg-tab-pill border border-tab-pill-border rounded-[8px] overflow-hidden">
-                {TAB_ITEMS.map((tab) => (
-                  <Tooltip key={tab.id} label={tab.label} side="bottom" className="flex-[1_1_0%] min-w-0 h-full">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab(tab.id)}
-                      aria-label={`${tab.label} tab`}
-                      aria-current={activeTab === tab.id ? 'page' : undefined}
-                      className={`flex w-full min-w-0 h-full px-1 rounded-[6px] text-[11px] leading-none font-semibold whitespace-nowrap transition-colors duration-200 items-center justify-center gap-1 overflow-hidden ${
-                        activeTab === tab.id
-                          ? 'bg-tab-active text-white shadow-sm'
-                          : 'text-tab-text hover:bg-tab-hover'
-                      }`}
-                    >
-                      <tab.icon className="w-3.5 h-3.5 shrink-0" />
-                      <span className="workspace-tab-label min-w-0 truncate">{tab.label}</span>
-                    </button>
-                  </Tooltip>
-                ))}
-              </nav>
-              {exportMenu()}
-            </div>
-          </div>
+          <WorkspaceNavigation
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            onDownloadDocx={handleDownloadDocx}
+            onPrintPdf={handlePrintPDF}
+          />
 
           {/* RIGHT VIEW WINDOW */}
           <div id="printable-document" className="flex-1 min-w-0 overflow-y-auto p-3 md:p-4 custom-scrollbar">
@@ -875,30 +778,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            <div className="max-w-4xl mx-auto">
-              {activeTab === 'prd' && <PRDEditor state={state} />}
-              {activeTab === 'flows' && <ArchitectureFlows state={state} />}
-              {activeTab === 'trace' && (
-                <>
-                  <DocumentLibrary projectId={projectId} docs={documents} />
-                  <details className="mt-3 rounded-[10px] border border-outline bg-white">
-                    <summary className="cursor-pointer list-none px-4 py-3 text-xs font-semibold text-on-surface flex items-center justify-between">
-                      Advanced traceability
-                      <ChevronDown className="w-4 h-4 text-on-surface-variant" />
-                    </summary>
-                    <div className="border-t border-outline p-3">
-                      <RequirementTraceability projectId={projectId} />
-                    </div>
-                  </details>
-                </>
-              )}
-              {activeTab === 'history' && (
-                <>
-                  <VersionHistory state={state} />
-                  <DocumentLibrary projectId={projectId} docs={documents} />
-                </>
-              )}
-            </div>
+            <MainArtifactPanel state={state} />
 
           </div>
         </section>

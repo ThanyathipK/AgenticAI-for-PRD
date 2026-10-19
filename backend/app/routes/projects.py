@@ -1040,7 +1040,9 @@ async def _fill_official_export_template(
     db: AsyncSession,
 ) -> str:
     """Put project data and legacy prose into the official template body."""
-    from app.prd_filler import extract_intake_fields, extract_manual_export_fields, fill_template_body, format_project_status
+    from app.prd.model import CanonicalPRD, PRDContent, PRDMetadata
+    from app.prd.renderers import render_latex
+    from app.prd_filler import extract_intake_fields, extract_manual_export_fields, format_project_status
 
     req_state = await RequirementStateRepository.get_by_project_id(project_id, db) or {}
     requirements = req_state.get("requirements") or []
@@ -1121,21 +1123,24 @@ async def _fill_official_export_template(
         data["user_stories"] = manual_fields["functional_rows"]
         data["acceptance_criteria"] = []
     saved_intake = extract_intake_fields(markdown_source)
-    return fill_template_body(
-        project_id=project_id,
-        project_name=str(project.get("name") or payload.project_name or ""),
-        pmo_no=saved_intake.get("pmo_no"),
-        author=saved_intake.get("author") or "Product Owner",
-        status=format_project_status(project.get("status")),
-        stakeholders=saved_intake.get("stakeholders"),
-        business_topics=saved_intake.get("business_topics"),
-        version=version_number,
-        data=data,
+    document = CanonicalPRD(
+        metadata=PRDMetadata(
+            project_id=project_id,
+            project_name=str(project.get("name") or payload.project_name or ""),
+            pmo_no=saved_intake.get("pmo_no"),
+            author=saved_intake.get("author") or "Product Owner",
+            status=format_project_status(project.get("status")),
+            stakeholders=saved_intake.get("stakeholders") or {},
+            business_topics=saved_intake.get("business_topics") or {},
+            version=version_number,
+            version_summary=current_version_summary,
+            version_history=previous_version_history,
+            version_label=version_label,
+        ),
+        content=PRDContent.model_validate(data),
         narrative=narrative,
-        version_summary=current_version_summary,
-        version_history=previous_version_history,
-        version_label=version_label,
     )
+    return render_latex(document)
 
 
 async def _export_prd_bytes(

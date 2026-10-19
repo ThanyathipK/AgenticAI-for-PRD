@@ -1,4 +1,3 @@
-import asyncio
 import copy
 import logging
 import time
@@ -6,7 +5,6 @@ from typing import Dict, Any, List
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import (
@@ -52,6 +50,9 @@ from app.schemas import (
 from app.agents import prd_workflow, gather_clarification_answer_batch
 from app.event_manager import event_manager
 from app.requirement_codes import default_requirement_code
+from app.services.requirement_processing_service import RequirementProcessingService
+from app.errors import classify_exception
+from app.observability import LogContext, log_event
 
 logger = logging.getLogger("app.routes.requirements")
 
@@ -659,37 +660,11 @@ async def post_process_requirements(
     ``{"status": "cancelled"}`` response and NO results are persisted. See
     :func:`_process_requirements_pipeline` for the full pipeline behavior.
     """
-    # AUTHZ: the caller must own the project (which must exist) before the
-    # workflow registers, reads, or persists anything for it. This also closes
-    # the orphaned-conversation-rows hole: a bogus project_id is a 404 here,
-    # never a half-written conversation record.
-    await verify_project_access(str(request.project_id), current_user, session)
-
-    current_task = asyncio.current_task()
-    if current_task is not None:
-        workflow_cancellations.register(str(request.project_id), current_task)
-    try:
-        return await _process_requirements_pipeline(request, session, current_user)
-    except asyncio.CancelledError:
-        # Hard-cancel from the Stop button. CancelledError is a BaseException,
-        # so the pipeline's `except Exception -> HTTP 500` guard never swallows
-        # it. Skip ALL persistence and report the cancellation instead.
-        logger.warning(
-            f"[CANCELLED] Generation for project {request.project_id} was stopped by the user; "
-            "skipping all result persistence."
-        )
-        await session.rollback()
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={
-                "status": "cancelled",
-                "project_id": str(request.project_id),
-                "message": "Generation was stopped by the user before completion. No results were saved.",
-            },
-        )
-    finally:
-        if current_task is not None:
-            workflow_cancellations.unregister(str(request.project_id), current_task)
+    service = RequirementProcessingService(
+        pipeline=_process_requirements_pipeline,
+        verify_access=verify_project_access,
+    )
+    return await service.process(request, session, current_user)
 
 
 async def _process_requirements_pipeline(
@@ -728,6 +703,12 @@ async def _process_requirements_pipeline(
 
     run_id = uuid4().hex[:12]
     pipeline_started = time.perf_counter()
+    log_context = LogContext(
+        project_id=str(request.project_id),
+        user_id=str(current_user.id),
+        workflow=request.target_agent or "gatherer",
+        run_id=run_id,
+    )
     logger.info(
         "[WORKFLOW][%s][START] project=%s requested_agent=%s",
         run_id, request.project_id, request.target_agent or "gatherer",
@@ -1211,6 +1192,14 @@ async def _process_requirements_pipeline(
             # Project documents still provide the established audit evidence
             # path if the reusable corpus or embedding service is unavailable.
             logger.warning("[BANKING RAG] Retrieval unavailable; continuing without it: %s", rag_err)
+            log_event(
+                logger,
+                logging.WARNING,
+                "optional_feature.failed_open",
+                log_context,
+                feature="banking_rag",
+                error_type=type(rag_err).__name__,
+            )
 
     initial_state = {
         "project_id": request.project_id,
@@ -1588,6 +1577,8 @@ async def _process_requirements_pipeline(
         )
         raise
     except LMStudioUnavailableError as e:
+        policy = classify_exception(e)
+        log_event(logger, logging.ERROR, "workflow.failed", log_context, exc_info=True, kind=policy.kind.value, retryable=policy.retryable, rollback=policy.rollback)
         logger.exception(
             "[WORKFLOW][%s][FAILED] kind=lm_studio_unavailable project=%s elapsed_ms=%.1f",
             run_id, request.project_id,
@@ -1598,6 +1589,8 @@ async def _process_requirements_pipeline(
             detail="The local inference gateway (LM Studio) is unreachable. Start LM Studio with a loaded model and retry the generation.",
         )
     except LMStudioGatewayError as e:
+        policy = classify_exception(e)
+        log_event(logger, logging.ERROR, "workflow.failed", log_context, exc_info=True, kind=policy.kind.value, retryable=policy.retryable, rollback=policy.rollback)
         logger.exception(
             "[WORKFLOW][%s][FAILED] kind=lm_studio_gateway project=%s elapsed_ms=%.1f",
             run_id, request.project_id,
@@ -1608,6 +1601,8 @@ async def _process_requirements_pipeline(
             detail="The local inference gateway rejected the generation request. Retry once the model is responsive.",
         )
     except LMStudioOutputParsingError as e:
+        policy = classify_exception(e)
+        log_event(logger, logging.ERROR, "workflow.failed", log_context, exc_info=True, kind=policy.kind.value, retryable=policy.retryable, rollback=policy.rollback)
         logger.exception(
             "[WORKFLOW][%s][FAILED] kind=output_parsing project=%s elapsed_ms=%.1f",
             run_id, request.project_id,
@@ -1618,6 +1613,8 @@ async def _process_requirements_pipeline(
             detail="The model returned an unreadable response. Please retry the generation.",
         )
     except RuntimeError as e:
+        policy = classify_exception(e)
+        log_event(logger, logging.ERROR, "workflow.failed", log_context, exc_info=True, kind=policy.kind.value, retryable=policy.retryable, rollback=policy.rollback)
         # invoke_llm_structured exhausts both of its parse attempts (e.g. a
         # reasoning model burning its whole token budget on thinking content).
         # That is a retryable model-output failure, not a server bug — 503, not 500.
@@ -1631,6 +1628,8 @@ async def _process_requirements_pipeline(
             detail="The audit or generation could not complete. Please try again. Your previous saved results have not been replaced.",
         )
     except Exception as e:
+        policy = classify_exception(e)
+        log_event(logger, logging.ERROR, "workflow.failed", log_context, exc_info=True, kind=policy.kind.value, retryable=policy.retryable, rollback=policy.rollback)
         logger.exception(
             "[WORKFLOW][%s][FAILED] kind=unexpected project=%s elapsed_ms=%.1f",
             run_id, request.project_id,

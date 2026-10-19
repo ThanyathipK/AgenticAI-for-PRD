@@ -2,7 +2,7 @@ import logging
 import json
 import re
 import copy
-from typing import TypedDict, Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
@@ -14,7 +14,7 @@ from app.repositories import (
     RequirementStateRepository,
 )
 from app.repositories.base import compact_requirement_context
-from app.schemas import AuditorOutput, GatheredRequirements, MermaidDiagramResult, ClarificationGathererBatch
+from app.schemas import AuditorOutput, GatheredRequirements, ClarificationGathererBatch
 from app.document_processor import split_markdown_into_chunks
 from app.config import settings
 from app.input_validation import count_body_tokens, count_tokens
@@ -51,6 +51,17 @@ from app.semantic_service import (
     extract_story_ticket_codes,
     match_requirement,
 )
+from app.services.diagram_service import (
+    generate_flow_diagram as _generate_flow_diagram_service,
+    sanitize_mermaid_diagram as _sanitize_mermaid_diagram,
+)
+from app.application_types import AuditFailure, RequirementMergeReport, WorkflowNodeOutcome
+from app.workflow_orchestration.routing import (
+    route_from_matcher,
+    route_from_router,
+    route_on_demand,
+)
+from app.workflow_orchestration.state import AgentState, RequirementState
 
 
 # Set up logging configuration for the multi-agent framework
@@ -117,76 +128,6 @@ is {document_id, document_name, section, excerpt}. Each question is {checklist_c
 question_text, is_resolved, source_references}. Return at most 6 findings, 6 questions, 2 source references
 per item, and 3 proposed acceptance criteria per recommendation. Keep descriptions and rationales concise.
 Use null when unknown. Output JSON only, with no markdown or commentary."""
-
-# ==========================================
-# STATE MANAGEMENT
-# ==========================================
-class RequirementState(TypedDict):
-    """
-    Centralized requirement state containing all project-specific
-    specifications, metadata, security status, and technical outputs.
-    """
-    project_id: str
-    project_name: str
-    requirements: dict
-    business_goals: list
-    actors: list
-    user_stories: list
-    acceptance_criteria: list
-    prd_narrative: dict
-    clarification_questions: list
-    validation_status: str
-    generated_prd: str
-    generated_diagrams: str
-    current_workflow_state: str
-    version_number: int
-    updated_at: Optional[str]
-    detected_intent: Optional[str]
-
-class AgentState(TypedDict, total=False):
-    """
-    Context safety state tracking dictionary.
-    Maintains historic attributes across multi-agent graph workflows.
-    """
-    project_id: str
-    raw_input: str
-    structured_requirements: dict
-    audit_result: dict
-    audit_operational_error: bool
-    prd_markdown: str
-    mermaid_diagram: str
-    current_version: int
-    version_history_summaries: str
-    target_agent: str # Supports on-demand agent execution flow
-    force_prd_rebuild: bool
-    requirement_state: RequirementState
-    detected_intent: Optional[str]
-    lock_blocked: bool
-    skipped_locked_prd_sections: List[str]
-    intent_confidence: Optional[float]
-    requirement_match: Optional[Dict[str, Any]]
-    archive_story_codes: List[str]
-    archive_requirement_codes: List[str]
-    archive_acceptance_criteria_ids: List[str]
-    workflow_routing: Optional[dict]
-    agent_message: Optional[str]
-    # Full canonical text of successfully converted uploaded documents. It is
-    # loaded server-side only for explicit Validate runs.
-    knowledge_documents: List[Dict[str, Any]]
-    # The active request-scoped DB session. It MUST be a declared channel:
-    # LangGraph only carries keys present in the state schema, so when this was
-    # undeclared every node saw ``state.get("db_session") is None`` and skipped
-    # its DB work — which is how "Generate PRD" used to drop human-owned PRD
-    # parts (the architect's section sync never ran).
-    db_session: Optional[AsyncSession]
-    # Optional dependency-graph write scope. Absent means the established full
-    # Architect run; present limits section writes and diagram regeneration.
-    regeneration_scope: Optional[Dict[str, Any]]
-    # Normal Generate-PRD requests are previews until the user confirms their
-    # pending action.  In that path the Architect may compute artifacts but
-    # must not persist sections/version rows ahead of confirmation.
-    stage_artifacts_only: bool
-
 
 def _bulk_archive_scope(raw_input: str) -> Optional[str]:
     """Return an explicitly requested whole-project archive scope, if any."""
@@ -354,7 +295,7 @@ async def get_or_init_requirement_state(project_id: str, session: Optional[Async
 #                 declared in AgentState (74-92) — see the analysis §9 item 6.
 #             Layer chain: 2.1 classify (ROUTING 3.x) → 2.2/2.3/2.4/2.5 branch →
 #             4.1 route_from_router.
-async def workflow_router_node(state: AgentState) -> Dict[str, Any]:
+async def workflow_router_node(state: AgentState) -> WorkflowNodeOutcome:
     """
     Workflow Router Node:
     Intercepts user input BEFORE the Gatherer Agent.
@@ -483,7 +424,7 @@ async def workflow_router_node(state: AgentState) -> Dict[str, Any]:
 #             (†) `requirement_match` and `db_session` are NOT declared in
 #                 AgentState (74-92) even though both are exchanged here — see the
 #                 analysis §9 item 6.
-async def requirement_matcher_node(state: AgentState) -> Dict[str, Any]:
+async def requirement_matcher_node(state: AgentState) -> WorkflowNodeOutcome:
     """
     Requirement Matcher Node:
     Runs between Intent Detection and Gatherer Agent.
@@ -754,34 +695,6 @@ def _prd_follows_krungsri_template(prd_markdown: Any) -> bool:
 # frontend (ArchitectureFlows.tsx) only displays the stored diagram when it
 # matches this header pattern, so anything else would silently fall back to
 # the derived flowchart instead of the LLM's own diagram.
-_MERMAID_HEADER_RE = re.compile(r"^\s*(flowchart|graph)\s+(TD|TB|LR|RL)\b", re.IGNORECASE)
-
-
-# ARCHITECT 4.2 — Diagram sanitizer (called by 4.1 and by the validator): strips code
-#               fences, then requires the classic flowchart header the
-#               ArchitectureFlows panel accepts; anything else returns "" so the caller
-#               keeps the previously stored diagram (4.3) instead of persisting an
-#               unrenderable one.
-def _sanitize_mermaid_diagram(text: Any) -> str:
-    """
-    Clean and validate an LLM-produced Mermaid diagram string.
-
-    Strips markdown code fences and surrounding whitespace, then requires the
-    classic flowchart header (``flowchart TD`` / ``graph TD`` ...) that the
-    Architecture Flows panel accepts. Returns "" for anything else so the
-    caller can keep the previously stored diagram instead of persisting an
-    unrenderable one.
-    """
-    clean = str(text or "").strip()
-    if clean.startswith("```"):
-        # Tolerate fenced payloads (```mermaid ... ``` / ``` ... ```).
-        clean = re.sub(r"^```[a-zA-Z]*\s*", "", clean)
-        clean = re.sub(r"\s*```$", "", clean).strip()
-    if not clean or not _MERMAID_HEADER_RE.match(clean):
-        return ""
-    return clean
-
-
 # ARCHITECT 4.1 — Diagram generation (the node's only LLM call): prompts
 #               prompts/architect_diagram.md with the same validated dataset the PRD
 #               body was filled from, using the diagram LLM profile (larger token
@@ -792,67 +705,15 @@ async def _generate_flow_diagram(
     req_state: Dict[str, Any],
     project_data: Dict[str, Any],
 ) -> str:
-    """
-    Ask the LLM for a Mermaid ``flowchart TD`` of the system described by the
-    project's own dataset - the same validated business goals / actors /
-    requirements / user stories / acceptance criteria the PRD body was just
-    filled from. Returns the sanitized Mermaid source, or "" when the LLM
-    fails or answers with something that is not a flowchart; callers keep the
-    previously stored diagram in that case, so a diagram hiccup can never
-    fail a PRD generation.
-    """
-    try:
-        dataset = {
-            "project_name": req_state.get("project_name", "") or "",
-            "version": req_state.get("version_number", 1),
-            **(project_data or {}),
-        }
-        prompt_template = PromptTemplate(
-            template=load_prompt("architect_diagram"),
-            input_variables=["project_name", "current_version", "project_dataset", "format_instructions"],
-        )
-        format_instructions = PydanticOutputParser(
-            pydantic_object=MermaidDiagramResult
-        ).get_format_instructions()
-
-        # ARCHITECT 4.1.1 — Acceptance test for the model's answer: only a sanitisable
-        #                 flowchart (4.2) counts, so the raw-JSON retry triggers on any
-        #                 other shape and 4.3 keeps the stored diagram in the end.
-        def _is_flowchart(result: Dict[str, Any]) -> bool:
-            return bool(_sanitize_mermaid_diagram(result.get("mermaid_diagram", "")))
-
-        result = await invoke_llm_structured(
-            diagram_llm,
-            prompt_template,
-            MermaidDiagramResult,
-            variables={
-                "project_name": dataset.get("project_name") or "Untitled Project",
-                "current_version": dataset.get("version", 1),
-                "project_dataset": json.dumps(dataset, ensure_ascii=False),
-                "format_instructions": "Output ONLY raw JSON. No markdown.",
-            },
-            description="architect flow diagram",
-            format_instructions=format_instructions,
-            validate=_is_flowchart,
-        )
-        diagram = _sanitize_mermaid_diagram(result.get("mermaid_diagram", ""))
-        if diagram:
-            logger.info(
-                f"[ARCHITECT] Generated flow diagram for project {project_id} ({len(diagram)} chars)."
-            )
-        else:
-            logger.warning(
-                f"[ARCHITECT] Flow diagram for project {project_id} was not a valid flowchart; "
-                "keeping the previously stored diagram."
-            )
-        return diagram
-    except Exception as diagram_err:
-        # FAIL-OPEN: a diagram hiccup must never fail the PRD generation that
-        # already succeeded. Callers keep the previously stored diagram.
-        logger.error(
-            f"[ARCHITECT] Flow diagram generation failed for project {project_id}: {str(diagram_err)}"
-        )
-        return ""
+    # Compatibility wrapper: callers may keep patching collaborators on
+    # ``app.agents`` while the implementation lives in the diagram service.
+    return await _generate_flow_diagram_service(
+        project_id,
+        req_state,
+        project_data,
+        llm=diagram_llm,
+        invoke_structured=invoke_llm_structured,
+    )
 
 
 # ==========================================
@@ -1114,9 +975,9 @@ def _build_intent_guidance(
     if intent_confidence < _LOW_INTENT_CONFIDENCE:
         lines.append(
             f"CAUTION: intent confidence is LOW ({intent_confidence:.2f}). When the raw input is "
-            "ambiguous, prefer the SAFEST interpretation: keep every existing user story and its "
-            "acceptance criteria untouched and only add a story when the input clearly describes "
-            "behaviour that does not exist yet."
+            "ambiguous, prefer the SAFEST interpretation: omit existing user stories so the "
+            "application keeps them untouched, and only return a new story when the input clearly "
+            "describes behaviour that does not exist yet."
         )
     if not has_existing_stories:
         lines.append(
@@ -1128,9 +989,8 @@ def _build_intent_guidance(
     if detected_intent == "CREATE_REQUIREMENT":
         lines.append(
             "The user wants to ADD something NEW. Extract ONLY the new feature(s) described in the "
-            "raw input as new user stories. PRESERVE every existing user story in "
-            "<current_project_context> exactly as-is (same ticket codes, same acceptance "
-            "criteria, same parent requirement) — do not re-emit them reworded."
+            "raw input as new user stories. OMIT every existing user story in "
+            "<current_project_context>; the application preserves them during the merge."
         )
     elif detected_intent == "UPDATE_REQUIREMENT":
         target = (requirement_match or {}).get("matched_requirement_id")
@@ -1138,29 +998,29 @@ def _build_intent_guidance(
             lines.append(
                 f"The user wants to MODIFY the existing story {target}. Return that story with the "
                 "requested change applied, keeping its exact ticket code and parent requirement. "
-                "PRESERVE every other existing story exactly as-is."
+                "OMIT every other existing story; the application preserves them during the merge."
             )
         else:
             lines.append(
                 "The user wants to MODIFY an existing story. Use <semantic_change_recommendations> "
                 "to find the target ticket code and return ONLY that story modified (same ticket "
-                "code, same parent requirement). PRESERVE every other existing story exactly as-is."
+                "code, same parent requirement). OMIT every other existing story."
             )
     elif detected_intent == "DELETE_REQUIREMENT":
         lines.append(
             "The user wants to REMOVE something. Do NOT include the removed story in the output "
-            "(see <semantic_change_recommendations> for the target ticket code). PRESERVE every "
-            "other existing story exactly as-is."
+            "(see <semantic_change_recommendations> for the target ticket code). OMIT every other "
+            "existing story; the application preserves it during the merge."
         )
     elif detected_intent == "CLARIFY_REQUIREMENT":
         lines.append(
-            "The user is asking for clarification or validation. Mirror the current requirements "
-            "as-is; do NOT invent or apply changes."
+            "The user is asking for clarification or validation. Return no requirement entries; "
+            "the application retains the current requirements. Do NOT invent or apply changes."
         )
     else:
         lines.append(
-            "Classify each change using <semantic_change_recommendations> and preserve every "
-            "existing story that has no recommendation exactly as-is."
+            "Classify each change using <semantic_change_recommendations> and return only new or "
+            "changed stories. Omit existing stories that have no recommendation."
         )
     return "\n".join(lines)
 
@@ -1169,7 +1029,7 @@ def _build_intent_guidance(
 # created/updated/archived/conflict and renders the assistant message (ticket codes
 # per bucket). Conflicts are reported explicitly because protected stories refused a
 # requested archive and stayed active.
-def _build_change_summary(merge_report: Dict[str, Any]) -> str:
+def _build_change_summary(merge_report: RequirementMergeReport) -> str:
     """Compose the chat message describing exactly what the gather changed.
 
     The old message was a static "Requirements Gathered & Updated!" line that
@@ -1219,7 +1079,7 @@ def _build_change_summary(merge_report: Dict[str, Any]) -> str:
 #             Sub-flow map: 1.x guards → 2.x pre-extraction intelligence →
 #             3.x LLM extraction → 4.x merge/version → 8.x handoff.
 #             (†) db_session is undeclared in AgentState (analysis §9 item 6).
-async def gatherer_node(state: AgentState) -> Dict[str, Any]:
+async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
     """
     Standardizes messy Product Owner input into high-quality Agile structures.
     Reads/writes to the centralized RequirementState object via persistence service.
@@ -2078,7 +1938,7 @@ async def gatherer_node(state: AgentState) -> Dict[str, Any]:
         "current_version": req_state.get("version_number", 1)
     }
 
-async def delete_requirement_node(state: AgentState) -> Dict[str, Any]:
+async def delete_requirement_node(state: AgentState) -> WorkflowNodeOutcome:
     """
     Delete Requirement Node:
     Handles DELETE_REQUIREMENT intent by archiving the matched requirement/user story.
@@ -2592,7 +2452,7 @@ def _compact_auditor_clarification_evidence(
     }
 
 
-def _auditor_failure_details(exc: Exception) -> Dict[str, str]:
+def _auditor_failure_details(exc: Exception) -> AuditFailure:
     """Map internal inference failures to safe, actionable UI messages."""
     detail = str(exc).lower()
     context_markers = (
@@ -2849,7 +2709,7 @@ def _validate_audit_output(output, documents):
 #                 merge is confirmed (CONFIRMATION flow).
 #             Sub-flow: 1.x scope → 2.x LLM audit → (3.x answers the questions).
 #             (†) db_session is undeclared in AgentState (analysis §9 item 6).
-async def auditor_node(state: AgentState) -> Dict[str, Any]:
+async def auditor_node(state: AgentState) -> WorkflowNodeOutcome:
     """
     Runs compliance, safety, and business rule audits on structured drafts.
     Reads from and writes to the centralized RequirementState object via persistence service.
@@ -3350,7 +3210,7 @@ def _prd_needs_narrative_refresh(requirement_state: Dict[str, Any], existing_prd
 #             Sub-flow: 2.x guards → 3.x deterministic fill → 4.x diagram →
 #                       5.x section sync → 6.x version ledger → 7.x message.
 #             (†) db_session is undeclared in AgentState (analysis §9 item 6).
-async def architect_node(state: AgentState) -> Dict[str, Any]:
+async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
     """
     Transforms audited requirements metadata into clean Markdown PRDs with embedded Mermaid diagrams.
     Reads from and writes to the centralized RequirementState object via persistence service.
@@ -3934,29 +3794,6 @@ async def architect_node(state: AgentState) -> Dict[str, Any]:
 # ==========================================
 # ON-DEMAND ROUTING ROUTINE
 # ==========================================
-def route_on_demand(state: AgentState) -> str:
-    """
-    Evaluates target_agent parameter in AgentState.
-    Routes execution to the designated on-demand agent node,
-    preserving full state between disconnected invocations.
-    New: Supports 'delete_requirement' target for DELETE_REQUIREMENT intent.
-    """
-    target = state.get("target_agent", "gatherer")
-    detected_intent = state.get("detected_intent", "")
-    
-    if target == "auditor":
-        logger.info("Routing to auditor_node on-demand.")
-        return "auditor_node"
-    elif target == "architect":
-        logger.info("Routing to architect_node on-demand.")
-        return "architect_node"
-    elif target == "delete_requirement" or detected_intent == "DELETE_REQUIREMENT":
-        logger.info("Routing delete request through requirement matching before archive preview.")
-        return "requirement_matcher_node"
-    else:
-        logger.info("Routing to router_node before Gatherer.")
-        return "router_node"
-
 # ROUTING 4.1 — Post-router dispatch on the classification in
 #             state["workflow_routing"] (written by ROUTING 2.0):
 #               REQUIREMENT → requirement_matcher_node (then 4.2 → gatherer)
@@ -3966,43 +3803,10 @@ def route_on_demand(state: AgentState) -> str:
 #                              discrepancy note at ROUTING 2.4)
 #               CHAT | QUESTION → END (the router node already produced the reply,
 #                                  persisted by the caller as `agent_message`)
-def route_from_router(state: AgentState) -> str:
-    """
-    Routes based on workflow classification from workflow_router_node.
-    """
-    routing = state.get("workflow_routing") or {}
-    wf = str(routing.get("workflow", "REQUIREMENT")).upper()
-    if wf == "REQUIREMENT":
-        return "requirement_matcher_node"
-    elif wf == "COMMAND":
-        target = state.get("target_agent")
-        if target == "auditor":
-            return "auditor_node"
-        elif target == "architect":
-            return "architect_node"
-        return END
-    else:  # CHAT or QUESTION
-        return END
-
 # ROUTING 4.2 — Matcher outcome gate: only the requirement_state's own
 #             `validation_status` is consulted ("invalid" = the matcher asked a
 #             clarification question), so the gatherer never runs on an unresolved
 #             ambiguity; otherwise the run continues into the GATHERING flow.
-def route_from_matcher(state: AgentState) -> str:
-    """
-    Routes based on requirement matcher validation status.
-    """
-    req_state = state.get("requirement_state", {})
-    if state.get("detected_intent") == "DELETE_REQUIREMENT":
-        match = state.get("requirement_match") or {}
-        status_value = str(match.get("status") or "").upper()
-        if status_value in {"AMBIGUOUS", "LOW_CONFIDENCE"} or float(match.get("confidence", 0.0)) < 0.75:
-            return END
-        return "delete_requirement_node"
-    if req_state.get("validation_status") == "invalid":
-        return END
-    return "gatherer_node"
-
 # ==========================================
 # ROUTING 1.0 — Graph topology (whole picture):
 #   START --route_on_demand(1.2)--> router_node | auditor_node | architect_node
