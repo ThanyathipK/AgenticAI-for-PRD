@@ -151,6 +151,8 @@ export interface ProjectState {
   agentActionsBlockedReason: string;
   /** Track the automatic dependency refresh returned by merge confirmation. */
   registerCascadeJob: (jobId?: string | null) => void;
+  /** True while a saved requirements merge is regenerating downstream PRD artifacts. */
+  isCascadeGenerating: boolean;
   /** Aborts the in-flight agent request (Stop button). No-op when idle. */
   handleStopGeneration: () => void;
   handleDownloadDocx: () => Promise<void>;
@@ -568,13 +570,29 @@ export function useProjectState(
     registerCascadeJob: (jobId) => {
       const normalizedJobId = jobId ?? null;
       setActiveCascadeJobId(normalizedJobId);
+      if (normalizedJobId) {
+        store.setSyncStatus("Updating the PRD with the saved requirements…");
+      }
       if (cascadeStorageKey) {
         if (normalizedJobId)
           window.localStorage.setItem(cascadeStorageKey, normalizedJobId);
         else window.localStorage.removeItem(cascadeStorageKey);
       }
     },
-    handleStopGeneration: chat.handleStopGeneration,
+    isCascadeGenerating: Boolean(activeCascadeJobId),
+    handleStopGeneration: () => {
+      if (activeCascadeJobId && projectsApi.projectId) {
+        store.setSyncStatus("Stopping PRD generation…");
+        void api
+          .cancelGenerationJob(projectsApi.projectId, activeCascadeJobId)
+          .catch((error) => {
+            handleError("Could not stop PRD generation.", error);
+            store.setSyncStatus("PRD generation is still running.");
+          });
+        return;
+      }
+      chat.handleStopGeneration();
+    },
     handleDownloadDocx,
     handlePrintPDF,
     loadProjectState,

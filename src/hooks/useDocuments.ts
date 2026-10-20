@@ -114,20 +114,31 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
   // DOC-UPLOAD 1.2 — Upload handler. POSTs the file (DOC-UPLOAD 2.1), then branches on the
   //             returned status: `failed` (e.g. the 2.1.5 needs-OCR record) surfaces the
   //             server message as an amber notice and the row stays visible with status
-  //             'failed'. The backend also appends the request and outcome to the durable
-  //             chat transcript, so SSE refresh restores them after reload.
+  //             'failed'. On success the backend appends one simple upload confirmation
+  //             to the durable chat transcript, so SSE refresh restores it after reload.
   const handleUploadDocument = useCallback(async (file: File) => {
     if (!deps.projectId) return;
     setIsUploading(true);
     try {
-      await api.uploadDocument(deps.projectId, file);
+      const uploaded = await api.uploadDocument(deps.projectId, file);
+      if (uploaded.status === 'processed') {
+        // The upload endpoint persists the same message for future reloads.
+        // Append it locally as soon as the response arrives because the SSE
+        // project refresh intentionally does not replace the live chat list.
+        deps.setMessages(prev => [...prev, {
+          id: `document-uploaded-${uploaded.id}`,
+          role: 'assistant',
+          content: `File uploaded: ${uploaded.original_filename}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }]);
+      }
       await refreshDocuments();
     } catch (err) {
       handleError('Document upload failed.', err);
     } finally {
       setIsUploading(false);
     }
-  }, [deps.projectId, refreshDocuments]);
+  }, [deps.projectId, deps.setMessages, refreshDocuments]);
 
   const handleProcessDocument = useCallback(async (doc: UploadedDocumentPayload) => {
     if (!deps.projectId || processingDocId) return;

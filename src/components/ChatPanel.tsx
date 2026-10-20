@@ -49,6 +49,7 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
     documents,
     canRunAgentActions,
     agentActionsBlockedReason,
+    isCascadeGenerating,
   } = state;
 
   // Clip-icon attach: uploads straight into the project knowledge base
@@ -171,6 +172,11 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
     setShowJumpPill(false);
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isProcessing, chatEndRef]);
+
+  useEffect(() => {
+    if (!isCascadeGenerating || !isNearBottomRef.current) return;
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [isCascadeGenerating, chatEndRef]);
 
   // Auto-grow composer: expands with content up to a readable cap, and
   // collapses back after a message is sent (rawInput is cleared).
@@ -351,19 +357,25 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
           })}
         </AnimatePresence>
 
-        {/* Simulated execution step ticker */}
-        {isProcessing && (
-          <motion.div 
+        {(isProcessing || isCascadeGenerating) && (
+          <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             className="flex items-center gap-3 pl-12 text-xs text-on-surface-variant/80 italic font-medium"
+            role="status"
+            aria-live="polite"
           >
-            <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+            <RefreshCw className="w-3.5 h-3.5 shrink-0 animate-spin text-primary" />
             <span>
-              {currentAgentNode === 'gatherer_node' && 'Technical Product Owner Assistant: structuring requirements...'}
-              {currentAgentNode === 'auditor_node' && 'Technical Product Owner Assistant: auditing requirements...'}
-              {currentAgentNode === 'architect_node' && 'Technical Product Owner Assistant: building markdown PRD...'}
-              {!currentAgentNode && 'Technical Product Owner Assistant: processing your request...'}
+              {isCascadeGenerating
+                ? 'Updating the PRD with your saved requirements…'
+                : currentAgentNode === 'gatherer_node'
+                  ? 'Structuring your requirements with LM Studio…'
+                  : currentAgentNode === 'auditor_node'
+                    ? 'Validating your requirements with LM Studio…'
+                    : currentAgentNode === 'architect_node'
+                      ? 'Generating your PRD with LM Studio…'
+                      : 'Working on your request with LM Studio…'}
             </span>
           </motion.div>
         )}
@@ -427,6 +439,7 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
           <Tooltip
             label={projectId ? 'Attach file (.docx / .pdf / .md / .txt)' : 'Create or select a project first'}
             side="top"
+            align="start"
           >
             <button
               type="button"
@@ -459,7 +472,7 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
             value={rawInput}
             maxLength={CHAT_INPUT_MAX_LENGTH}
             aria-describedby={rawInput.length >= CHAT_INPUT_MAX_LENGTH ? 'chat-input-character-warning' : undefined}
-            disabled={isLoading || isProcessing}
+            disabled={isLoading || isProcessing || isCascadeGenerating}
             onChange={(e) => setRawInput(e.target.value)}
             onKeyDown={(e) => {
               // Enter sends; Shift+Enter inserts a newline. The isComposing
@@ -472,10 +485,10 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
                 handleSendMessage();
               }
             }}
-            placeholder={isLoading || isProcessing ? 'Processing...' : 'Add !!!, !!, or ! before a request to set priority…'}
+            placeholder={isProcessing || isCascadeGenerating ? 'Processing...' : isLoading ? 'Loading...' : 'Add !!!, !!, or ! before a request to set priority…'}
             className="flex-1 min-w-0 bg-transparent border-none focus:ring-0 font-body-sm text-sm placeholder:text-on-surface-variant/55 text-on-surface outline-none resize-none max-h-40 leading-relaxed py-1 custom-scrollbar"
           />
-          {isLoading || isProcessing ? (
+          {isProcessing || isCascadeGenerating ? (
             <Tooltip label="Stop generating" side="top">
               <button
                 type="button"
@@ -486,6 +499,15 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
                 <Square className="w-3.5 h-3.5 fill-current" />
               </button>
             </Tooltip>
+          ) : isLoading ? (
+            <button
+              type="button"
+              aria-label="Loading project"
+              disabled
+              className="w-8.5 h-8.5 rounded-full flex items-center justify-center shrink-0 bg-slate-200 text-slate-500 cursor-wait"
+            >
+              <Loader2 className="w-4 h-4 animate-spin" />
+            </button>
           ) : (
             // CHAT 1.1 (send button) — same entry point as Enter; stays disabled
             // while the composer is blank and swaps to Stop while a run is active

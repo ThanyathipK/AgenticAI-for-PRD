@@ -179,6 +179,8 @@ export default function Dashboard() {
   // search input row is revealed and keeps it focused when opened.
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const previewScrollRef = useRef<HTMLDivElement>(null);
+  const previousPendingActionIdsRef = useRef<Set<string>>(new Set());
 
   // Use one sidebar state at every viewport size. Previously narrow screens
   // switched to a separate overlay drawer, so the same control had different
@@ -202,6 +204,19 @@ export default function Dashboard() {
       searchInputRef.current?.focus();
     }
   }, [isSearchOpen]);
+
+  // A newly gathered requirement merge is displayed at the very top of the
+  // preview window. If the user was reading farther down, reveal the new merge
+  // card immediately so the Save / Cancel decision cannot go unnoticed.
+  useEffect(() => {
+    const previousIds = previousPendingActionIdsRef.current;
+    const hasNewPendingAction = pendingActions.some(action => !previousIds.has(action.id));
+    previousPendingActionIdsRef.current = new Set(pendingActions.map(action => action.id));
+
+    if (hasNewPendingAction) {
+      previewScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [pendingActions]);
 
   const handleToggleProjectSearch = () => {
     // Search is a per-user, server-scoped query — meaningless (and 401) before
@@ -649,7 +664,11 @@ export default function Dashboard() {
           />
 
           {/* RIGHT VIEW WINDOW */}
-          <div id="printable-document" className="flex-1 min-w-0 overflow-y-auto p-3 md:p-4 custom-scrollbar">
+          <div
+            id="printable-document"
+            ref={previewScrollRef}
+            className="flex-1 min-w-0 overflow-y-auto p-3 md:p-4 custom-scrollbar"
+          >
 {/* CONFIRM 1.0 / 1.1 — Human-in-the-loop gate mount: one ConfirmationPanel per staged
     action. onConfirm drops the card and re-reads the authoritative project state +
     lock list; onCancel just closes it (nothing was written). */}

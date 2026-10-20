@@ -383,10 +383,9 @@ class TestUploadValidation:
             if item["workflow_state"] == "document_conversion"
         ]
         assert [item["intent"] for item in conversion_messages] == [
-            "DOCUMENT_CONVERSION_REQUESTED",
             "DOCUMENT_CONVERSION_PROCESSED",
         ]
-        assert "brief.md" in conversion_messages[0]["message"]
+        assert conversion_messages[0]["message"] == "File uploaded: brief.md"
 
     @pytest.mark.asyncio
     async def test_scanned_pdf_fails_loudly_needs_ocr(self, seeded_project, client, db_session, monkeypatch):

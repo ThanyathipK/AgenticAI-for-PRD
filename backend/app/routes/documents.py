@@ -208,7 +208,7 @@ def _convert_to_markdown(raw: bytes, original_format: str) -> str:
 #                     every other conversion error aborts and persists NOTHING
 #               2.1.6 token count off-thread (tiktoken) — metadata only, never a gate
 #               2.1.7 repository create (4.1) with extraction_status 'not_extracted'
-#               2.1.8 SSE "document_uploaded"
+#               2.1.8 one chat confirmation + SSE "document_uploaded"
 #             Returns 201 with the record; a needs-OCR failure carries `message` through
 #             the schema's extra=allow (5.1).
 @router.post(
@@ -251,16 +251,6 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="Invalid project_id format")
 
     filename = (file.filename or "unnamed").strip()
-    # Persist the original conversion request before validation/conversion. It
-    # remains in history even when a later step fails and the request-scoped
-    # transaction is rolled back.
-    await _persist_conversion_message(
-        project_id,
-        f"Convert uploaded document: {filename}",
-        status_value="requested",
-        session=session,
-    )
-
     # DOC-UPLOAD 2.1.2 / 2.1.3 — Format allow-list (3.4), then the streaming size cap (3.5).
     try:
         fmt = _resolve_upload_format(file.filename or "", file.content_type or "")
@@ -361,7 +351,7 @@ async def upload_document(
     else:
         await _persist_conversion_message(
             project_id,
-            f"Document conversion completed: {filename}\nStatus: processed",
+            f"File uploaded: {filename}",
             status_value="processed",
             session=session,
         )
