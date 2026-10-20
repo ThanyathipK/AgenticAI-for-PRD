@@ -11,9 +11,7 @@ DOCUMENT_INJECTION_RE = re.compile(
 )
 
 
-def dedupe_dicts(
-    items: list[dict[str, Any]], key_fields: tuple[str, ...]
-) -> list[dict[str, Any]]:
+def dedupe_dicts(items: list[dict[str, Any]], key_fields: tuple[str, ...]) -> list[dict[str, Any]]:
     """Perform stable de-duplication for overlapping audit chunks."""
     seen = set()
     output = []
@@ -71,20 +69,12 @@ def merge_audit_passes(
         ("finding_type", "category", "target_requirement_id", "description"),
     )
     questions = dedupe_dicts(
-        [
-            question
-            for result in results
-            for question in result.get("clarification_questions", [])
-        ],
+        [question for result in results for question in result.get("clarification_questions", [])],
         ("checklist_category", "target_user_story_id", "question_text"),
     )
     sources = dedupe_dicts(
         [source for finding in findings for source in finding.get("source_references", [])]
-        + [
-            source
-            for question in questions
-            for source in question.get("source_references", [])
-        ],
+        + [source for question in questions for source in question.get("source_references", [])],
         ("document_id", "document_name", "section", "excerpt"),
     )
     for finding in findings:
@@ -92,9 +82,7 @@ def merge_audit_passes(
         finding["applicability"] = str(finding.get("applicability") or "unknown").lower()
         finding["impact"] = str(finding.get("impact") or "warning").lower()
         try:
-            finding["confidence"] = max(
-                0.0, min(1.0, float(finding.get("confidence", 0.5)))
-            )
+            finding["confidence"] = max(0.0, min(1.0, float(finding.get("confidence", 0.5))))
         except (TypeError, ValueError):
             finding["confidence"] = 0.5
 

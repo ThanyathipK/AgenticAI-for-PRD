@@ -23,6 +23,8 @@ import { highlightMatch } from '../utils/highlight';
 import { displayUserName } from '../utils/actorName';
 import { renderInlineFormatting } from './MarkdownRenderer';
 
+const CHAT_INPUT_MAX_LENGTH = 4000;
+
 export function ChatPanel({ state, userName }: { state: ProjectState; userName: string }) {
   const {
     messages,
@@ -455,6 +457,8 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
             ref={composerRef}
             rows={1}
             value={rawInput}
+            maxLength={CHAT_INPUT_MAX_LENGTH}
+            aria-describedby={rawInput.length >= CHAT_INPUT_MAX_LENGTH ? 'chat-input-character-warning' : undefined}
             disabled={isLoading || isProcessing}
             onChange={(e) => setRawInput(e.target.value)}
             onKeyDown={(e) => {
@@ -502,6 +506,15 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
             </Tooltip>
           )}
         </div>
+        {rawInput.length >= CHAT_INPUT_MAX_LENGTH && (
+          <div
+            id="chat-input-character-warning"
+            className="flex justify-end px-1 text-[11px] font-semibold text-red-600"
+            role="alert"
+          >
+            Maximum 4,000 characters reached.
+          </div>
+        )}
       </div>
     </section>
   );

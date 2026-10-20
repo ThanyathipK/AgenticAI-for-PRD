@@ -42,13 +42,11 @@ def narrative_from_validated_audit(requirement_state: dict[str, Any]) -> dict[st
     narrative: dict[str, Any] = {}
     if non_functional:
         narrative["non_functional"] = "\n".join(
-            f"{index}. {item}"
-            for index, item in enumerate(dict.fromkeys(non_functional), start=1)
+            f"{index}. {item}" for index, item in enumerate(dict.fromkeys(non_functional), start=1)
         )
     if open_questions:
         narrative["open_questions"] = "\n".join(
-            f"{index}. {item}"
-            for index, item in enumerate(dict.fromkeys(open_questions), start=1)
+            f"{index}. {item}" for index, item in enumerate(dict.fromkeys(open_questions), start=1)
         )
     return narrative
 

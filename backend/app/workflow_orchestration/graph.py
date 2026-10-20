@@ -78,5 +78,7 @@ def build_prd_workflow(
     workflow.add_edge("delete_requirement_node", END)
 
     compiled = workflow.compile()
-    logger.info("StateGraph compiled successfully with requirement matcher agent and workflow router.")
+    logger.info(
+        "StateGraph compiled successfully with requirement matcher agent and workflow router."
+    )
     return compiled

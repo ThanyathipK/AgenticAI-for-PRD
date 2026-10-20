@@ -69,9 +69,7 @@ def resolve_acceptance_criteria_targets(
     if not candidates:
         folded_input = " ".join(str(raw_input or "").casefold().split())
         for story_code, story in stories_by_code.items():
-            for ordinal, criterion in enumerate(
-                story.get("acceptance_criteria") or [], start=1
-            ):
+            for ordinal, criterion in enumerate(story.get("acceptance_criteria") or [], start=1):
                 folded_criterion = " ".join(str(criterion).casefold().split())
                 if folded_criterion and folded_criterion in folded_input:
                     candidates.append(
