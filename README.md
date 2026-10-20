@@ -205,7 +205,7 @@ agenticdia/
 ### Prerequisites
 
 - **Node.js 22.12+** and npm (required by Mermaid 12)
-- **Python 3.12+** (the bundled `venv/` targets 3.14)
+- **Python 3.12+** (Python 3.12 is the recommended version for a fresh setup)
 - **LM Studio** (desktop app) — for local inference
 - Optional: a **Supabase** PostgreSQL project (the backend works without one via the SQLite fallback)
 
@@ -218,12 +218,14 @@ npm install
 ### 2. Create and activate the Python environment
 
 ```bash
-python3 -m venv venv
+python3.12 -m venv venv
 source venv/bin/activate
 pip install -r backend/requirements.txt
 ```
 
-> If you already have the bundled `venv/`, just `source venv/bin/activate`.
+> If `python3.12` is not on your `PATH`, install Python 3.12 first or use another
+> installed Python version that is 3.12 or newer. If you already have a compatible
+> `venv/`, just run `source venv/bin/activate`.
 
 ### 3. Configure the backend — `backend/.env`
 
@@ -231,6 +233,15 @@ Backend settings are loaded by [pydantic-settings](backend/app/config.py) from *
 
 ```bash
 cp backend/.env.example backend/.env
+```
+
+Each clone must generate its own JWT signing secret. Do not copy another developer's
+secret or commit `backend/.env`:
+
+```bash
+JWT_SECRET=$(openssl rand -hex 32)
+sed -i.bak "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=\"$JWT_SECRET\"|" backend/.env
+rm backend/.env.bak
 ```
 
 Then edit the settings that matter:
@@ -242,7 +253,8 @@ Then edit the settings that matter:
   uses the SQLite fallback instead of failing with asyncpg's `tenant/user postgres.[YOUR_PROJECT_REF] not found`
   (set `ALLOW_SQLITE_FALLBACK=false` to turn that into a hard startup error in production).
 - **`LM_STUDIO_MODEL_FALLBACK`** — must match a model you have loaded in LM Studio.
-- **`JWT_SECRET_KEY`** — generate one with `openssl rand -hex 32`. An empty value or an unfilled
+- **`JWT_SECRET_KEY`** — each developer or deployment must generate its own value with
+  `openssl rand -hex 32`; never reuse or commit this secret. An empty value or an unfilled
   placeholder falls back to the development secret **with a startup warning** (a placeholder is never
   silently used as a real secret). Tokens live for `JWT_EXPIRATION_MINUTES` (default 720 minutes).
 - **`SIGNUP_ENABLED`** — gate for `POST /api/auth/register`. Leave `true` locally; set `false` in shared
