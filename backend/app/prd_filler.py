@@ -468,13 +468,14 @@ def _fill_stakeholders(body: str, actors: List[Any], stakeholders: Optional[Dict
 
 def _fill_version_history(body: str, version_label: str, author: str, today: str,
                           version_summary: str,
-                          history_context: Optional[str] = None) -> str:
+                          history_context: Optional[str] = None,
+                          version_author: Optional[str] = None) -> str:
     """Write one row for every prior version plus the current version."""
     rows = _previous_version_rows(history_context)
     rows.append((
         version_label,
         today,
-        author or "Product Owner",
+        version_author or author or "Product Owner",
         _one_sentence(version_summary, "Initial PRD created."),
     ))
     rendered = "\n  \\hline\n".join(
@@ -986,6 +987,7 @@ def fill_template_body(
     version_summary: str = "",
     version_history: Optional[str] = None,
     version_label: Optional[str] = None,
+    version_author: Optional[str] = None,
 ) -> str:
     """Return the official Krungsri template BODY with its blanks filled from
     the project dataset. ``data`` maps: ``business_goals``, ``actors``,
@@ -1008,6 +1010,7 @@ def fill_template_body(
     body = _fill_stakeholders(body, data.get("actors") or [], stakeholders)
     body = _fill_version_history(
         body, version_label, author, today, version_summary, version_history,
+        version_author,
     )
     body = _fill_reviews(body, data.get("actors") or [])
     body = _fill_business_overview(body, data, narrative, business_topics)

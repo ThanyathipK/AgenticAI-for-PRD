@@ -237,6 +237,19 @@ async def update_prd_section(
         section.get("content"),
         payload.content or "",
     )
+    requested_actor = (payload.updated_by or "user").strip()
+    if requested_actor.lower() in {"user", "you"}:
+        from app.prd_filler import extract_intake_fields
+        project_author = str(
+            extract_intake_fields(latest_document).get("author") or ""
+        ).strip()
+    else:
+        project_author = ""
+    actor_name = (
+        project_author or "User"
+        if requested_actor.lower() in {"user", "you"}
+        else requested_actor
+    )
 
     try:
         # PRD-SECTION 2.2.4 — Repository write (4.4): append the previous content as a
@@ -248,7 +261,7 @@ async def update_prd_section(
         # ai_generatable=True hands the part back to the AI.
         updated = await PRDSectionRepository.update_content(
             section["id"], project_id, edited_content, session,
-            changed_by=payload.updated_by or "user",
+            changed_by=actor_name,
             change_summary=payload.change_summary,
             review_status=payload.review_status,
             content_source="ai" if payload.ai_generatable else "human",
@@ -271,7 +284,7 @@ async def update_prd_section(
             session=session,
             old_value={"content": section.get("content"), "section_key": section_key},
             new_value={"content": payload.content, "version_number": updated.get("version_number")},
-            performed_by=payload.updated_by or "user",
+            performed_by=actor_name,
             project_id=project_id,
         )
     except Exception as log_err:  # never block an edit on event logging
@@ -292,7 +305,7 @@ async def update_prd_section(
         await record_prd_version(
             project_id, session,
             generated_prd=document_markdown,
-            generated_by=payload.updated_by or "user",
+            generated_by=actor_name,
             change_type="manual",
             change_summary=payload.change_summary,
         )

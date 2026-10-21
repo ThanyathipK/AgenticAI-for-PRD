@@ -8,10 +8,9 @@ import { ChevronDown } from "lucide-react";
 
 interface MainArtifactPanelProps {
   state: ReturnType<typeof useProjectState>;
-  userName: string;
 }
 
-export function MainArtifactPanel({ state, userName }: MainArtifactPanelProps) {
+export function MainArtifactPanel({ state }: MainArtifactPanelProps) {
   const { activeTab, projectId, documents } = state;
 
   return (
@@ -34,7 +33,7 @@ export function MainArtifactPanel({ state, userName }: MainArtifactPanelProps) {
       )}
       {activeTab === "history" && (
         <>
-          <VersionHistory state={state} userName={userName} />
+          <VersionHistory state={state} />
           <DocumentLibrary projectId={projectId} docs={documents} />
         </>
       )}

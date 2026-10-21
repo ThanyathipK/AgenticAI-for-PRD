@@ -573,7 +573,7 @@ async def confirm_action(
             project_id,
             session,
             generated_prd=final_prd,
-            generated_by=current_user.full_name or "automated_agent",
+            generated_by="AI Assistance",
             change_type="ai",
             change_summary="Approved generated PRD preview.",
         )

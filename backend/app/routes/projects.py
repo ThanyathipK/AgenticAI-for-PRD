@@ -851,6 +851,7 @@ async def post_prd_export_generation(
         version=version_number,
         data=data,
         version_summary="Initial approved version",
+        version_author="AI Assistance",
         # EXPORTED DOCUMENT VERSION = THE LEDGER'S semver: fill with the pending
         # marker, resolve the semver this snapshot will get (same inputs as
         # record_prd_version) and stamp it in below, so the cover and the
@@ -1107,9 +1108,11 @@ async def _fill_official_export_template(
     # Rebuild the same complete Version History shown by the preview. The
     # newest ledger row is the current export row; all older rows are supplied
     # as history and the filler writes one concise sentence per version.
+    history_author = extract_intake_fields(markdown_source).get("author") or "Product Owner"
     previous_version_history = "\n".join(
         f"- v{version.get('semver') or version.get('version_number')} "
-        f"({version.get('created_at') or ''}, {version.get('generated_by') or 'System'}): "
+        f"({version.get('created_at') or ''}, "
+        f"{'AI Assistance' if version.get('change_type') == 'ai' else history_author}): "
         f"{version.get('change_summary') or 'PRD updated.'}"
         for version in versions[1:]
     )
@@ -1164,6 +1167,11 @@ async def _fill_official_export_template(
             version_summary=current_version_summary,
             version_history=previous_version_history,
             version_label=version_label,
+            version_author=(
+                "AI Assistance"
+                if (latest_version or {}).get("change_type") == "ai"
+                else history_author
+            ),
         ),
         content=PRDContent.model_validate(data),
         narrative=narrative,

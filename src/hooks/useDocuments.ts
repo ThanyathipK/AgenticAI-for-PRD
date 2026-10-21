@@ -15,7 +15,7 @@ import type {
   ProcessDocumentResponse,
   UploadedDocumentPayload,
 } from '../api/types';
-import { handleError } from '../components/Toast';
+import { handleError, handleWarning } from '../components/Toast';
 
 export interface DocumentExtractionProgress {
   documentId: string;
@@ -64,6 +64,7 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
   const [extractionProgress, setExtractionProgress] = useState<DocumentExtractionProgress | null>(null);
   const prevPendingCount = useRef<number>(0);
+  const uploadInFlightRef = useRef(false);
 
   // DOC-UPLOAD 1.3 — Knowledge-base list load (DOC-UPLOAD 2.2). Runs on project switch and
   //             is the reconciliation point after upload / extraction / delete.
@@ -117,25 +118,43 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
   //             'failed'. On success the backend appends one simple upload confirmation
   //             to the durable chat transcript, so SSE refresh restores it after reload.
   const handleUploadDocument = useCallback(async (file: File) => {
-    if (!deps.projectId) return;
+    if (!deps.projectId || uploadInFlightRef.current) return;
+    uploadInFlightRef.current = true;
     setIsUploading(true);
     try {
       const uploaded = await api.uploadDocument(deps.projectId, file);
       if (uploaded.status === 'processed') {
-        // The upload endpoint persists the same message for future reloads.
-        // Append it locally as soon as the response arrives because the SSE
-        // project refresh intentionally does not replace the live chat list.
-        deps.setMessages(prev => [...prev, {
-          id: `document-uploaded-${uploaded.id}`,
-          role: 'assistant',
-          content: `File uploaded: ${uploaded.original_filename}`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        }]);
+        // The completed upload persists the confirmation before returning.
+        // Read that authoritative row instead of creating a second local copy.
+        try {
+          const history = await api.listConversationMessages(deps.projectId);
+          const expectedContent = `File uploaded: ${uploaded.original_filename}`;
+          const persisted = [...history].reverse().find(message =>
+            message.intent === 'DOCUMENT_CONVERSION_PROCESSED' &&
+            (message.content || message.message) === expectedContent,
+          );
+          if (persisted) {
+            const createdAt = new Date(persisted.created_at);
+            deps.setMessages(prev => prev.some(message => message.id === persisted.id)
+              ? prev
+              : [...prev, {
+                  id: persisted.id,
+                  role: persisted.role || 'assistant',
+                  content: persisted.content || persisted.message || expectedContent,
+                  timestamp: Number.isNaN(createdAt.getTime())
+                    ? persisted.timestamp || ''
+                    : createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                }]);
+          }
+        } catch (err) {
+          handleWarning('The upload finished, but its chat confirmation could not be refreshed.', err);
+        }
       }
       await refreshDocuments();
     } catch (err) {
       handleError('Document upload failed.', err);
     } finally {
+      uploadInFlightRef.current = false;
       setIsUploading(false);
     }
   }, [deps.projectId, deps.setMessages, refreshDocuments]);

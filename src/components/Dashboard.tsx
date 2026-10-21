@@ -828,7 +828,7 @@ export default function Dashboard() {
                 Current saved PRD (unchanged until preview approval)
               </div>
             )}
-            <MainArtifactPanel state={state} userName={userDisplayName} />
+            <MainArtifactPanel state={state} />
 
           </div>
         </section>

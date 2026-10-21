@@ -29,6 +29,7 @@ class PRDMetadata(BaseModel):
     today: Optional[str] = None
     version_summary: str = ""
     version_history: Optional[str] = None
+    version_author: Optional[str] = None
     stakeholders: Dict[str, str] = Field(default_factory=dict)
     business_topics: Dict[str, str] = Field(default_factory=dict)
 
@@ -89,4 +90,5 @@ class CanonicalPRD(BaseModel):
             "version_summary": metadata.version_summary,
             "version_history": metadata.version_history,
             "version_label": metadata.version_label,
+            "version_author": metadata.version_author,
         }

@@ -6,7 +6,7 @@ import { ProjectState } from "../hooks/useProjectState";
 import { api } from "../api/client";
 import { ConfirmModal } from "./ConfirmModal";
 import type { PrdVersionDiffPayload, PrdVersionDiffSectionPayload } from "../api/types";
-import { displayVersionAuthor } from "../utils/actorName";
+import { displayVersionAuthor, extractProjectAuthor } from "../utils/actorName";
 
 // VERSION 1.3 — Diff renderer primitives: `DiffLines` paints add/del/context lines;
 //              `SectionDiffCard` (1.4) wraps one section's change kind, counters and
@@ -123,7 +123,7 @@ function ChangeTypeBadge({ changeType }: { changeType: string | undefined }) {
 //               1.1 (ledger) → timeline selection (1.2 base picker) →
 //               1.3/1.4 (diff cards, from api.getPrdVersionDiff) →
 //               1.5 (restore, via the store's handleRestoreVersion).
-export function VersionHistory({ state, userName }: { state: ProjectState; userName: string }) {
+export function VersionHistory({ state }: { state: ProjectState }) {
   const {
     versionHistory,
     selectedHistVersion,
@@ -132,7 +132,9 @@ export function VersionHistory({ state, userName }: { state: ProjectState; userN
     diffBaseVersion,
     setDiffBaseVersion,
     handleRestoreVersion,
+    prdMarkdown,
   } = state;
+  const projectAuthor = extractProjectAuthor(prdMarkdown);
 
   // Pending restore target: the version number awaiting user confirmation via
   // the ConfirmModal (null = no restore in flight).
@@ -221,7 +223,7 @@ export function VersionHistory({ state, userName }: { state: ProjectState; userN
                 <div className="flex items-center gap-2">
                   <ChangeTypeBadge changeType={v.changeType} />
                   <span className="text-[11px] text-on-surface-variant">
-                    Captured by {displayVersionAuthor(v.author, userName)}
+                    Captured by {displayVersionAuthor(v.author, projectAuthor, v.changeType)}
                   </span>
                 </div>
                 <ul className="space-y-2 text-xs text-on-surface">

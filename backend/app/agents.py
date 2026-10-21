@@ -32,6 +32,7 @@ from app.prompt_loader import load_prompt
 from app.repositories import (
     ConversationMessageRepository,
     PRDSectionRepository,
+    PRDVersionRepository,
     RequirementStateRepository,
 )
 from app.repositories.base import compact_requirement_context
@@ -2968,8 +2969,9 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
     req_state = await get_or_init_requirement_state(project_id, session=db_session, current_version=state.get("current_version", 1))
 
     # Lock preflight happens before template assembly and, critically, before
-    # the diagram LLM call. Existing locked AI sections are excluded from the
-    # requested regeneration scope and reported to the user by title.
+    # the diagram LLM call. Every applicable locked section is preserved and
+    # reported to the user, including human-owned sections that are already
+    # excluded from AI generation by ai_generatable=False.
     stored_prd_sections: List[Dict[str, Any]] = []
     if db_session is not None:
         try:
@@ -2991,9 +2993,9 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
     locked_prd_sections = [
         section for section in stored_prd_sections
         if section.get("is_locked")
-        and section.get("ai_generatable", True)
         and (
-            not requested_section_keys
+            regeneration_scope is None
+            or not requested_section_keys
             or str(section.get("section_key")) in requested_section_keys
         )
     ]
@@ -3004,11 +3006,7 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
     for section in locked_prd_sections:
         key = str(section.get("section_key") or "unknown")
         title = str(section.get("title") or key)
-        owner = str(section.get("locked_by") or "").strip()
-        label = f"{title} ({key})"
-        if owner:
-            label += f", locked by {owner}"
-        skipped_locked_titles.append(label)
+        skipped_locked_titles.append(title)
     effective_scoped_section_keys = (
         requested_section_keys - locked_section_keys
         if regeneration_scope is not None else None
@@ -3325,6 +3323,27 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
         if persisted_section_draft.strip():
             previous_prd = persisted_section_draft
     saved_intake = extract_intake_fields(previous_prd)
+    # Build Version History from the authoritative ledger. Manual rows use the
+    # Author entered during project creation; AI rows use a fixed attribution.
+    if db_session is not None:
+        try:
+            ledger_versions = await PRDVersionRepository.get_by_project(
+                project_id, db_session
+            )
+            project_author = saved_intake.get("author") or "Product Owner"
+            version_history_summaries = "\n".join(
+                f"- v{version.get('semver') or version.get('version_number')} "
+                f"({version.get('created_at') or ''}, "
+                f"{'AI Assistance' if version.get('change_type') == 'ai' else project_author}): "
+                f"{version.get('change_summary') or 'PRD updated.'}"
+                for version in ledger_versions
+            ) or "No previous revision logs available."
+            current_version_summary = version_history_sentence(
+                version_history_summaries
+            )
+        except (AttributeError, TypeError, ValueError):
+            # Offline node tests may use symbolic project IDs or session stubs.
+            pass
     # Manual content has priority. Otherwise use only supported audit findings
     # at >= 0.70 confidence; unknown operational facts stay TBD.
     saved_narrative = extract_manual_export_fields(previous_prd).get("narrative", {})
@@ -3350,6 +3369,7 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
         narrative=narrative,
         version_summary=current_version_summary,
         version_history=version_history_summaries,
+        version_author="AI Assistance",
         # The cover + Version History version is the LEDGER's semver, resolved
         # and stamped below once the write session is open — never the
         # integer-derived V{n}.0 filler.

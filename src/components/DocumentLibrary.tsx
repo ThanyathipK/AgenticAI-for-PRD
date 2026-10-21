@@ -12,7 +12,7 @@
 // - Note: new documents are uploaded from the ChatPanel paperclip attach (1.1) — this
 //   panel only lists/processes/removes/previews documents in the knowledge base.
 import React, { useState } from 'react';
-import { FileText, Loader2, Sparkles, Trash2 } from 'lucide-react';
+import { FileText, Loader2, Trash2 } from 'lucide-react';
 import { api } from '../api/client';
 import type {
   DocumentMarkdownPayload,
@@ -132,7 +132,7 @@ export const DocumentLibrary: React.FC<DocumentLibraryProps> = ({ projectId, doc
                   className="px-3 py-1.5 rounded-xl bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
                   title="Extract requirements as a DRAFT merge preview (nothing is written until you confirm)"
                 >
-                  {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  {isProcessing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>{isProcessing ? 'Extracting…' : 'Extract Requirements'}</span>
                 </button>
                 <button

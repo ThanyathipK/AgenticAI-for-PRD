@@ -57,7 +57,7 @@ import { detailFromBlobError, detailFromJsonError } from '../src/api/client';
 import { handleError, handleWarning, notify } from '../src/components/Toast';
 import { renderInlineFormatting } from '../src/components/MarkdownRenderer';
 import { getPrdTemplateMarkdown } from '../src/hooks/useRequirementStore';
-import { displayUserName, displayVersionAuthor } from '../src/utils/actorName';
+import { displayUserName, displayVersionAuthor, extractProjectAuthor } from '../src/utils/actorName';
 import type { UserStory, RequirementItem } from '../src/components/types';
 import type { RequirementPayload, UserStoryPayload } from '../src/api/types';
 
@@ -71,8 +71,17 @@ test('actor labels use the signed-in name only for human entries', () => {
   assert.equal(displayUserName('  Ada Lovelace  '), 'Ada Lovelace');
   assert.equal(displayVersionAuthor('user', 'Ada Lovelace'), 'Ada Lovelace');
   assert.equal(displayVersionAuthor('YOU', 'Ada Lovelace'), 'Ada Lovelace');
+  assert.equal(displayVersionAuthor('dia dia', 'Ada Lovelace', 'ai'), 'AI Assistance');
   assert.equal(displayVersionAuthor('automated_agent', 'Ada Lovelace'), 'automated_agent');
   assert.equal(displayVersionAuthor('ai_merge', 'Ada Lovelace'), 'ai_merge');
+});
+
+test('extractProjectAuthor reads the project intake author from Markdown or LaTeX', () => {
+  assert.equal(extractProjectAuthor('| **Author:** | Jane Owner |'), 'Jane Owner');
+  assert.equal(
+    extractProjectAuthor('\\coverfont{\\prdlbl{Author:}} & \\coverfont{Jane \\& John} \\\\'),
+    'Jane & John',
+  );
 });
 
 test('formatDate: empty string for missing or invalid input', () => {
@@ -108,12 +117,9 @@ test('formatRelativeUpdated: humanized hours under a day', () => {
   assert.equal(formatRelativeUpdated('2024-01-14T13:00:00', NOW), '23 hr ago');
 });
 
-test('formatRelativeUpdated: humanized days under a week (singular/plural)', () => {
-  assert.equal(formatRelativeUpdated('2024-01-14T12:00:00', NOW), '1 day ago');
-  assert.equal(formatRelativeUpdated('2024-01-09T12:00:00', NOW), '6 days ago');
-});
-
-test('formatRelativeUpdated: a week or older falls back to the calendar date', () => {
+test('formatRelativeUpdated: 24 hours or older falls back to the calendar date', () => {
+  assert.equal(formatRelativeUpdated('2024-01-14T12:00:00', NOW), '2024-01-14');
+  assert.equal(formatRelativeUpdated('2024-01-09T12:00:00', NOW), '2024-01-09');
   assert.equal(formatRelativeUpdated('2024-01-08T12:00:00', NOW), '2024-01-08');
   assert.equal(formatRelativeUpdated('2023-12-01T00:00:00', NOW), '2023-12-01');
 });

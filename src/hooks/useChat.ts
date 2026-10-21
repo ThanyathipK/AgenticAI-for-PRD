@@ -33,6 +33,7 @@ import {
 } from "./chat/agentErrors";
 import { runBackgroundAgentJob } from "./chat/backgroundJobs";
 import { useAgentCancellation } from "./chat/useAgentCancellation";
+import { displayVersionAuthor, extractProjectAuthor } from "../utils/actorName";
 
 export interface ChatDeps {
   projectId: string | null;
@@ -178,10 +179,11 @@ export function useChat(
   const buildVersionHistorySummaries = (): string | undefined => {
     const history = store.versionHistory || [];
     if (history.length === 0) return undefined;
+    const projectAuthor = extractProjectAuthor(store.prdMarkdown);
     return history
       .map(
         (h) =>
-          `- v${h.semVersion} (${h.timestamp}, ${h.author}): ${h.description}`,
+          `- v${h.semVersion} (${h.timestamp}, ${displayVersionAuthor(h.author, projectAuthor, h.changeType)}): ${h.description}`,
       )
       .join("\n");
   };
@@ -865,8 +867,9 @@ export function useChat(
         {
           id: `prd-generated-${Date.now()}`,
           role: "assistant",
-          content:
-            "PRD draft generated. It has not been saved yet. Review it in the preview panel, then select Save PRD or Discard preview.",
+          content: preservedSections.length > 0
+            ? `PRD draft generated. It has not been saved yet. Review it in the preview panel, then select Save PRD or Discard preview.\n\nLocked sections: ${preservedSections.join(", ")}.\nNo changes were made to these locked sections; their existing content was preserved exactly.`
+            : "PRD draft generated. It has not been saved yet. Review it in the preview panel, then select Save PRD or Discard preview.",
           timestamp: nowTime(),
         },
       ]);

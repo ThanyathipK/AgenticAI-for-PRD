@@ -502,7 +502,7 @@ async def test_architect_skips_lm_when_every_scoped_section_is_locked(monkeypatc
     assert result["mermaid_diagram"] == "flowchart TD\n  OLD[Preserved]"
     assert result["diagram_regenerated"] is False
     assert result["skipped_locked_prd_sections"] == [
-        "2. Product Scope & Functional Requirements (product_scope)"
+        "2. Product Scope & Functional Requirements"
     ]
     assert "—" not in result["agent_message"]
     assert "Not regenerated because they are locked" in result["agent_message"]
@@ -527,6 +527,13 @@ async def test_architect_preserves_locked_tech_section_and_refreshes_diagram(mon
                 "title": "3. Technical & Operational Considerations",
                 "ai_generatable": True,
                 "is_locked": True,
+                "locked_by": "user",
+            },
+            {
+                "section_key": "reviews",
+                "title": "8. Reviews & Sign-off",
+                "ai_generatable": False,
+                "is_locked": True,
             },
         ]
 
@@ -548,4 +555,7 @@ async def test_architect_preserves_locked_tech_section_and_refreshes_diagram(mon
     assert result["mermaid_diagram"] == "flowchart TD\n  CURRENT[Refreshed from requirements]"
     assert result["diagram_regenerated"] is True
     assert "Technical & Operational Considerations" in result["agent_message"]
+    assert "Reviews & Sign-off" in result["agent_message"]
+    assert "locked by" not in result["agent_message"]
+    assert len(result["skipped_locked_prd_sections"]) == 2
     assert "existing content was preserved" in result["agent_message"]

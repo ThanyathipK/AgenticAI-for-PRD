@@ -2,8 +2,8 @@
 //
 // Pure string helpers (no state, no hooks) matching the src/utils convention:
 // they render an ISO-8601 timestamp the way the dashboard table wants it —
-// a coarse humanized age ("12 min ago", "2 hr ago") for recent edits and a
-// plain calendar date (YYYY-MM-DD) for anything older.
+// a coarse humanized age ("12 min ago", "2 hr ago") for edits under 24 hours
+// old and a plain calendar date (YYYY-MM-DD) thereafter.
 
 /** Coarse dashboard "Updated" cell: humanized age for fresh edits, calendar date otherwise. */
 export function formatRelativeUpdated(iso: string | null | undefined, now: Date = new Date()): string {
@@ -20,9 +20,6 @@ export function formatRelativeUpdated(iso: string | null | undefined, now: Date 
 
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} hr ago`;
-
-  const days = Math.floor(hours / 24);
-  if (days < 7) return days === 1 ? '1 day ago' : `${days} days ago`;
 
   return formatDate(iso);
 }
