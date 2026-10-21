@@ -103,13 +103,13 @@ function ImpactAnalysisSection({
 
   return (
     <div className="px-4 pt-3">
-      {/* Header: what the merge does + the version it would create */}
+      {/* Header: what the merge does + the requirements revision it would create */}
       <div className="flex items-center gap-2 flex-wrap">
         <GitCompare className="w-4 h-4 text-primary shrink-0" />
         <span className="text-xs font-bold text-on-surface">What changes vs what is affected</span>
         {state === 'ready' && impact && (
           <span className="text-[10px] font-mono text-on-surface-variant ml-auto shrink-0">
-            v{impact.current_version} to v{impact.proposed_version ?? impact.current_version}
+            revision {impact.current_version} to {impact.proposed_version ?? impact.current_version}
           </span>
         )}
       </div>
@@ -124,7 +124,7 @@ function ImpactAnalysisSection({
         <p className="mt-2 text-[11px] text-amber-700">
           Impact analysis is unavailable. The draft holds {draft.requirements} requirement
           {draft.requirements === 1 ? '' : 's'}, {draft.stories} stor{draft.stories === 1 ? 'y' : 'ies'}
-          {draft.versionNumber !== undefined ? ` (v${draft.versionNumber})` : ''}. Nothing is saved until you click Save.
+          {draft.versionNumber !== undefined ? ` (revision ${draft.versionNumber})` : ''}. Nothing is saved until you click Save.
         </p>
       )}
 
@@ -328,7 +328,7 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
             {hasChanges
               ? isArchive
                 ? 'Nothing is archived yet. Confirm archive applies the changes below; Cancel keeps every item active.'
-                : 'Nothing is saved yet. Below is what changes and what is affected. Save applies this version; Cancel rolls back to the version before.'
+                : 'Nothing is saved yet. Below is what changes and what is affected. Save applies this revision; Cancel keeps the previous revision.'
               : `You have a pending change based on: "${action.original_user_message}"`}
           </p>
         </div>
@@ -354,7 +354,7 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
           <X size={16} /> Cancel
         </button>
         <span className="text-[10px] text-on-surface-variant ml-auto font-mono">
-          {isWorking ? 'Working…' : isArchive ? 'Confirm archive applies it; Cancel keeps items active' : 'Save applies this version; Cancel rolls back'}
+          {isWorking ? 'Working…' : isArchive ? 'Confirm archive applies it; Cancel keeps items active' : 'Save applies this revision; Cancel keeps the previous revision'}
         </span>
       </div>
     </div>

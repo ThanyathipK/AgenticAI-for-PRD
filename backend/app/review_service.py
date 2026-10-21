@@ -244,6 +244,14 @@ async def get_review_history(project_id: str, session: AsyncSession) -> list[dic
             .order_by(ProjectReviewEventModel.created_at.desc())
         )
     ).scalars().all()
+    prd_versions = (
+        await session.execute(
+            select(PRDVersionModel.version_number, PRDVersionModel.semver).where(
+                PRDVersionModel.project_id == as_uuid(project_id)
+            )
+        )
+    ).all()
+    semver_by_number = {number: semver for number, semver in prd_versions}
     return [{
         "id": str(row.id),
         "project_id": str(row.project_id),
@@ -255,6 +263,7 @@ async def get_review_history(project_id: str, session: AsyncSession) -> list[dic
         "actor_name": row.actor_name,
         "actor_role": row.actor_role,
         "prd_version_number": row.prd_version_number,
+        "prd_semver": semver_by_number.get(row.prd_version_number),
         "audit_version_reviewed": row.audit_version_reviewed,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     } for row in rows]

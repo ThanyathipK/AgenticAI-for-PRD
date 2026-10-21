@@ -3450,6 +3450,10 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
             document=req_state["generated_prd"],
             change_type="ai",
         ) if version_read_session else None
+        # Surface the exact pre-resolved value to the staged preview. Approval
+        # records the same document through the same SemVer calculation, so the
+        # preview badge and the Versions tab use one release identifier.
+        req_state["proposed_prd_semver"] = semver_label
 
         from app.prd_filler import stamp_version_label
         req_state["generated_prd"] = stamp_version_label(

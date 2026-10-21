@@ -7,6 +7,7 @@ import { api } from "../api/client";
 import { ConfirmModal } from "./ConfirmModal";
 import type { PrdVersionDiffPayload, PrdVersionDiffSectionPayload } from "../api/types";
 import { displayVersionAuthor, extractProjectAuthor } from "../utils/actorName";
+import { formatPrdVersionLabel } from "../utils/version";
 
 // VERSION 1.3 — Diff renderer primitives: `DiffLines` paints add/del/context lines;
 //              `SectionDiffCard` (1.4) wraps one section's change kind, counters and
@@ -212,7 +213,7 @@ export function VersionHistory({ state }: { state: ProjectState }) {
                     : 'bg-white text-on-surface hover:bg-[#faf8f4]')}
               >
                 <span className="min-w-0 flex-1">
-                  <strong className="block text-sm font-bold">v{v.semVersion || `${v.version}.0`}</strong>
+                  <strong className="block text-sm font-bold">{formatPrdVersionLabel(v.semVersion, v.version)}</strong>
                   <span className="block mt-0.5 text-[11px] text-on-surface-variant font-normal">{v.timestamp}</span>
                 </span>
                 {selectedHistVersion === v.version
@@ -257,10 +258,10 @@ export function VersionHistory({ state }: { state: ProjectState }) {
                     <button
                       onClick={() => setRestoreTarget(v.version)}
                       className="inline-flex items-center gap-1.5 rounded-[8px] bg-orange-500 px-4 py-2 text-[11px] font-semibold text-white hover:bg-orange-600 transition-colors cursor-pointer"
-                      title={`Restore the PRD document to v${v.semVersion || `${v.version}.0`}`}
+                      title={`Restore the PRD document to ${formatPrdVersionLabel(v.semVersion, v.version)}`}
                     >
                       <RotateCcw className="w-3 h-3" />
-                      Restore v{v.semVersion || `${v.version}.0`}
+                      Restore {formatPrdVersionLabel(v.semVersion, v.version)}
                     </button>
                   </div>
                 )}
@@ -278,10 +279,14 @@ export function VersionHistory({ state }: { state: ProjectState }) {
 
       <ConfirmModal
         isOpen={restoreTarget !== null}
-        title={`Restore version ${restoreTarget}?`}
-        description={`The PRD document will be restored from snapshot v${
-          versionHistory.find(v => v.version === restoreTarget)?.semVersion || `${restoreTarget}.0`
-        }. This is APPEND-ONLY: the restored content becomes a NEW version and locked sections keep their current content.`}
+        title={`Restore ${formatPrdVersionLabel(
+          versionHistory.find(v => v.version === restoreTarget)?.semVersion,
+          restoreTarget,
+        )}?`}
+        description={`The PRD document will be restored from snapshot ${formatPrdVersionLabel(
+          versionHistory.find(v => v.version === restoreTarget)?.semVersion,
+          restoreTarget,
+        )}. This is APPEND-ONLY: the restored content becomes a NEW version and locked sections keep their current content.`}
         confirmLabel="Restore version"
         pendingLabel="Restoring..."
         onConfirm={async () => {

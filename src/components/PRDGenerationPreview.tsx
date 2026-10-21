@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import type { ConfirmActionResponse, PendingActionPayload } from "../api/types";
 import { parseAndRenderMarkdown } from "./MarkdownRenderer";
 import { handleError } from "./Toast";
+import { formatPrdVersionLabel } from "../utils/version";
 
 interface PRDGenerationPreviewProps {
   action: PendingActionPayload;
@@ -26,6 +27,7 @@ export function PRDGenerationPreview({
   const proposed = action.proposed_changes ?? {};
   const source = typeof proposed.generated_prd === "string" ? proposed.generated_prd : "";
   const proposedVersion = typeof proposed.proposed_version === "number" ? proposed.proposed_version : undefined;
+  const proposedSemVer = typeof proposed.proposed_semver === "string" ? proposed.proposed_semver : undefined;
   const diagramWillUpdate = typeof proposed.generated_diagrams === "string" && proposed.generated_diagrams.trim().length > 0;
   const preservedSections = useMemo(
     () => asStringArray(proposed.preserved_sections),
@@ -103,7 +105,7 @@ export function PRDGenerationPreview({
               </span>
               {proposedVersion !== undefined && (
                 <span className="text-[10px] font-mono text-on-surface-variant">
-                  Approval creates version {proposedVersion}
+                  Approval creates {formatPrdVersionLabel(proposedSemVer, proposedVersion)}
                 </span>
               )}
             </div>

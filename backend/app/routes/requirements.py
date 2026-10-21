@@ -1396,6 +1396,7 @@ async def _process_requirements_pipeline(
                         "source_requirements_revision": source_requirements_revision,
                         "base_prd_version": base_prd_version,
                         "proposed_version": proposed_version,
+                        "proposed_semver": req_state.get("proposed_prd_semver"),
                         "preserved_sections": skipped_sections,
                     },
                     "affected_user_story_ids": [],

@@ -38,6 +38,7 @@ import type { AuditRunPayload, AuditWaiverPayload, ProjectHealthPayload, Project
 import { api } from '../api/client';
 import { Tooltip } from './Tooltip';
 import { handleError } from './Toast';
+import { formatPrdVersionLabel } from '../utils/version';
 import { formatRelativeUpdated } from '../utils/time';
 import { BankingKnowledgeModal } from './BankingKnowledgeModal';
 
@@ -725,8 +726,8 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
                   </div>
                   <p className="mt-1 text-xs text-on-surface-variant">
                     {event.actor_name}, {event.actor_role}
-                    {event.prd_version_number ? `, PRD v${event.prd_version_number}` : ''}
-                    {event.audit_version_reviewed ? `, Audit v${event.audit_version_reviewed}` : ''}
+                    {event.prd_version_number ? `, PRD ${formatPrdVersionLabel(event.prd_semver, event.prd_version_number)}` : ''}
+                    {event.audit_version_reviewed ? `, Audit revision ${event.audit_version_reviewed}` : ''}
                   </p>
                   {event.comment && <p className="mt-2 text-sm text-on-surface">{event.comment}</p>}
                 </div>
@@ -790,7 +791,7 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
                     {auditHistory.length === 0 ? <p className="mt-2 text-sm text-on-surface-variant">No confirmed audit run yet.</p> : auditHistory.slice(0, 5).map((run) => (
                       <div key={run.id} className="mt-2 rounded-xl border border-outline p-3">
                         <div className="flex flex-wrap justify-between gap-2 text-xs">
-                          <span className="font-bold text-on-surface">Audit v{run.audit_version_reviewed}: {run.verdict}</span>
+                          <span className="font-bold text-on-surface">Audit revision {run.audit_version_reviewed}: {run.verdict}</span>
                           <span className="text-on-surface-variant">{run.created_at ? new Date(run.created_at).toLocaleString() : ''}</span>
                         </div>
                         <p className="mt-1 text-[11px] text-on-surface-variant">

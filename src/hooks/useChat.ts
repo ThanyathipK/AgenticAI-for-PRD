@@ -33,6 +33,7 @@ import {
 } from "./chat/agentErrors";
 import { runBackgroundAgentJob } from "./chat/backgroundJobs";
 import { useAgentCancellation } from "./chat/useAgentCancellation";
+import { formatPrdVersionLabel } from "../utils/version";
 import { displayVersionAuthor, extractProjectAuthor } from "../utils/actorName";
 
 export interface ChatDeps {
@@ -183,7 +184,7 @@ export function useChat(
     return history
       .map(
         (h) =>
-          `- v${h.semVersion} (${h.timestamp}, ${displayVersionAuthor(h.author, projectAuthor, h.changeType)}): ${h.description}`,
+          `- ${formatPrdVersionLabel(h.semVersion, h.version)} (${h.timestamp}, ${displayVersionAuthor(h.author, projectAuthor, h.changeType)}): ${h.description}`,
       )
       .join("\n");
   };
@@ -413,7 +414,7 @@ export function useChat(
             requirementsSnapshot: nextStructured,
           };
           store.setVersionHistory((prev) => [newHist, ...prev]);
-          store.setSyncStatus(`State updated to Version ${nextVer}.0`);
+          store.setSyncStatus(`Requirements updated to revision ${nextVer}.`);
         }
 
         if (!isPendingMerge) {

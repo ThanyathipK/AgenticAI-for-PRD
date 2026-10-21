@@ -603,6 +603,7 @@ async def confirm_action(
         return {
             "status": "confirmed",
             "requirement_state": persisted_state,
+            "prd_semver": version_record.get("semver"),
             "cascade_job_id": None,
             "cascade_status": "not_required",
         }

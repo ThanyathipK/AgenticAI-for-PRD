@@ -310,6 +310,7 @@ class ProjectReviewEventResponse(BaseModel):
     actor_name: str
     actor_role: str
     prd_version_number: Optional[int] = None
+    prd_semver: Optional[str] = None
     audit_version_reviewed: Optional[int] = None
     created_at: Optional[str] = None
 
@@ -592,6 +593,7 @@ class ConfirmActionResponse(BaseModel):
     """Payload returned after a pending action is confirmed and persisted."""
     status: str = Field(..., description="Always 'confirmed' on success.")
     requirement_state: RequirementStateResponse = Field(..., description="The merged requirement state that was persisted.")
+    prd_semver: Optional[str] = Field(None, description="Semantic version of the approved PRD snapshot, when applicable.")
     cascade_job_id: Optional[str] = Field(None, description="Background job regenerating affected downstream PRD artifacts.")
     cascade_status: Optional[str] = Field(None, description="Downstream cascade state: queued, not_required, or deferred.")
 

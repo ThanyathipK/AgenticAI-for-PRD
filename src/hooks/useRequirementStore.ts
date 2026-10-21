@@ -22,6 +22,7 @@ import type {
   VersionHistory,
 } from "../components/types";
 import { handleError } from "../components/Toast";
+import { formatPrdVersionLabel } from "../utils/version";
 import {
   formatUserStoriesToMarkdown,
   getSafeSectionContent,
@@ -495,7 +496,8 @@ export function useRequirementStore(
     versionNumber: number,
   ): Promise<boolean> => {
     if (!projectId) return false;
-    setSyncStatus(`Restoring version ${versionNumber}...`);
+    const sourceSemVer = versionHistory.find(version => version.version === versionNumber)?.semVersion;
+    setSyncStatus(`Restoring ${formatPrdVersionLabel(sourceSemVer, versionNumber)}...`);
     try {
       const res = await api.restorePrdVersion(projectId, versionNumber);
       setPrdMarkdown(res.document_markdown);
@@ -508,11 +510,11 @@ export function useRequirementStore(
         loadSectionLocks(projectId),
       ]);
       setSyncStatus(
-        `Restored from version ${versionNumber}. New version ${res.new_version_number} created.`,
+        `Restored from ${formatPrdVersionLabel(sourceSemVer, versionNumber)}. New version ${formatPrdVersionLabel(res.semver, res.new_version_number)} created.`,
       );
       return true;
     } catch (err) {
-      handleError(`Failed to restore version ${versionNumber}.`, err);
+      handleError(`Failed to restore ${formatPrdVersionLabel(sourceSemVer, versionNumber)}.`, err);
       setSyncStatus("Restore failed.");
       return false;
     }

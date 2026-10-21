@@ -53,6 +53,7 @@ export interface ProjectReviewEventPayload {
   actor_name: string;
   actor_role: string;
   prd_version_number?: number | null;
+  prd_semver?: string | null;
   audit_version_reviewed?: number | null;
   created_at?: string | null;
 }
@@ -542,6 +543,8 @@ export interface HealthPayload {
 export interface ConfirmActionResponse {
   status: string;
   requirement_state?: RequirementStatePayload;
+  /** Semantic version of an approved PRD snapshot. */
+  prd_semver?: string | null;
   cascade_job_id?: string | null;
   cascade_status?: "queued" | "not_required" | "deferred" | string | null;
 }

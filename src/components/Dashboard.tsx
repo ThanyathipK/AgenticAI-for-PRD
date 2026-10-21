@@ -39,6 +39,7 @@ import type { ProjectIntake } from './NewProjectModal';
 import { WorkspaceNavigation } from './WorkspaceNavigation';
 import { MainArtifactPanel } from './MainArtifactPanel';
 import { PRDGenerationPreview } from './PRDGenerationPreview';
+import { formatPrdVersionLabel } from '../utils/version';
 
 const escapeTableCell = (value: string) => value.replaceAll('|', '\\|').replaceAll('\n', '<br>');
 
@@ -71,7 +72,7 @@ const seedPrdIntake = async (projectId: string, projectName: string, intake: Pro
     ? [
       ['PMO No', intake.pmoNo || 'TBD'],
       ['PMO Name', projectName],
-      ['Version', 'V1.0'],
+      ['Version', 'V1.0.0'],
       ['Status', 'Draft'],
       ['Last Update', today],
       ['Author', intake.author || 'Product Owner'],
@@ -157,6 +158,7 @@ export default function Dashboard() {
     loadProjectState,
     setMessages,
     currentVersion,
+    versionHistory,
     isDraggingSplit,
     setIsDraggingSplit,
     splitContainerRef,
@@ -700,7 +702,7 @@ export default function Dashboard() {
                         setMessages(prev => [...prev, {
                             id: `merge-cancelled-${Date.now()}`,
                             role: 'system',
-                            content: `Merge discarded. Rolled back to the previous version (v${currentVersion}). Nothing was saved.`,
+                            content: `Merge discarded. Rolled back to the previous PRD version (${formatPrdVersionLabel(versionHistory.find(version => version.version === currentVersion)?.semVersion, currentVersion)}). Nothing was saved.`,
                             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                         }]);
                     }}
@@ -717,7 +719,7 @@ export default function Dashboard() {
                   setMessages(prev => [...prev, {
                     id: `prd-saved-${Date.now()}`,
                     role: 'system',
-                    content: `PRD saved successfully${result.requirement_state?.version_number ? ` as version ${result.requirement_state.version_number}` : ''}. This approved document is now the current PRD.`,
+                    content: `PRD saved successfully${result.requirement_state?.version_number ? ` as ${formatPrdVersionLabel(result.prd_semver, result.requirement_state.version_number)}` : ''}. This approved document is now the current PRD.`,
                     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                   }]);
                 }}

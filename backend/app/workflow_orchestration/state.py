@@ -22,6 +22,7 @@ class RequirementState(TypedDict):
     validation_status: str
     generated_prd: str
     generated_diagrams: str
+    proposed_prd_semver: Optional[str]
     current_workflow_state: str
     version_number: int
     updated_at: Optional[str]
