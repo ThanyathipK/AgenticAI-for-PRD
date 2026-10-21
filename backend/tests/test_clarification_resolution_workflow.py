@@ -324,6 +324,57 @@ async def test_gatherer_follow_up_does_not_replace_or_append_questions_on_submit
 
 
 @pytest.mark.asyncio
+async def test_submitting_an_answer_collapses_legacy_duplicate_questions(
+    client, db_session, seeded_project, monkeypatch
+):
+    import app.routes.requirements as requirements_route
+    from app.repositories import RequirementStateRepository
+
+    duplicate = {
+        "question_text": "Who approves the payment?",
+        "checklist_category": "Approval",
+        "target_user_story_id": "PAY-001",
+        "is_resolved": False,
+    }
+    await RequirementStateRepository.save_or_update(
+        seeded_project,
+        {
+            "clarification_questions": [
+                duplicate,
+                {**duplicate, "target_user_story_id": "REQ-002"},
+            ],
+            "validation_status": "invalid",
+        },
+        db_session,
+    )
+    await db_session.commit()
+    original = (await client.get(f"/api/project/{seeded_project}")).json()[
+        "clarification_questions"
+    ]
+    assert len(original) == 2
+
+    async def gatherer(_items, _requirement_context):
+        return {"classifications": [], "proposed_requirements": []}
+
+    monkeypatch.setattr(
+        requirements_route, "gather_clarification_answer_batch", gatherer
+    )
+    response = await client.post(
+        "/api/clarification/submit",
+        json={
+            "project_id": seeded_project,
+            "answers": {original[0]["id"]: "The operations manager approves it."},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    questions = response.json()["clarification_questions"]
+    assert len(questions) == 1, json.dumps(questions, indent=2)
+    assert questions[0]["is_resolved"] is True
+    assert questions[0]["user_answer"] == "The operations manager approves it."
+
+
+@pytest.mark.asyncio
 async def test_project_reload_compacts_legacy_oversized_question_context(
     client, db_session, seeded_project
 ):

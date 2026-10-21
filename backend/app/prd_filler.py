@@ -515,15 +515,23 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
         narrative["success_metrics"] = business_topics["Success Metrics"]
     actors = data.get("actors") or []
 
+    def _cell_text(value: Any) -> str:
+        """Escape user text and preserve each intended line inside one cell."""
+        return r"\newline ".join(
+            escape_latex(line.strip())
+            for line in str(value or "").splitlines()
+            if line.strip()
+        )
+
     def _narr(key: str, fallback: str) -> str:
         if narrative and narrative.get(key):
-            return r"\prdfield{" + escape_latex(_numbered_text(narrative[key])) + "}"
+            return r"\prdfield{" + _cell_text(_numbered_text(narrative[key])) + "}"
         return fallback.replace("{TBD}", "{}")
 
     def _topic(name: str, fallback: str) -> str:
         value = business_topics.get(name)
         cleaned_value = _numbered_text(value)
-        return r"\prdfield{" + escape_latex(cleaned_value) + "}" if cleaned_value else fallback
+        return r"\prdfield{" + _cell_text(cleaned_value) + "}" if cleaned_value else fallback
 
     epic = _topic("Introduction & Executive Summary", _narr("exec_summary", r"\prdfield{}"))
 
@@ -534,14 +542,6 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
         if narrative and narrative.get("problem_statement")
         else (data.get("problem_statement") or [])
     )
-    problems = [_plain_list_item(p) for p in problem_source]
-    problems = [problem for problem in problems if problem]
-    problem_cell = r"\prdfield{" + "".join(
-        f"{i + 1}. {escape_latex(p)}"
-        + (r"\newline " if i < len(problems) - 1 else "")
-        for i, p in enumerate(problems)
-    ) + "}"
-
     def _num(items: List[str]) -> str:
         # No caps: the longtable rows wrap and grow with the content.
         expanded = []
@@ -559,18 +559,18 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
             )
         return r"\prdfield{" + "".join(parts) + "}"
 
+    problem_cell = _num(problem_source)
+
     target = [
         (a.get("name", a) if isinstance(a, dict) else a) for a in (actors or [])
     ]
     target = [n for n in target if str(n or "").strip()]
-    target_text = _plain_list_item(
+    target_text = _numbered_text(
         business_topics.get("Target Audience & user Personas")
         or ((narrative or {}).get("target_audience"))
         or ", ".join(str(n) for n in target)
     )
-    target_cell = r"\prdfield{" + escape_latex(target_text) + "}"
-    if target_cell == r"\prdfield{":
-        target_cell = r"\prdfield{}"
+    target_cell = r"\prdfield{" + _cell_text(target_text) + "}"
 
     rows = [
         (

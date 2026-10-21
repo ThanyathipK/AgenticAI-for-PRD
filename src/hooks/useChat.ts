@@ -3,7 +3,7 @@
 // (send, validate, generate PRD, clarifications). Domain state lives in the
 // shared `RequirementStore`; project info and pending-actions are injected
 // through `deps`.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { api } from "../api/client";
 import type {
@@ -12,11 +12,13 @@ import type {
   ProjectSummary,
 } from "../api/types";
 import {
+  isLegacyPrdPreviewMessage,
   toAuditResultFromPayload,
   toGatheredRequirementsPayload,
   toStructuredRequirementsFromGathered,
 } from "../api/transforms";
 import type { VersionHistory } from "../components/types";
+import type { ChatMessage } from "../components/types";
 import { handleError } from "../components/Toast";
 import type { RequirementStore } from "./useRequirementStore";
 import type { WorkspaceTab } from "./useWorkspaceUi";
@@ -82,11 +84,81 @@ const nowTime = () =>
 const questionAnswerKey = (question: { id?: string }, index: number) =>
   question.id || `q-${index}`;
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const timelineMetadata = (message: ChatMessage) => {
+  if (message.isPendingClarifications) {
+    return {
+      workflow_state: message.role === "auditor" ? "auditor" : "gatherer",
+      intent: "CLARIFICATION_REQUEST",
+    };
+  }
+  if (
+    message.id.startsWith("audit-failed-") ||
+    message.id.startsWith("audit-passed-") ||
+    message.id.startsWith("audit-stale-")
+  ) {
+    return { workflow_state: "auditor", intent: "AUDIT_RESULT" };
+  }
+  if (message.id.startsWith("audit-")) {
+    return { workflow_state: "auditor", intent: "AUDIT_EVENT" };
+  }
+  if (message.id.startsWith("prd-")) {
+    return { workflow_state: "architect", intent: "PRD_GENERATION" };
+  }
+  if (message.id.startsWith("clarification-")) {
+    return { workflow_state: "gatherer", intent: "CLARIFICATION_ANSWER" };
+  }
+  return { workflow_state: message.role, intent: "TIMELINE_EVENT" };
+};
+
 export function useChat(
   store: RequirementStore,
   deps: ChatDeps,
 ): UseChatResult {
   const [rawInput, setRawInput] = useState<string>("");
+  const persistingMessageIdsRef = useRef<Set<string>>(new Set());
+  const durableMessageIdsRef = useRef<Map<string, string>>(new Map());
+  const clarificationSubmitInFlightRef = useRef(false);
+
+  useEffect(() => {
+    persistingMessageIdsRef.current.clear();
+    durableMessageIdsRef.current.clear();
+  }, [deps.projectId]);
+
+  // Persist every locally-created non-user bubble in display order, then swap
+  // its temporary id for the database UUID. This covers validation/generation
+  // errors and system decisions that previously disappeared on reload.
+  useEffect(() => {
+    const projectId = deps.projectId;
+    if (!projectId) return;
+    const pending = store.messages.filter(
+      (message) =>
+        !message.id.startsWith("init-") &&
+        !UUID_PATTERN.test(message.id) &&
+        !persistingMessageIdsRef.current.has(message.id),
+    );
+    const message = pending[0];
+    if (!message) return;
+    persistingMessageIdsRef.current.add(message.id);
+    const durableId = durableMessageIdsRef.current.get(message.id) || crypto.randomUUID();
+    durableMessageIdsRef.current.set(message.id, durableId);
+    void api.appendConversationMessage(projectId, {
+      id: durableId,
+      role: message.role,
+      message: message.content,
+      ...timelineMetadata(message),
+    }).then((saved) => {
+      store.setMessages((current) =>
+        current.map((item) =>
+          item.id === message.id ? { ...item, id: saved.id } : item,
+        ),
+      );
+    }).catch((error) => {
+      persistingMessageIdsRef.current.delete(message.id);
+      console.warn("Could not persist conversation timeline message.", error);
+    });
+  }, [deps.projectId, store.messages, store.setMessages]);
 
   const cancellation = useAgentCancellation(
     () => deps.projectId,
@@ -147,16 +219,38 @@ export function useChat(
     // Clear main input if sent from main input box
     if (!textToSend) setRawInput("");
 
-    // Append User message to UI
+    // Persist the user turn before starting LM work. This guarantees the input
+    // survives gateway failures and sorts before the resulting error bubble.
+    const durableUserId = crypto.randomUUID();
+    const localUserId = `user-${durableUserId}`;
+    persistingMessageIdsRef.current.add(localUserId);
     store.setMessages((prev) => [
       ...prev,
       {
-        id: `user-${Date.now()}`,
+        id: localUserId,
         role: "user",
         content: inputMsg,
         timestamp: nowTime(),
       },
     ]);
+    try {
+      await api.appendConversationMessage(projectId, {
+        id: durableUserId,
+        role: "user",
+        message: inputMsg,
+        workflow_state: "gatherer",
+        intent: "PENDING_DETECTION",
+      });
+      store.setMessages((current) =>
+        current.map((message) =>
+          message.id === localUserId ? { ...message, id: durableUserId } : message,
+        ),
+      );
+    } catch (error) {
+      persistingMessageIdsRef.current.delete(localUserId);
+      store.setMessages((current) => [...current]);
+      console.warn("The user message will be retried by timeline persistence.", error);
+    }
 
     // Set Loading State - show neutral loading indicator until intent is determined
     store.setIsLoading(true);
@@ -187,6 +281,7 @@ export function useChat(
           // the agent actions use it; the backend's default is the same text.
           version_history_summaries: "No previous history.",
           target_agent: "gatherer",
+          client_persists_timeline: true,
           ...(projectIdOverride
             ? {}
             : {
@@ -218,7 +313,11 @@ export function useChat(
         store.setSyncStatus("No changes were made");
         store.setCurrentAgentNode(null);
         store.setMessages((prev) => [
-          ...prev,
+          ...prev.map((message) =>
+            message.isPendingClarifications
+              ? { ...message, isPendingClarifications: false }
+              : message,
+          ),
           {
             id: `no-change-${Date.now()}`,
             role: "assistant",
@@ -432,6 +531,7 @@ export function useChat(
         //            short-circuit (see CHAT 2.3.0). On the backend this enters
         //            ROUTING 1.2 → auditor_node.
         target_agent: "auditor",
+        client_persists_timeline: true,
         structured_requirements: toGatheredRequirementsPayload(
           store.structuredRequirements,
         ),
@@ -537,7 +637,11 @@ export function useChat(
           : `${title}\n${contextText}\n\nFindings:\n${findingTexts || "No blocking finding was established."}\n\nPending clarifications:\n${questionTexts || "None specified"}`;
 
         store.setMessages((prev) => [
-          ...prev,
+          ...prev.map((message) =>
+            message.isPendingClarifications
+              ? { ...message, isPendingClarifications: false }
+              : message,
+          ),
           {
             id: `audit-failed-${Date.now()}`,
             role: "assistant",
@@ -701,6 +805,7 @@ export function useChat(
         //            (1.3 helper), which is what makes the reuse guard (2.2) and the
         //            version-history table in the template meaningful.
         target_agent: "architect",
+        client_persists_timeline: true,
         // An explicit Generate PRD click must rebuild the document from the
         // persisted user-story records. This applies template-rendering
         // improvements even when no requirement fields have changed.
@@ -721,45 +826,55 @@ export function useChat(
           store.setSyncStatus(`Compiling enterprise PRD document… ${stage}`),
       });
 
-      // ARCHITECT 1.5 — Response applied to UI state: the filled PRD markdown and the
-      //            refreshed Mermaid diagram replace the stored ones, a success bubble
-      //            is appended, and the workspace switches to the PRD tab. The
-      //            requirement rows are still unconfirmed (CONFIRMATION flow) — only the
-      //            document/version writes already happened server-side (5.1/6.0).
+      // ARCHITECT 1.5 — The generated document is preview-only. Keep the saved
+      // PRD/diagram untouched and expose the draft through the same durable
+      // pending-action channel used by requirement review. Approval is the
+      // only operation that may create a PRD version.
       const generatedPrd = data.prd_markdown || "";
-      const generatedMermaid = data.mermaid_diagram || "";
-
-      if (generatedPrd) store.setPrdMarkdown(generatedPrd);
-      // The response is one generated artifact snapshot. Apply the diagram
-      // even when it is empty so a newly cleared server diagram cannot leave
-      // the previous revision visible beside the new PRD.
-      store.setMermaidDiagram(generatedMermaid);
-      store.setDiagramGeneratedAt(data.diagram_generated_at || null);
-      if (data.structured_requirements?.version) {
-        store.setCurrentVersion(data.structured_requirements.version);
+      if (!data.pending_action_id || !generatedPrd) {
+        throw new Error("The architect did not return a reviewable PRD preview.");
       }
-      // Architect generation now appends the immutable snapshot immediately;
-      // reload so the first AI-generated PRD appears in Versions without a
-      // project refresh or an unrelated merge confirmation.
-      await store.loadVersionHistory(projectId);
+      const preservedSections = data.skipped_locked_prd_sections || [];
+      // Re-read the server-owned draft instead of reconstructing it locally;
+      // this carries the exact source revision and next ledger version used by
+      // the approval conflict checks.
+      try {
+        deps.setPendingActions(await api.listPendingActions(projectId));
+      } catch {
+        // The generation itself succeeded and the durable action exists. Keep
+        // the preview usable even if this secondary refresh briefly fails;
+        // approval still reads and validates the server-owned action by id.
+        deps.setPendingActions((prev) => [
+          ...prev.filter((action) => action.action_type !== "GENERATE_PRD"),
+          {
+            id: data.pending_action_id!,
+            project_id: projectId,
+            action_type: "GENERATE_PRD",
+            original_user_message: "Generate PRD",
+            workflow_stage: "PRD_PREVIEW",
+            proposed_changes: {
+              generated_prd: generatedPrd,
+              preserved_sections: preservedSections,
+            },
+          },
+        ]);
+      }
 
       store.setMessages((prev) => [
-        ...prev,
+        ...prev.filter((message) => !isLegacyPrdPreviewMessage(message.content)),
         {
           id: `prd-generated-${Date.now()}`,
           role: "assistant",
           content:
-            data.message ||
-            "Enterprise PRD compiled successfully.\nThe Technical Product Owner Assistant has generated the formal PRD and interactive system flowchart in the preview panel.",
+            "PRD draft generated. It has not been saved yet. Review it in the preview panel, then select Save PRD or Discard preview.",
           timestamp: nowTime(),
         },
       ]);
 
-      const skippedLockedSections = data.skipped_locked_prd_sections || [];
       store.setSyncStatus(
-        skippedLockedSections.length > 0
-          ? `PRD updated. Locked sections preserved: ${skippedLockedSections.join(", ")}`
-          : "PRD and flowchart diagram updated.",
+        preservedSections.length > 0
+          ? `Draft preview ready. It has not been saved. Protected sections preserved: ${preservedSections.join(", ")}`
+          : "Draft preview ready. It has not been saved.",
       );
       deps.setActiveTab("prd"); // switch tab automatically to PRD
     } catch (err) {
@@ -863,6 +978,7 @@ export function useChat(
   //             The empty-answer guard makes the button a no-op until something is typed.
   const handleSubmitClarifications = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (clarificationSubmitInFlightRef.current) return;
     const submittedAnswers = Object.fromEntries(
       Object.entries(store.clarificationAnswers)
         .map(([key, value]) => [key, value.trim()])
@@ -874,6 +990,7 @@ export function useChat(
     }
 
     try {
+      clarificationSubmitInFlightRef.current = true;
       // Answer submission has its own Gatherer handoff. Expose it through the
       // shared processing state so the inline form cannot look inert or submit
       // the same answers twice while LM Studio is working.
@@ -897,24 +1014,33 @@ export function useChat(
           remainingAnswers[questionAnswerKey(question, index)] = "";
         });
         store.setClarificationAnswers(remainingAnswers);
-        // Update the inline chat form in place: answered questions disappear,
-        // while unanswered questions remain available for a later submission.
-        store.setMessages((prev) =>
-          prev.map((message) =>
-            message.isPendingClarifications
-              ? {
-                  ...message,
-                  isPendingClarifications: unresolvedQuestions.length > 0,
-                  auditResultSnapshot: message.auditResultSnapshot
-                    ? {
-                        ...message.auditResultSnapshot,
-                        clarification_questions: refreshedQuestions,
-                      }
-                    : message.auditResultSnapshot,
-                }
-              : message,
-          ),
-        );
+        // Update only the newest clarification card in place. Answered questions
+        // remain read-only for review, while unanswered questions stay editable.
+        store.setMessages((prev) => {
+          let ownerIndex = -1;
+          for (let index = prev.length - 1; index >= 0; index -= 1) {
+            if (prev[index].isPendingClarifications) {
+              ownerIndex = index;
+              break;
+            }
+          }
+          return prev.map((message, index) => {
+            if (!message.isPendingClarifications) return message;
+            if (index !== ownerIndex) {
+              return { ...message, isPendingClarifications: false };
+            }
+            return {
+              ...message,
+              isPendingClarifications: refreshedQuestions.length > 0,
+              auditResultSnapshot: message.auditResultSnapshot
+                ? {
+                    ...message.auditResultSnapshot,
+                    clarification_questions: refreshedQuestions,
+                  }
+                : message.auditResultSnapshot,
+            };
+          });
+        });
         if (res.current_workflow_state) {
           store.setCurrentAgentNode(res.current_workflow_state);
         }
@@ -994,6 +1120,7 @@ export function useChat(
       handleError("Failed to submit clarifications.", err);
       store.setSyncStatus("Failed to submit clarifications");
     } finally {
+      clarificationSubmitInFlightRef.current = false;
       store.setIsProcessing(false);
       store.setCurrentAgentNode(null);
     }

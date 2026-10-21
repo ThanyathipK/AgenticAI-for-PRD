@@ -15,6 +15,8 @@ import type {
   AuthSessionPayload,
   AuthUserPayload,
   ConfirmActionResponse,
+  ConversationMessageCreatePayload,
+  ConversationMessagePayload,
   ConvertedPrdMarkdownPayload,
   DocumentDeleteResponse,
   DocumentMarkdownPayload,
@@ -313,6 +315,10 @@ export const api = {
   //               only). Also drives CONFIRM 1.7.
   listPendingActions: (projectId: string) =>
     get<PendingActionPayload[]>(`/api/pending-actions/${projectId}`),
+  listConversationMessages: (projectId: string) =>
+    get<ConversationMessagePayload[]>(`/api/project/${projectId}/conversations`),
+  appendConversationMessage: (projectId: string, message: ConversationMessageCreatePayload) =>
+    post<ConversationMessagePayload>(`/api/project/${projectId}/conversations`, message),
   // CONFIRM 2.3 — THE write call of the whole product's AI path: it commits the
   //               staged draft (CONFIRM 3.3 → RequirementStateRepository).
   confirmAction: (actionId: string, projectId: string) =>

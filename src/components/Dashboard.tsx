@@ -38,6 +38,7 @@ import { api } from '../api/client';
 import type { ProjectIntake } from './NewProjectModal';
 import { WorkspaceNavigation } from './WorkspaceNavigation';
 import { MainArtifactPanel } from './MainArtifactPanel';
+import { PRDGenerationPreview } from './PRDGenerationPreview';
 
 const escapeTableCell = (value: string) => value.replaceAll('|', '\\|').replaceAll('\n', '<br>');
 
@@ -153,7 +154,6 @@ export default function Dashboard() {
     setProjectSearchQuery,
     pendingActions,
     setPendingActions,
-    registerCascadeJob,
     loadProjectState,
     setMessages,
     currentVersion,
@@ -172,6 +172,7 @@ export default function Dashboard() {
     handleUnlockRequirement,
     lockableRequirements,
     refreshLockableRequirements,
+    handleGeneratePRD,
   } = state;
 
   // ---- Sidebar project search (pure presentation state) --------------------
@@ -672,25 +673,21 @@ export default function Dashboard() {
 {/* CONFIRM 1.0 / 1.1 — Human-in-the-loop gate mount: one ConfirmationPanel per staged
     action. onConfirm drops the card and re-reads the authoritative project state +
     lock list; onCancel just closes it (nothing was written). */}
-            {pendingActions.map(action => (
+            {pendingActions.filter(action => action.action_type !== 'GENERATE_PRD').map(action => (
                 <ConfirmationPanel 
                     key={action.id} 
                     action={action} 
-                    onConfirm={(result) => {
+                    onConfirm={() => {
                         setPendingActions(prev => prev.filter(a => a.id !== action.id));
-                        if (result?.cascade_status === 'queued' && result.cascade_job_id) {
-                            registerCascadeJob(result.cascade_job_id);
-                        }
                         if(projectId) loadProjectState(projectId);
                         // The merge just created/renamed requirement records, so
                         // re-read the authoritative lock list (new rows must be
                         // listed and lockable immediately, with their real ids).
                         void refreshLockableRequirements();
-                        const savedVersion = result?.requirement_state?.version_number;
                         setMessages(prev => [...prev, {
                             id: `merge-saved-${Date.now()}`,
                             role: 'system',
-                            content: `Changes saved. The merged requirements were applied${savedVersion ? ` as version ${savedVersion}` : ''} and logged in the Version History.`,
+                            content: 'Requirements saved. Review or validate them, then select Generate PRD when you are ready to create a PRD preview.',
                             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                         }]);
                     }}
@@ -708,6 +705,34 @@ export default function Dashboard() {
                         }]);
                     }}
                 />
+            ))}
+
+            {activeTab === 'prd' && pendingActions.filter(action => action.action_type === 'GENERATE_PRD').map(action => (
+              <PRDGenerationPreview
+                key={action.id}
+                action={action}
+                onApproved={(result) => {
+                  setPendingActions(prev => prev.filter(item => item.id !== action.id));
+                  if (projectId) void loadProjectState(projectId);
+                  setMessages(prev => [...prev, {
+                    id: `prd-saved-${Date.now()}`,
+                    role: 'system',
+                    content: `PRD saved successfully${result.requirement_state?.version_number ? ` as version ${result.requirement_state.version_number}` : ''}. This approved document is now the current PRD.`,
+                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  }]);
+                }}
+                onDiscarded={() => {
+                  setPendingActions(prev => prev.filter(item => item.id !== action.id));
+                  setMessages(prev => [...prev, {
+                    id: `prd-discarded-${Date.now()}`,
+                    role: 'system',
+                    content: 'PRD preview discarded. The saved PRD was not changed.',
+                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  }]);
+                }}
+                onRegenerate={handleGeneratePRD}
+                onBackToRequirements={() => setActiveTab('trace')}
+              />
             ))}
 
             {/* Requirement Lock Status Panel — only shown on the Requirements tab */}
@@ -798,6 +823,11 @@ export default function Dashboard() {
               </div>
             )}
 
+            {activeTab === 'prd' && pendingActions.some(action => action.action_type === 'GENERATE_PRD') && (
+              <div className="max-w-4xl mx-auto mb-2 px-1 text-[10px] font-bold uppercase tracking-[0.08em] text-on-surface-variant">
+                Current saved PRD (unchanged until preview approval)
+              </div>
+            )}
             <MainArtifactPanel state={state} userName={userDisplayName} />
 
           </div>

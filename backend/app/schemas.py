@@ -177,6 +177,10 @@ class ProcessRequirementsRequest(BaseModel):
         description="Rebuild the PRD from persisted artifacts even when no story is marked changed.",
     )
     structured_requirements: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    client_persists_timeline: bool = Field(
+        default=False,
+        description="When true, the UI persists the visible user/assistant bubbles through the conversation endpoint.",
+    )
 
 
 class ArtifactLockRequest(BaseModel):
@@ -442,6 +446,15 @@ class ConversationMessageResponse(BaseModel):
     workflow_state: str = Field("", description="Workflow state captured at persistence time.")
     intent: str = Field("", description="Detected intent captured at persistence time.")
     created_at: str = Field("", description="ISO8601 timestamp of the message.")
+
+
+class ConversationMessageCreate(BaseModel):
+    """Append one visible bubble to a project's durable conversation timeline."""
+    id: Optional[str] = Field(None, description="Optional client-generated UUID used for idempotency.")
+    role: str = Field(..., min_length=1, max_length=50)
+    message: str = Field(..., min_length=1)
+    workflow_state: str = Field("", max_length=50)
+    intent: str = Field("", max_length=50)
 
 
 class RequirementStateResponse(BaseModel):

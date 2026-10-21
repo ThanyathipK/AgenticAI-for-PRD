@@ -251,7 +251,7 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
                   </div>
                 )}
 
-                <div className={`flex flex-col gap-1 max-w-[88%] ${isUser ? 'items-end' : 'items-start'}`}>
+                <div className={`flex flex-col gap-1 ${msg.auditResultSnapshot?.clarification_questions?.length ? 'max-w-[96%]' : 'max-w-[88%]'} ${isUser ? 'items-end' : 'items-start'}`}>
                   {/* Name card */}
                   <span className="text-[10px] text-[#a89b91] font-semibold tracking-[0.02em]">
                     {isUser ? displayUserName(userName) : 'AI'}, {msg.timestamp}
@@ -298,9 +298,9 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
                       >
                         {msg.auditResultSnapshot.clarification_questions
                           .map((q, idx) => ({ q, idx }))
-                          .filter(({ q }) => !q.is_resolved)
                           .map(({ q, idx }) => {
                           const answerKey = q.id || `q-${idx}`;
+                          const isAnswered = Boolean(q.is_resolved);
                           return (
                           <div key={answerKey} className="space-y-1.5 bg-black/5 p-3 rounded-xl border border-black/5 min-w-0">
                             <div className="flex flex-wrap items-center justify-between gap-1.5">
@@ -310,6 +310,11 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
                               <span className="text-[10px] font-mono text-on-surface-variant font-semibold break-words min-w-0 text-right">
                                 Target: {q.target_user_story_id}
                               </span>
+                              {isAnswered && (
+                                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
+                                  Answered
+                                </span>
+                              )}
                             </div>
                             <p className="text-[12.5px] font-medium text-on-surface leading-tight break-words">
                               {q.question_text}
@@ -322,13 +327,23 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
                                 ? ` · ${q.provenance.analyzed_target || q.target_requirement_id || q.target_user_story_id}`
                                 : ''}
                             </p>
-                            <input
-                              type="text"
-                              value={clarificationAnswers[answerKey] || ""}
+                            <textarea
+                              rows={2}
+                              ref={(element) => {
+                                if (!element) return;
+                                element.style.height = 'auto';
+                                element.style.height = `${Math.min(element.scrollHeight, 180)}px`;
+                              }}
+                              value={isAnswered ? q.user_answer || "" : clarificationAnswers[answerKey] || ""}
                               onChange={(e) => handleUpdateAnswerValue(answerKey, e.target.value)}
-                              disabled={isProcessing}
+                              onInput={(event) => {
+                                const element = event.currentTarget;
+                                element.style.height = 'auto';
+                                element.style.height = `${Math.min(element.scrollHeight, 180)}px`;
+                              }}
+                              disabled={isProcessing || isAnswered}
                               placeholder="Type your answer"
-                              className="w-full bg-white border border-outline rounded-lg px-3 py-1.5 text-xs text-on-surface focus:ring-1 focus:ring-primary/40 focus:border-primary placeholder:text-on-surface-variant/40 outline-none"
+                              className="w-full min-h-[58px] max-h-[180px] resize-y bg-white border border-outline rounded-lg px-3 py-2 text-xs leading-relaxed text-on-surface focus:ring-1 focus:ring-primary/40 focus:border-primary placeholder:text-on-surface-variant/40 outline-none disabled:bg-slate-50 disabled:text-slate-700 disabled:cursor-default"
                             />
                           </div>
                           );

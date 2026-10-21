@@ -20,6 +20,7 @@ import type {
 } from '../components/types';
 import type {
   AuditResultPayload,
+  ClarificationQuestionPayload,
   GatheredRequirementsPayload,
   PrdVersionPayload,
   RequirementsField,
@@ -39,6 +40,40 @@ export const DEFAULT_FAILED_CHECKS = [
   'Idempotency & De-duplication',
   'Network Timeouts & Retry Strategies',
 ];
+
+const normalizeClarificationText = (value: string | null | undefined) =>
+  (value || '').toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+
+const clarificationFingerprint = (question: ClarificationQuestionPayload) =>
+  `${normalizeClarificationText(question.checklist_category)}\u0000${normalizeClarificationText(question.question_text)}`;
+
+/** Audit providers can emit the same question under multiple internal targets. */
+export function dedupeClarificationQuestions(
+  questions: ClarificationQuestionPayload[] | null | undefined,
+): ClarificationQuestionPayload[] {
+  if (!Array.isArray(questions)) return [];
+  const unique = new Map<string, ClarificationQuestionPayload>();
+  for (const question of questions) {
+    const fingerprint = clarificationFingerprint(question);
+    const existing = unique.get(fingerprint);
+    if (!existing) {
+      unique.set(fingerprint, { ...question });
+      continue;
+    }
+    if (question.is_resolved && !existing.is_resolved) {
+      existing.is_resolved = true;
+      existing.user_answer = question.user_answer;
+    }
+    existing.target_requirement_id ||= question.target_requirement_id;
+    existing.target_user_story_id ||= question.target_user_story_id;
+    if (!existing.source_references?.length && question.source_references?.length) {
+      existing.source_references = question.source_references;
+    }
+    existing.provenance ||= question.provenance;
+    existing.requirement_context ||= question.requirement_context;
+  }
+  return [...unique.values()];
+}
 
 // ----------------------------------------------------------------------------
 // User stories
@@ -125,7 +160,7 @@ export function toAuditResult(payload: RequirementStatePayload): AuditResult {
   return {
     is_valid: isPassed,
     audit_version_reviewed: payload.version_number || 1,
-    clarification_questions: payload.clarification_questions || [],
+    clarification_questions: dedupeClarificationQuestions(payload.clarification_questions),
     passed_checks: payload.passed_checks || [],
     failed_checks: payload.failed_checks || [],
     findings: payload.audit_findings || [],
@@ -153,7 +188,7 @@ export function toAuditResultFromPayload(
     project_context: a.project_context,
     checklist_id: a.checklist_id,
     checklist_version: a.checklist_version,
-    clarification_questions: Array.isArray(a.clarification_questions) ? a.clarification_questions : [],
+    clarification_questions: dedupeClarificationQuestions(a.clarification_questions),
   };
 }
 
@@ -193,11 +228,40 @@ export function toLockMaps(requirements: RequirementsField): {
 // Conversation history
 // ----------------------------------------------------------------------------
 
+const LEGACY_PRD_PREVIEW_PREFIX = 'Enterprise PRD compiled successfully.';
+const CURRENT_PRD_PREVIEW_PREFIX = 'PRD draft generated';
+
+export const isLegacyPrdPreviewMessage = (content: string | null | undefined) =>
+  String(content || '').trim().startsWith(LEGACY_PRD_PREVIEW_PREFIX);
+
+export const isCurrentPrdPreviewMessage = (content: string | null | undefined) =>
+  String(content || '').trim().startsWith(CURRENT_PRD_PREVIEW_PREFIX);
+
 export function toChatMessages(payload: RequirementStatePayload): ChatMessage[] {
-  const history = payload.conversation_history;
+  const rawHistory = payload.conversation_history;
   const loaded: ChatMessage[] = [];
 
-  if (Array.isArray(history)) {
+  if (Array.isArray(rawHistory)) {
+    // Older builds persisted the Architect's preview message server-side and
+    // then persisted the SPA's preview message again. Suppress only that known
+    // obsolete twin when the replacement event exists; keep all other history.
+    const hasCurrentPreview = rawHistory.some((message) =>
+      isCurrentPrdPreviewMessage(message.content || message.message),
+    );
+    const history = hasCurrentPreview
+      ? rawHistory.filter((message) =>
+          !isLegacyPrdPreviewMessage(message.content || message.message),
+        )
+      : rawHistory;
+    const latestClarificationIndex = history.reduce(
+      (latest, message, index) =>
+        message.intent === 'CLARIFICATION_REQUEST' ||
+        message.role === 'auditor' ||
+        message.intent === 'AUDIT_RESULT'
+          ? index
+          : latest,
+      -1,
+    );
     history.forEach((m, idx) => {
       const dateObj = m.created_at ? new Date(m.created_at) : null;
       const timeStr =
@@ -205,16 +269,18 @@ export function toChatMessages(payload: RequirementStatePayload): ChatMessage[] 
           ? dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           : m.timestamp || '';
 
-      const isAuditor = m.role === 'auditor';
-      const isPending = isAuditor && payload.validation_status === 'invalid';
+      const ownsClarifications = idx === latestClarificationIndex;
+      const hasClarifications = (payload.clarification_questions?.length ?? 0) > 0;
 
       loaded.push({
         id: m.id || `hist-${idx}`,
         role: m.role || 'assistant',
         content: m.content || m.message || '',
         timestamp: timeStr,
-        isPendingClarifications: isPending,
-        auditResultSnapshot: isAuditor ? toAuditResult(payload) : undefined,
+        // Keep the latest audit card reviewable after submission/reload. The
+        // renderer decides which questions are editable from is_resolved.
+        isPendingClarifications: ownsClarifications && hasClarifications,
+        auditResultSnapshot: ownsClarifications ? toAuditResult(payload) : undefined,
       });
     });
   }

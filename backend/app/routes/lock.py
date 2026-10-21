@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import List
 from uuid import UUID
 
@@ -23,6 +24,7 @@ from app.schemas import (
     ImpactAnalysisResponse,
 )
 from app.event_manager import event_manager
+from app.models import PendingActionModel
 from app.review_service import governed_state_changed, mark_revised_if_approved
 
 logger = logging.getLogger("app.routes.lock")
@@ -304,6 +306,24 @@ async def get_action_impact(
     if not action:
         raise HTTPException(status_code=404, detail="Pending action not found")
 
+    expires_at = action.get("expires_at")
+    if expires_at:
+        try:
+            expiry = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if expiry <= datetime.now(timezone.utc):
+                await PendingActionRepository.delete(action_id, project_id, session)
+                await session.commit()
+                raise HTTPException(
+                    status_code=410,
+                    detail="This preview expired. Generate a new preview before saving.",
+                )
+        except HTTPException:
+            raise
+        except (TypeError, ValueError):
+            logger.warning("Pending action %s has an invalid expires_at value: %r", action_id, expires_at)
+
     analysis = await ImpactService.analyze_pending_action(action, project_id, session)
     return analysis
 
@@ -350,9 +370,10 @@ async def confirm_action(
     """
     from app.lock_service import LockService, ArtifactLockError
     try:
-        UUID(project_id)
+        project_uuid = UUID(project_id)
+        action_uuid = UUID(action_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid project_id format")
+        raise HTTPException(status_code=400, detail="Invalid project_id or action_id format")
     # CONFIRM 3.3.2 — Lock gate (coarse, project-level): a locked project refuses the
     #               merge with 409; an unresolvable project id becomes 404. This is
     #               what stops an AI merge from overwriting a frozen baseline.
@@ -365,11 +386,41 @@ async def confirm_action(
         raise HTTPException(status_code=404, detail=str(e))
 
     # 1. Get the action
-    actions = await PendingActionRepository.get_by_project(project_id, session)
-    action = next((a for a in actions if a["id"] == action_id), None)
-
-    if not action:
+    # Serialize confirmation of this exact preview. On PostgreSQL, a second
+    # request waits here and then observes that the first transaction consumed
+    # the row, so one preview can create at most one immutable PRD version.
+    action_model = (await session.execute(
+        select(PendingActionModel)
+        .where(
+            PendingActionModel.id == action_uuid,
+            PendingActionModel.project_id == project_uuid,
+            PendingActionModel.status == "WAITING_CONFIRMATION",
+        )
+        .with_for_update()
+    )).scalar_one_or_none()
+    if action_model is None:
         raise HTTPException(status_code=404, detail="Pending action not found")
+    from app.repositories.base import serialize_pending_action
+
+    action = serialize_pending_action(action_model, full=True)
+
+    expires_at = action.get("expires_at")
+    if expires_at:
+        try:
+            expiry = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if expiry <= datetime.now(timezone.utc):
+                await PendingActionRepository.delete(action_id, project_id, session)
+                await session.commit()
+                raise HTTPException(
+                    status_code=410,
+                    detail="This preview expired. Generate a new preview before saving.",
+                )
+        except HTTPException:
+            raise
+        except (TypeError, ValueError):
+            logger.warning("Pending action %s has an invalid expires_at value: %r", action_id, expires_at)
 
     # Archive previews are checked again here because an artifact may have been
     # locked after the preview was created. Never silently skip a protected
@@ -475,6 +526,87 @@ async def confirm_action(
         await PendingActionRepository.delete(action_id, project_id, session)
         raise HTTPException(status_code=400, detail="No proposed changes found in pending action")
 
+    # PRD generation has its own commit boundary. The architect only staged a
+    # rendered document and diagram; approval below is the first point at which
+    # sections, the canonical PRD, or version history may change.
+    if action.get("action_type") == "GENERATE_PRD":
+        latest_state = await RequirementStateRepository.get_by_project_id(project_id, session) or {}
+        expected_requirements_revision = int(
+            proposed_changes.get("source_requirements_revision") or 1
+        )
+        expected_prd_version = int(proposed_changes.get("base_prd_version") or 1)
+        actual_requirements_revision = int(latest_state.get("requirements_revision") or 1)
+        actual_prd_version = int(latest_state.get("version_number") or 1)
+        if actual_requirements_revision != expected_requirements_revision:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This PRD preview is outdated because the requirements changed. "
+                    "Discard it and generate a new preview."
+                ),
+            )
+        if actual_prd_version != expected_prd_version:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This PRD preview is outdated because the saved PRD changed. "
+                    "Discard it and generate a new preview."
+                ),
+            )
+
+        generated_prd = str(proposed_changes.get("generated_prd") or "").strip()
+        if not generated_prd:
+            await PendingActionRepository.delete(action_id, project_id, session)
+            raise HTTPException(status_code=400, detail="The PRD preview has no document content")
+
+        from app.prd_section_service import sync_sections_from_prd
+        from app.version_service import record_prd_version
+
+        stitched_prd = await sync_sections_from_prd(
+            project_id,
+            generated_prd,
+            session,
+            changed_by="automated_agent",
+        )
+        final_prd = stitched_prd or generated_prd
+        version_record = await record_prd_version(
+            project_id,
+            session,
+            generated_prd=final_prd,
+            generated_by=current_user.full_name or "automated_agent",
+            change_type="ai",
+            change_summary="Approved generated PRD preview.",
+        )
+        persisted_state = await RequirementStateRepository.save_or_update(
+            project_id,
+            {
+                "generated_prd": final_prd,
+                "generated_diagrams": proposed_changes.get("generated_diagrams") or "",
+                "prd_narrative": proposed_changes.get("prd_narrative") or {},
+                "current_workflow_state": "COMPLETED",
+                "version_number": version_record["version_number"],
+            },
+            session,
+        )
+        await PendingActionRepository.delete(action_id, project_id, session)
+        await event_manager.publish(project_id, "prd_confirmed", {
+            "project_id": project_id,
+            "action_id": action_id,
+            "version_number": version_record["version_number"],
+        })
+        logger.info(
+            "[PRD CONFIRM] Approved preview %s as version %s for project %s",
+            action_id,
+            version_record["version_number"],
+            project_id,
+        )
+        return {
+            "status": "confirmed",
+            "requirement_state": persisted_state,
+            "cascade_job_id": None,
+            "cascade_status": "not_required",
+        }
+
     # 3. Apply proposed changes to the database
     logger.info(f"[MERGE CONFIRM] Persisting merged state for project {project_id}...")
     # CONFIRM 3.3.5 — THE WRITE (the single point where a staged draft becomes real
@@ -484,8 +616,6 @@ async def confirm_action(
     previous_state = await RequirementStateRepository.get_by_project_id(project_id, session)
     requirement_merge = action.get("workflow_stage") != "COMPLETED"
     clarification_review_merge = action.get("workflow_stage") == "clarification_gatherer_review"
-    changed_artifacts = []
-    cascade_plan = None
     cascade_job_id = None
     cascade_status = "not_required"
     updates_to_persist = dict(proposed_changes)
@@ -506,14 +636,14 @@ async def confirm_action(
         changed_artifacts = detect_changed_artifacts(previous_state, persisted_state)
         if changed_artifacts:
             # A changed source invalidates its previous audit verdict and every
-            # linked PRD section. Sections are reset to draft before the scoped
-            # automatic regeneration job rewrites writable dependants.
+            # linked PRD section. Sections remain in draft/review state until
+            # the user explicitly selects Generate PRD and approves its preview.
             persisted_state = await RequirementStateRepository.save_or_update(
                 project_id,
                 {"validation_status": "pending"},
                 session,
             )
-            cascade_plan = await mark_dependents_for_review(project_id, changed_artifacts, session)
+            await mark_dependents_for_review(project_id, changed_artifacts, session)
 
     # Architect output is staged without touching the section/version stores.
     # Materialize its sections only at this confirmation boundary so Cancel
@@ -601,53 +731,9 @@ async def confirm_action(
     # 4. Delete the pending action
     await PendingActionRepository.delete(action_id, project_id, session)
 
-    # A normal confirmed parent change can continue down the hierarchy. A
-    # clarification-answer proposal deliberately does not: users must choose
-    # Validate Requirements and Generate PRD explicitly after reviewing it.
-    # ACs were revalidated in the Gatherer draft; now queue the Architect for
-    # only the linked, writable PRD sections (and an existing diagram). Running
-    # this in the durable job queue keeps Save responsive and makes the work
-    # recoverable after a process restart. Protected sections remain draft and
-    # are deliberately not rewritten.
-    should_regenerate_document = bool(
-        cascade_plan
-        and (
-            cascade_plan.get("regenerate_prd_sections")
-            or (
-                cascade_plan.get("regenerate_diagrams")
-                and (persisted_state.get("generated_diagrams") or "").strip()
-            )
-        )
-    )
-    if should_regenerate_document and not clarification_review_merge:
-        # Persist the confirmed hierarchy before touching the independent job
-        # queue. In particular, create_job may roll back its own transaction on
-        # a uniqueness race; that must never undo the user's confirmed Save.
-        await session.commit()
-        try:
-            from app.generation_job_service import create_job, launch_job
-
-            cascade_job = await create_job(
-                project_id,
-                current_user.id,
-                "regeneration",
-                {"changed_artifacts": changed_artifacts, "confirm": True, "automatic": True},
-                session,
-            )
-            cascade_job_id = cascade_job["id"]
-            cascade_status = "queued"
-            await session.commit()
-            launch_job(cascade_job_id)
-        except ValueError as exc:
-            # Another model job already owns this project. Keep the dependency
-            # flags/draft section statuses so the cascade remains visible and
-            # can be retried after that job finishes.
-            cascade_status = "deferred"
-            logger.warning(
-                "[MERGE CONFIRM] Automatic downstream regeneration deferred for project %s: %s",
-                project_id,
-                exc,
-            )
+    # Saving requirements deliberately stops here. It invalidates affected
+    # downstream artifacts but never starts PRD generation; the explicit
+    # Generate PRD action owns generation, preview, and approval.
 
     # CONFIRM 3.3.9 — Real-time fan-out: other clients (and this one, debounced)
     #               re-read the project state (EVENTS flow).

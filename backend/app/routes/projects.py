@@ -42,6 +42,7 @@ from app.schemas import (
     ProjectReviewEventResponse,
     RequirementStateResponse,
     ConversationMessageResponse,
+    ConversationMessageCreate,
     PRDVersionResponse,
     PrdVersionDiffResponse,
     PrdVersionRestoreResponse,
@@ -58,13 +59,9 @@ logger = logging.getLogger("app.routes.projects")
 
 router = APIRouter()
 
-# PERF (project switch) — how many of the NEWEST conversation messages are
-# embedded in the GET /api/project/{id} state response. The chat timeline only
-# needs enough turns to restore the visible conversation; the complete
-# transcript stays available via GET /api/project/{id}/conversations and is
-# still what the LLM context path loads. Raise this if the restored chat should
-# reach further back.
-PROJECT_STATE_HISTORY_LIMIT = 100
+# Keep ordinary project refreshes bounded. The dedicated conversations endpoint
+# remains the durable, complete audit trail and can support paginated history UI.
+PROJECT_STATE_HISTORY_LIMIT = 50
 
 
 def _duplicate_project_name_detail(name: str) -> str:
@@ -598,6 +595,38 @@ async def get_project_conversations(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project_id format")
     return await ConversationMessageRepository.get_conversation_history(project_id, session=session)
+
+
+@router.post(
+    "/api/project/{project_id}/conversations",
+    response_model=ConversationMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def append_project_conversation(
+    project_id: str,
+    payload: ConversationMessageCreate,
+    current_user: AuthenticatedUser = Depends(require_project_owner),
+    session: AsyncSession = Depends(get_db),
+) -> ConversationMessageResponse:
+    """Persist one UI-visible timeline bubble, idempotently when an id is supplied."""
+    try:
+        UUID(project_id)
+        if payload.id:
+            UUID(payload.id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project or conversation message id")
+    try:
+        return await ConversationMessageRepository.save_message(
+            project_id=project_id,
+            role=payload.role,
+            message=payload.message,
+            workflow_state=payload.workflow_state,
+            intent=payload.intent,
+            message_id=payload.id,
+            session=session,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 # PROJECT 8.2 — Route: PUT /api/project/{project_id} (DIRECT requirement-state write).

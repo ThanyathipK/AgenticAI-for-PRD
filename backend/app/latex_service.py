@@ -1288,6 +1288,21 @@ def _normalize_template_table_semantics(markdown: str) -> str:
                 lines.insert(first + 2, data_row)
         return "\n".join(lines)
 
+    def _business(body: str) -> str:
+        lines = body.splitlines()
+        first = next((i for i, line in enumerate(lines) if line.strip().startswith("|")), None)
+        if first is not None and first + 1 < len(lines) and is_markdown_table_separator(lines[first + 1]):
+            # The official LaTeX table intentionally has no header row. Pandoc
+            # therefore promotes its first real data row (Introduction &
+            # Executive Summary) to a GFM header, which makes the first preview
+            # render it bold/uppercase. Supply the semantic header and put the
+            # promoted row back with the other data rows.
+            if "Introduction" in lines[first] and "Executive Summary" in lines[first]:
+                data_row = lines[first]
+                lines[first] = "| Topic | Details |"
+                lines.insert(first + 2, data_row)
+        return "\n".join(lines)
+
     def _appendix(body: str) -> str:
         lines = body.splitlines()
         first = next((i for i, line in enumerate(lines) if line.strip().startswith("|")), None)
@@ -1298,6 +1313,7 @@ def _normalize_template_table_semantics(markdown: str) -> str:
                 lines.insert(first + 2, data_row)
         return "\n".join(lines)
 
+    _section("1. Business & Strategic Overview", _business)
     _section("2. Product Scope & Functional Requirements", _product)
     _section("3. Technical & Operational Considerations", _technical)
     _section("4. Appendix", _appendix)

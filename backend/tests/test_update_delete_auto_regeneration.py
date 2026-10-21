@@ -1,14 +1,13 @@
-"""Regression coverage for Save -> automatic PRD dependency regeneration.
+"""Regression coverage for Save -> explicit PRD generation.
 
-Both an ordinary requirement update and an archive/delete must persist first,
-then queue the same scoped regeneration job when an existing PRD section
-depends on the changed requirement.
+Requirement updates and archives persist and mark downstream artifacts for
+review, but never start a regeneration job. Users generate and approve the PRD
+through the separate preview workflow.
 """
 from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.auth import AuthenticatedUser
@@ -116,7 +115,7 @@ async def _confirm_change(
 
 
 @pytest.mark.asyncio
-async def test_saved_update_queues_automatic_prd_regeneration(saved_project, monkeypatch):
+async def test_saved_update_waits_for_explicit_prd_generation(saved_project, monkeypatch):
     session, project_id, current_user = saved_project
     proposed = {**BASE_STATE}
     proposed["requirements"] = [{
@@ -129,16 +128,14 @@ async def test_saved_update_queues_automatic_prd_regeneration(saved_project, mon
         action_type="MERGE", proposed_changes=proposed,
     )
 
-    assert result["cascade_status"] == "queued"
-    assert result["cascade_job_id"] == "cascade-job-001"
-    assert queued[0][2] == "regeneration"
-    assert queued[0][3]["automatic"] is True
-    assert any(item["artifact_key"] == "REQ-001" for item in queued[0][3]["changed_artifacts"])
+    assert result["cascade_status"] == "not_required"
+    assert result["cascade_job_id"] is None
+    assert queued == []
     assert await session.get(PendingActionModel, action_id) is None
 
 
 @pytest.mark.asyncio
-async def test_saved_delete_queues_automatic_prd_regeneration(saved_project, monkeypatch):
+async def test_saved_delete_waits_for_explicit_prd_generation(saved_project, monkeypatch):
     session, project_id, current_user = saved_project
     remaining_requirement = {
         "requirement_code": "REQ-002",
@@ -158,18 +155,16 @@ async def test_saved_delete_queues_automatic_prd_regeneration(saved_project, mon
         action_type="ARCHIVE", proposed_changes=proposed,
     )
 
-    assert result["cascade_status"] == "queued"
-    assert result["cascade_job_id"] == "cascade-job-001"
-    assert queued[0][2] == "regeneration"
-    assert queued[0][3]["automatic"] is True
-    assert any(item["artifact_key"] == "REQ-001" for item in queued[0][3]["changed_artifacts"])
+    assert result["cascade_status"] == "not_required"
+    assert result["cascade_job_id"] is None
+    assert queued == []
     assert await session.get(PendingActionModel, action_id) is None
     saved_state = await RequirementStateRepository.get_by_project_id(project_id, session)
     assert [item["requirement_code"] for item in saved_state["requirements"]] == ["REQ-002"]
 
 
 @pytest.mark.asyncio
-async def test_deleting_last_requirement_queues_empty_prd_regeneration(saved_project, monkeypatch):
+async def test_deleting_last_requirement_does_not_generate_prd(saved_project, monkeypatch):
     session, project_id, current_user = saved_project
     proposed = {
         **BASE_STATE,
@@ -184,10 +179,9 @@ async def test_deleting_last_requirement_queues_empty_prd_regeneration(saved_pro
     )
 
     assert result["status"] == "confirmed"
-    assert result["cascade_status"] == "queued"
-    assert result["cascade_job_id"] == "cascade-job-001"
-    assert queued[0][2] == "regeneration"
-    assert queued[0][3]["automatic"] is True
+    assert result["cascade_status"] == "not_required"
+    assert result["cascade_job_id"] is None
+    assert queued == []
     assert await session.get(PendingActionModel, action_id) is None
     saved_state = await RequirementStateRepository.get_by_project_id(project_id, session)
     assert saved_state["requirements"] == []

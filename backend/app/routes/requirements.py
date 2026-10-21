@@ -30,6 +30,7 @@ from app.repositories import (
     PendingActionRepository,
     ClarificationQuestionRepository,
     DocumentRepository,
+    PRDVersionRepository,
 )
 from app.schemas import (
     ProcessRequirementsRequest,
@@ -418,6 +419,13 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
     questions = req_state.get("clarification_questions", [])
     submitted_envelopes = []
     answered_by_fingerprint: Dict[tuple, str] = {}
+
+    def question_fingerprint(question: Dict[str, Any]) -> tuple:
+        return (
+            " ".join(str(question.get("checklist_category") or "").lower().split()),
+            " ".join(str(question.get("question_text") or "").lower().split()),
+        )
+
     for idx, q in enumerate(questions):
         stable_key = str(q.get("id") or "")
         legacy_key = f"q-{idx}"
@@ -427,11 +435,7 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
         if isinstance(answer, str) and answer.strip():
             q["user_answer"] = answer.strip()
             q["is_resolved"] = True
-            answered_by_fingerprint[(
-                str(q.get("checklist_category") or ""),
-                str(q.get("question_text") or "").strip(),
-                str(q.get("target_requirement_id") or q.get("target_user_story_id") or ""),
-            )] = answer.strip()
+            answered_by_fingerprint[question_fingerprint(q)] = answer.strip()
             submitted_envelopes.append({
                 "question_id": stable_key or legacy_key,
                 "question": q.get("question_text"),
@@ -444,18 +448,43 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
             })
 
     # Older releases could persist the same Auditor question under more than
-    # one audit anchor. A user answer explicitly resolves that same issue, so
-    # apply it to exact duplicates instead of leaving a visually identical row
-    # open after reload. Non-identical questions are never auto-resolved.
+    # one audit anchor. A user answer explicitly resolves that same issue.
+    # Merge duplicates by their user-visible category and wording. Auditor runs
+    # can attach the same question to different internal targets; those anchors
+    # must not make the user answer an identical question twice.
     for q in questions:
-        fingerprint = (
-            str(q.get("checklist_category") or ""),
-            str(q.get("question_text") or "").strip(),
-            str(q.get("target_requirement_id") or q.get("target_user_story_id") or ""),
-        )
+        fingerprint = question_fingerprint(q)
         if not q.get("is_resolved", False) and fingerprint in answered_by_fingerprint:
             q["user_answer"] = answered_by_fingerprint[fingerprint]
             q["is_resolved"] = True
+
+    unique_questions: List[Dict[str, Any]] = []
+    question_index_by_fingerprint: Dict[tuple, int] = {}
+    duplicate_question_ids: List[str] = []
+    for question in questions:
+        fingerprint = question_fingerprint(question)
+        existing_index = question_index_by_fingerprint.get(fingerprint)
+        if existing_index is None:
+            question_index_by_fingerprint[fingerprint] = len(unique_questions)
+            unique_questions.append(question)
+            continue
+        existing = unique_questions[existing_index]
+        if question.get("is_resolved") and not existing.get("is_resolved"):
+            existing["is_resolved"] = True
+            existing["user_answer"] = question.get("user_answer")
+        if not (existing.get("target_requirement_id") or existing.get("target_user_story_id")):
+            existing["target_requirement_id"] = question.get("target_requirement_id")
+            existing["target_user_story_id"] = question.get("target_user_story_id")
+        if not existing.get("source_references") and question.get("source_references"):
+            existing["source_references"] = question.get("source_references")
+            existing["provenance"] = question.get("provenance")
+        if question.get("id"):
+            duplicate_question_ids.append(str(question["id"]))
+    questions = unique_questions
+    for duplicate_question_id in duplicate_question_ids:
+        await ClarificationQuestionRepository.delete(
+            duplicate_question_id, str(project_id), session
+        )
 
     if not submitted_envelopes:
         raise HTTPException(status_code=400, detail="At least one non-empty clarification answer is required")
@@ -726,7 +755,12 @@ async def _process_requirements_pipeline(
     # ==========================================
     # STEP 1: Persist every user message before any intent detection or agent routing
     # ==========================================
-    if request.project_id and request.raw_input and request.raw_input.strip():
+    if (
+        not request.client_persists_timeline
+        and request.project_id
+        and request.raw_input
+        and request.raw_input.strip()
+    ):
         await ConversationMessageRepository.save_message(
             project_id=str(request.project_id),
             role="user",
@@ -752,6 +786,9 @@ async def _process_requirements_pipeline(
     logger.info(f"[DB LOG] Loading RequirementState for processing project {request.project_id}")
     req_state = await RequirementStateRepository.get_by_project_id(request.project_id, session)
     persisted_version_at_start = req_state.get("version_number") if req_state else None
+    persisted_requirements_revision_at_start = (
+        int(req_state.get("requirements_revision") or 1) if req_state else 1
+    )
     logger.info(f"[DB LOG] Loading RequirementState for processing project {request.project_id} complete. Found: {req_state is not None}")
     logger.info(
         "[WORKFLOW][%s][LOAD_STATE][DONE] found=%s version=%s",
@@ -824,14 +861,15 @@ async def _process_requirements_pipeline(
                 f"does not exist in this project. Available {available_label}: {available}. "
                 "No changes were made."
             )
-            await ConversationMessageRepository.save_message(
-                project_id=str(request.project_id),
-                role="assistant",
-                message=response_text,
-                session=session,
-                workflow_state="no_change",
-                intent=detected_intent,
-            )
+            if not request.client_persists_timeline:
+                await ConversationMessageRepository.save_message(
+                    project_id=str(request.project_id),
+                    role="assistant",
+                    message=response_text,
+                    session=session,
+                    workflow_state="no_change",
+                    intent=detected_intent,
+                )
             return {
                 "status": "no_change",
                 "detected_intent": detected_intent,
@@ -880,14 +918,15 @@ async def _process_requirements_pipeline(
                 f"No changes were made because {', '.join(blocked)} is locked. "
                 "Unlock it before trying to update or archive it."
             )
-            await ConversationMessageRepository.save_message(
-                project_id=str(request.project_id),
-                role="assistant",
-                message=response_text,
-                session=session,
-                workflow_state="locked",
-                intent=detected_intent,
-            )
+            if not request.client_persists_timeline:
+                await ConversationMessageRepository.save_message(
+                    project_id=str(request.project_id),
+                    role="assistant",
+                    message=response_text,
+                    session=session,
+                    workflow_state="locked",
+                    intent=detected_intent,
+                )
             return {
                 "status": "locked",
                 "detected_intent": detected_intent,
@@ -956,7 +995,7 @@ async def _process_requirements_pipeline(
             response_text = "I understand your question, but I'm currently experiencing some technical difficulties. Please try again in a moment."
 
         # Persist assistant response (with error handling for DB failures)
-        if request.project_id and response_text:
+        if request.project_id and response_text and not request.client_persists_timeline:
             try:
                 await ConversationMessageRepository.save_message(
                     project_id=str(request.project_id),
@@ -1291,11 +1330,21 @@ async def _process_requirements_pipeline(
         if persisted_version_at_start is not None:
             latest_state = await RequirementStateRepository.get_by_project_id(request.project_id, session)
             latest_version = latest_state.get("version_number") if latest_state else None
-            if latest_version != persisted_version_at_start:
+            latest_requirements_revision = (
+                int(latest_state.get("requirements_revision") or 1) if latest_state else 1
+            )
+            if (
+                latest_version != persisted_version_at_start
+                or latest_requirements_revision != persisted_requirements_revision_at_start
+            ):
                 stale_result = True
                 logger.warning(
-                    "AI result for project %s is stale (started at version %s, latest is %s); returning without a pending merge",
-                    request.project_id, persisted_version_at_start, latest_version,
+                    "AI result for project %s is stale (PRD version %s -> %s, requirements revision %s -> %s); returning without a pending merge",
+                    request.project_id,
+                    persisted_version_at_start,
+                    latest_version,
+                    persisted_requirements_revision_at_start,
+                    latest_requirements_revision,
                 )
 
         # ==========================================
@@ -1305,50 +1354,62 @@ async def _process_requirements_pipeline(
 
         audit_operational_error = bool(final_state.get("audit_operational_error"))
         audit_auto_persisted = False
-        architect_auto_persisted = False
+        architect_draft_staged = False
+        pending_action_id = None
         logger.info(f"[IN-MEMORY MERGE] Storing merged state as pending action for project {request.project_id}...")
 
         # Architect generation changes document artifacts, not the gathered
-        # requirements. Persist the generated PRD/diagram immediately and append
-        # its immutable version without sending the unchanged requirements
-        # through the generic merge dialog (which previously made the first PRD
-        # appear in preview but not in Version History).
+        # requirements. Keep its output as a preview-only pending action. The
+        # confirmation endpoint is the sole boundary that may update PRD
+        # sections, the stored document/diagram, and the immutable version
+        # ledger. This also makes Cancel a true no-op for governed artifacts.
         if request.target_agent == "architect" and not stale_result:
             generated_prd = str(req_state.get("generated_prd") or "").strip()
             if not generated_prd:
                 raise RuntimeError("Architect completed without generating a PRD document")
-            from app.prd_section_service import sync_sections_from_prd
-            from app.version_service import record_prd_version
 
-            merged_prd = await sync_sections_from_prd(
-                request.project_id,
-                generated_prd,
-                session,
-                changed_by="automated_agent",
+            # One project has at most one PRD preview. Regeneration replaces the
+            # older draft but never touches the currently saved PRD.
+            for existing_action in await PendingActionRepository.get_by_project(request.project_id, session):
+                if existing_action.get("action_type") == "GENERATE_PRD":
+                    await PendingActionRepository.delete(existing_action["id"], request.project_id, session)
+
+            source_requirements_revision = persisted_requirements_revision_at_start
+            base_prd_version = int(persisted_version_at_start or 1)
+            latest_prd_version = await PRDVersionRepository.get_latest(request.project_id, session)
+            proposed_version = (
+                int(latest_prd_version.get("version_number") or 0) + 1
+                if latest_prd_version
+                else 1
             )
-            final_prd = merged_prd or generated_prd
-            version_record = await record_prd_version(
-                request.project_id,
-                session,
-                generated_prd=final_prd,
-                generated_by="automated_agent",
-                change_type="ai",
-            )
-            req_state = await RequirementStateRepository.save_or_update(
-                request.project_id,
-                {
-                    "generated_prd": final_prd,
-                    "generated_diagrams": req_state.get("generated_diagrams", ""),
-                    "prd_narrative": req_state.get("prd_narrative", {}),
-                    "current_workflow_state": "COMPLETED",
+            skipped_sections = list(final_state.get("skipped_locked_prd_sections") or [])
+            pending_action = await PendingActionRepository.create(
+                project_id=request.project_id,
+                data={
+                    "action_type": "GENERATE_PRD",
+                    "target_requirement_id": None,
+                    "original_user_message": "Generate PRD",
+                    "proposed_changes": {
+                        "generated_prd": generated_prd,
+                        "generated_diagrams": req_state.get("generated_diagrams", ""),
+                        "prd_narrative": req_state.get("prd_narrative", {}),
+                        "source_requirements_revision": source_requirements_revision,
+                        "base_prd_version": base_prd_version,
+                        "proposed_version": proposed_version,
+                        "preserved_sections": skipped_sections,
+                    },
+                    "affected_user_story_ids": [],
+                    "affected_acceptance_criteria_ids": [],
+                    "workflow_stage": "PRD_PREVIEW",
                 },
-                session,
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                session=session,
             )
-            final_state["requirement_state"] = req_state
-            architect_auto_persisted = True
+            pending_action_id = pending_action.get("id")
+            architect_draft_staged = True
             logger.info(
-                "[WORKFLOW][%s][PERSIST_PRD][DONE] version=%s project=%s",
-                run_id, version_record.get("version_number"), request.project_id,
+                "[WORKFLOW][%s][STAGE_PRD][DONE] pending_action=%s project=%s",
+                run_id, pending_action_id, request.project_id,
             )
 
         # GATHERING 8.0 — Handoff to the CONFIRMATION flow: the merged state is NOT
@@ -1358,7 +1419,6 @@ async def _process_requirements_pipeline(
         #             DB: pending_actions INSERT. The response then triggers the
         #             debounced SSE refresh and the client's merge preview (8.1).
         # Create a pending action with the full merged state as proposed changes
-        pending_action_id = None
         if matcher_needs_clarification and not stale_result:
             # Matcher ambiguity is a question, not a requirement edit. Persist
             # it immediately so the chat can render the answer form before any
@@ -1406,7 +1466,7 @@ async def _process_requirements_pipeline(
             audit_auto_persisted = True
             logger.info("Auditor result persisted directly for project %s; no merge confirmation required", request.project_id)
         elif (
-            not architect_auto_persisted
+            not architect_draft_staged
             and not audit_operational_error
             and not stale_result
             and not final_state.get("lock_blocked")
@@ -1441,7 +1501,7 @@ async def _process_requirements_pipeline(
                 "[WORKFLOW][%s][STAGE_MERGE][DONE] pending_action=%s",
                 run_id, pending_action_id,
             )
-        elif not architect_auto_persisted and not audit_operational_error and not stale_result:
+        elif not architect_draft_staged and not audit_operational_error and not stale_result:
             logger.info(
                 "[WORKFLOW][%s][NO_CHANGE] Requirement content is unchanged; no pending action created.",
                 run_id,
@@ -1474,14 +1534,19 @@ async def _process_requirements_pipeline(
                     "No changes were made. Please check the user story ID and try again."
                 )
             )
-        if request.project_id and agent_message and not no_changes and request.target_agent != "architect":
+        if (
+            not request.client_persists_timeline
+            and request.project_id
+            and agent_message
+            and not no_changes
+        ):
             await ConversationMessageRepository.save_message(
                 project_id=str(request.project_id),
-                role="assistant",
+                role="architect" if request.target_agent == "architect" else "assistant",
                 message=agent_message,
                 session=session,
                 workflow_state=req_state.get("current_workflow_state", request.target_agent or "gatherer"),
-                intent=detected_intent
+                intent="PRD_GENERATION" if request.target_agent == "architect" else detected_intent,
             )
 
         # Determine status dynamically based on centralized validation status
@@ -1545,7 +1610,7 @@ async def _process_requirements_pipeline(
         logger.info(
             "[WORKFLOW][%s][COMPLETE][DONE] status=%s pending_merge=%s elapsed_ms=%.1f",
             run_id, status_str,
-            not audit_operational_error and not stale_result and not audit_auto_persisted and not architect_auto_persisted,
+            not audit_operational_error and not stale_result and not audit_auto_persisted and not architect_draft_staged,
             (time.perf_counter() - pipeline_started) * 1000,
         )
         return {
@@ -1561,6 +1626,7 @@ async def _process_requirements_pipeline(
             "pending_merge": pending_action_id is not None,
             "pending_action_id": pending_action_id,
             "pending_action_type": (
+                "GENERATE_PRD" if pending_action_id is not None and request.target_agent == "architect" else
                 "ARCHIVE" if pending_action_id is not None and detected_intent == "DELETE_REQUIREMENT" else
                 "MERGE" if pending_action_id is not None else None
             ),

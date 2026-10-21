@@ -459,6 +459,16 @@ export interface ProcessRequirementsRequest {
   /** Rebuild the PRD from persisted artifacts even when their change flags are unchanged. */
   force_prd_rebuild?: boolean;
   structured_requirements?: Record<string, unknown>;
+  /** The SPA persists exactly the bubbles it renders through the conversation API. */
+  client_persists_timeline?: boolean;
+}
+
+export interface ConversationMessageCreatePayload {
+  id?: string;
+  role: string;
+  message: string;
+  workflow_state?: string;
+  intent?: string;
 }
 
 export interface GatheredRequirementsPayload {

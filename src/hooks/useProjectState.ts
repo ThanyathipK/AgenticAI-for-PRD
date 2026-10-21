@@ -149,9 +149,7 @@ export interface ProjectState {
   canRunAgentActions: boolean;
   /** User-facing explanation when Validate / Generate PRD must wait. */
   agentActionsBlockedReason: string;
-  /** Track the automatic dependency refresh returned by merge confirmation. */
-  registerCascadeJob: (jobId?: string | null) => void;
-  /** True while a saved requirements merge is regenerating downstream PRD artifacts. */
+  /** True while a previously queued legacy/manual regeneration is running. */
   isCascadeGenerating: boolean;
   /** Aborts the in-flight agent request (Stop button). No-op when idle. */
   handleStopGeneration: () => void;
@@ -309,9 +307,9 @@ export function useProjectState(
     },
   });
 
-  // A confirmed requirement change may start an automatic downstream refresh.
-  // Keep agent actions paused until that durable job reaches a terminal state;
-  // otherwise an immediate Validate / Generate PRD click races it and gets 409.
+  // Resume any legacy/manual downstream refresh already recorded for this
+  // project. New requirement saves do not create this automatically; the
+  // explicit Generate PRD action owns generation now.
   useEffect(() => {
     const projectId = projectsApi.projectId;
     const jobId = activeCascadeJobId;
@@ -371,7 +369,9 @@ export function useProjectState(
   const hasKnowledgeContent = documents.documents.some(
     (document) => document.status === "processed" && document.token_count > 0,
   );
-  const hasPendingRequirementUpdate = projectsApi.pendingActions.length > 0;
+  const hasPendingRequirementUpdate = projectsApi.pendingActions.some(
+    (action) => action.action_type !== "GENERATE_PRD",
+  );
   const agentActionsBlockedReason = hasPendingRequirementUpdate
     ? "Save or cancel the pending requirements update first"
     : activeCascadeJobId
@@ -567,18 +567,6 @@ export function useProjectState(
     handleGeneratePRD: chat.handleGeneratePRD,
     canRunAgentActions,
     agentActionsBlockedReason,
-    registerCascadeJob: (jobId) => {
-      const normalizedJobId = jobId ?? null;
-      setActiveCascadeJobId(normalizedJobId);
-      if (normalizedJobId) {
-        store.setSyncStatus("Updating the PRD with the saved requirements…");
-      }
-      if (cascadeStorageKey) {
-        if (normalizedJobId)
-          window.localStorage.setItem(cascadeStorageKey, normalizedJobId);
-        else window.localStorage.removeItem(cascadeStorageKey);
-      }
-    },
     isCascadeGenerating: Boolean(activeCascadeJobId),
     handleStopGeneration: () => {
       if (activeCascadeJobId && projectsApi.projectId) {

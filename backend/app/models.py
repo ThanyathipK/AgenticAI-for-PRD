@@ -408,6 +408,13 @@ class PRDVersionModel(Base):
     audit trail never collapses). Never overwrites previous versions.
     """
     __tablename__ = "prd_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "version_number",
+            name="uq_prd_versions_project_version",
+        ),
+    )
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
     project_id = Column(GUID, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)

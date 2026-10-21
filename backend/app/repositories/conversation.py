@@ -2,6 +2,7 @@
 Conversation message repository operations.
 """
 import logging
+from datetime import datetime, timezone
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -39,7 +40,8 @@ class ConversationMessageRepository:
         message: str,
         session: Optional[AsyncSession] = None,
         workflow_state: Optional[str] = None,
-        intent: Optional[str] = None
+        intent: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not message or not message.strip():
             return {}
@@ -47,13 +49,22 @@ class ConversationMessageRepository:
         pid = as_uuid(project_id)
 
         async def _save(s: AsyncSession):
+            resolved_id = as_uuid(message_id) if message_id else uuid.uuid4()
+            existing = await s.get(ConversationMessageModel, resolved_id)
+            if existing is not None:
+                if str(existing.project_id) != str(pid):
+                    raise ValueError("Conversation message id belongs to another project")
+                return serialize_conversation_message(existing)
             msg_obj = ConversationMessageModel(
-                id=uuid.uuid4(),
+                id=resolved_id,
                 project_id=pid,
                 role=role,
                 message=message,
                 workflow_state=workflow_state or "",
-                intent=intent or ""
+                intent=intent or "",
+                # Database CURRENT_TIMESTAMP is commonly second-precision. Use
+                # application UTC time so rapid user/error turns retain order.
+                created_at=datetime.now(timezone.utc),
             )
             s.add(msg_obj)
             await s.flush()
@@ -93,13 +104,21 @@ class ConversationMessageRepository:
                 stmt = (
                     select(ConversationMessageModel)
                     .where(ConversationMessageModel.project_id == pid)
-                    .order_by(ConversationMessageModel.created_at.desc())
+                    .order_by(
+                        ConversationMessageModel.created_at.desc(),
+                        ConversationMessageModel.id.desc(),
+                    )
                     .limit(limit)
                 )
                 res = await s.execute(stmt)
                 messages = list(res.scalars().all())[::-1]
             else:
-                stmt = select(ConversationMessageModel).where(ConversationMessageModel.project_id == pid).order_by(ConversationMessageModel.created_at.asc())
+                stmt = select(ConversationMessageModel).where(
+                    ConversationMessageModel.project_id == pid
+                ).order_by(
+                    ConversationMessageModel.created_at.asc(),
+                    ConversationMessageModel.id.asc(),
+                )
                 res = await s.execute(stmt)
                 messages = res.scalars().all()
             return [serialize_conversation_message(m) for m in messages]

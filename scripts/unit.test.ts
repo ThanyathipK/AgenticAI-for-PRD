@@ -43,6 +43,7 @@ import {
   toRequirementItems,
   toStructuredRequirements,
   toStructuredRequirementsFromGathered,
+  toChatMessages,
   toUserStories,
   toUserStory,
 } from '../src/api/transforms';
@@ -484,6 +485,127 @@ test('toStructuredRequirementsFromGathered: uses the payload version or the fall
   assert.deepEqual(result.user_stories, []);
   assert.deepEqual(result.requirements, []);
   assert.equal(toStructuredRequirementsFromGathered({ epic_name: 'E' }, 9).version, 9);
+});
+
+test('toChatMessages restores the latest audit clarification card with saved answers', () => {
+  const messages = toChatMessages({
+    project_id: 'project-1',
+    version_number: 1,
+    requirements: [],
+    user_stories: [],
+    acceptance_criteria: [],
+    validation_status: 'invalid',
+    clarification_questions: [{
+      id: 'question-1',
+      checklist_category: 'Security',
+      question_text: 'Which approval method is required?',
+      user_answer: 'Two-person approval is required for every transfer.',
+      is_resolved: true,
+    }],
+    conversation_history: [
+      {
+        id: 'message-1',
+        role: 'assistant',
+        content: 'Older audit',
+        workflow_state: 'auditor',
+        intent: 'AUDIT_RESULT',
+        created_at: '2026-10-20T10:00:00Z',
+      },
+      {
+        id: 'message-2',
+        role: 'assistant',
+        content: 'Latest audit',
+        workflow_state: 'auditor',
+        intent: 'AUDIT_RESULT',
+        created_at: '2026-10-20T10:01:00Z',
+      },
+    ],
+  });
+  assert.equal(messages[0].isPendingClarifications, false);
+  assert.equal(messages[1].isPendingClarifications, true);
+  assert.equal(
+    messages[1].auditResultSnapshot?.clarification_questions?.[0].user_answer,
+    'Two-person approval is required for every transfer.',
+  );
+});
+
+test('toChatMessages gives clarification controls to only the latest request', () => {
+  const messages = toChatMessages({
+    project_id: 'project-1',
+    version_number: 1,
+    requirements: [],
+    user_stories: [],
+    acceptance_criteria: [],
+    validation_status: 'invalid',
+    clarification_questions: [{
+      id: 'question-1',
+      checklist_category: 'Security',
+      question_text: 'Which approval method is required?',
+      is_resolved: false,
+      target_requirement_id: 'REQ-001',
+    }, {
+      id: 'question-2',
+      checklist_category: ' security ',
+      question_text: 'Which   approval method is required?',
+      is_resolved: false,
+      target_requirement_id: 'REQ-002',
+    }],
+    conversation_history: [
+      {
+        id: 'message-1',
+        role: 'auditor',
+        content: 'Audit needs clarification',
+        intent: 'AUDIT_RESULT',
+        created_at: '2026-10-20T10:00:00Z',
+      },
+      {
+        id: 'message-2',
+        role: 'assistant',
+        content: 'Current clarification request',
+        intent: 'CLARIFICATION_REQUEST',
+        created_at: '2026-10-20T10:01:00Z',
+      },
+    ],
+  });
+  assert.equal(messages.filter((message) => message.isPendingClarifications).length, 1);
+  assert.equal(messages[0].isPendingClarifications, false);
+  assert.equal(messages[1].isPendingClarifications, true);
+  assert.equal(messages[1].auditResultSnapshot?.clarification_questions?.length, 1);
+});
+
+test('toChatMessages suppresses only the obsolete duplicate PRD preview bubble', () => {
+  const messages = toChatMessages({
+    project_id: 'project-1',
+    version_number: 3,
+    requirements: [],
+    user_stories: [],
+    acceptance_criteria: [],
+    conversation_history: [
+      {
+        id: 'legacy-preview',
+        role: 'architect',
+        content: 'Enterprise PRD compiled successfully.\nThe Technical Product Owner Assistant has generated the formal PRD and interactive system sequence flows in the preview panel.',
+        intent: 'PRD_GENERATION',
+        created_at: '2026-10-20T14:25:00Z',
+      },
+      {
+        id: 'current-preview',
+        role: 'assistant',
+        content: 'PRD draft generated. It has not been saved yet. Review it in the preview panel, then select Save PRD or Discard preview.',
+        intent: 'PRD_GENERATION',
+        created_at: '2026-10-20T14:25:01Z',
+      },
+      {
+        id: 'saved',
+        role: 'system',
+        content: 'PRD saved successfully as version 3. This approved document is now the current PRD.',
+        intent: 'PRD_GENERATION',
+        created_at: '2026-10-20T14:26:00Z',
+      },
+    ],
+  });
+
+  assert.deepEqual(messages.map((message) => message.id), ['current-preview', 'saved']);
 });
 
 // ----------------------------------------------------------------------------

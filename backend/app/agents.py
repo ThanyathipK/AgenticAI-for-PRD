@@ -3028,14 +3028,6 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
             "PRD generation completed without changing locked sections. "
             f"Not regenerated because they are locked: {locked_list}."
         )
-        await ConversationMessageRepository.save_message(
-            project_id=project_id,
-            role="architect",
-            message=architect_msg,
-            session=db_session,
-            workflow_state="architect_node",
-            intent="PRD_GENERATION",
-        )
         req_state["current_workflow_state"] = "architect_node"
         return {
             "requirement_state": req_state,
@@ -3514,25 +3506,16 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
         if owns_write_session and write_session is not None:
             await write_session.close()
 
-    # ARCHITECT 7.0 — Architect chat turn (conversation_messages, role="architect",
-    #             intent="PRD_GENERATION"), and ARCHITECT 8.0 — the return contract
-    #             consumed by the pipeline → ARCHITECT 1.5 (store + PRD tab switch).
-    architect_msg = "Enterprise PRD compiled successfully.\nThe Technical Product Owner Assistant has generated the formal PRD and interactive system sequence flows in the preview panel."
+    # ARCHITECT 7.0 — Return one preview-state message to the route. Timeline
+    # persistence is owned by the route for legacy clients or by the SPA when
+    # client_persists_timeline=true; writing here as well created two bubbles.
+    architect_msg = "PRD draft generated. It has not been saved yet. Review it in the preview panel, then select Save PRD or Discard preview."
     if skipped_locked_titles:
         architect_msg += (
             "\nNot regenerated because these sections are locked: "
             + ", ".join(skipped_locked_titles)
             + ". Their existing content was preserved."
         )
-    await ConversationMessageRepository.save_message(
-        project_id=project_id,
-        role="architect",
-        message=architect_msg,
-        session=db_session,
-        workflow_state="architect_node",
-        intent="PRD_GENERATION"
-    )
-    
     # ARCHITECT 8.0 — Return contract back to the pipeline: the updated state (with
     #             generated_prd already re-stitched in 5.1), the PRD markdown and the
     #             Mermaid diagram. The pipeline answers HTTP 200 with these fields and

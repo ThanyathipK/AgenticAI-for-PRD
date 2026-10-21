@@ -332,6 +332,8 @@ CREATE TABLE prd_versions (
 
 CREATE INDEX idx_prd_versions_project_id ON prd_versions(project_id);
 CREATE INDEX idx_prd_versions_version_number ON prd_versions(project_id, version_number);
+ALTER TABLE prd_versions
+    ADD CONSTRAINT uq_prd_versions_project_version UNIQUE (project_id, version_number);
 
 -- ==========================================
 -- 9c. PRD SECTIONS TABLE (PART-LEVEL PRD EDITING / LOCKING / VERSIONING)

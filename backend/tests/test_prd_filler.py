@@ -151,6 +151,48 @@ def test_all_saved_intake_columns_feed_the_official_document():
         assert value in body
 
 
+def test_first_generation_preserves_multiline_business_overview_layout():
+    saved = """### 1. Business & Strategic Overview
+|Topic|Details|
+|---|---|
+|Introduction & Executive Summary|1. Generate QR codes<br>2. Accept QR payments|
+|Problem Statement|1. Payments are slow<br>2. Reconciliation is manual|
+|Business Objectives|1. Improve payment speed<br>2. Reduce manual work|
+|Expected Benefit|1. Faster checkout<br>2. Fewer errors|
+|Success Metrics|1. Active merchants<br>2. Successful transactions|
+|Target Audience & user Personas|1. Merchants<br>2. Customers|
+"""
+    intake = extract_intake_fields(saved)
+    body = fill_template_body(
+        project_id="first-generation",
+        project_name="QR Payments",
+        business_topics=intake["business_topics"],
+        data={},
+    )
+
+    for second_item in (
+        "2. Accept QR payments",
+        "2. Reconciliation is manual",
+        "2. Reduce manual work",
+        "2. Fewer errors",
+        "2. Successful transactions",
+        "2. Customers",
+    ):
+        assert rf"\newline {second_item}" in body
+
+    preview = prd_to_markdown(body)
+    business = preview[
+        preview.find("### 1. Business") : preview.find("### 2. Product Scope")
+    ]
+    assert "| Topic | Details |" in business
+    assert business.index("| Topic | Details |") < business.index(
+        "Introduction &<br> Executive Summary"
+    )
+    assert "1. Generate QR codes<br> 2. Accept QR payments" in preview
+    assert "1. Payments are slow<br> 2. Reconciliation is manual" in preview
+    assert "1. Merchants<br> 2. Customers" in preview
+
+
 def test_manual_scope_and_operational_edits_feed_the_official_document():
     saved = """### 2. Product Scope & Functional Requirements
 
