@@ -7,7 +7,7 @@
 // a "store", not a god-hook: cross-cutting concerns (SSE sync, chat handlers,
 // lock actions) live in dedicated hooks that receive this store as a parameter,
 // and `useProjectState` composes everything.
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { api } from "../api/client";
 import { toVersionHistoryList } from "../api/transforms";
@@ -173,7 +173,10 @@ export interface RequirementStore {
   /** Fetch the per-part PRD section lock/ownership map from the backend. */
   loadSectionLocks: (projId: string) => Promise<void>;
   /** Fetch the immutable PRD version ledger (AI + manual snapshots). */
-  loadVersionHistory: (projId: string) => Promise<void>;
+  loadVersionHistory: (
+    projId: string,
+    options?: { append?: boolean; beforeVersion?: number; limit?: number },
+  ) => Promise<number>;
   /** Restore the whole PRD document from a ledger version (append-only;
    *  locked parts are preserved). Resolves to true on success. */
   handleRestoreVersion: (versionNumber: number) => Promise<boolean>;
@@ -465,21 +468,36 @@ export function useRequirementStore(
   // VERSION 1.1 — Ledger load (trigger: project open / after restore / after any
   //             snapshot-creating action). Failure is non-fatal: the timeline simply
   //             keeps its previous contents (the PRD panel is unaffected).
-  const loadVersionHistory = async (projId: string) => {
+  const loadVersionHistory = useCallback(async (
+    projId: string,
+    options?: { append?: boolean; beforeVersion?: number; limit?: number },
+  ): Promise<number> => {
     try {
-      const payload = await api.getPrdVersions(projId);
-      if (activeProjectIdRef.current !== projId) return;
+      const payload = await api.getPrdVersions(projId, {
+        limit: options?.limit ?? 20,
+        beforeVersion: options?.beforeVersion,
+      });
+      if (activeProjectIdRef.current !== projId) return 0;
       console.log(
         "[VersionHistory] Loaded",
         payload?.length,
         "versions for project",
         projId,
       );
-      setVersionHistory(toVersionHistoryList(payload));
+      const incoming = toVersionHistoryList(payload);
+      setVersionHistory((current) => {
+        if (!options?.append) return incoming;
+        const byVersion = new Map(
+          [...current, ...incoming].map((item) => [item.version, item]),
+        );
+        return [...byVersion.values()].sort((a, b) => b.version - a.version);
+      });
+      return incoming.length;
     } catch (err) {
       console.warn("[VersionHistory] Failed to load:", err);
+      return 0;
     }
-  };
+  }, []);
 
   // Restore the WHOLE PRD document from a ledger version. The backend is
   // append-only: the restored content becomes a NEW version (history is never

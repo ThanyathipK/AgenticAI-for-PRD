@@ -621,11 +621,24 @@ async def confirm_action(
     cascade_status = "not_required"
     updates_to_persist = dict(proposed_changes)
     if requirement_merge:
+        # New requirement drafts remember the revision they were built from.
+        # Rejecting a stale full-state draft prevents it from silently replacing
+        # requirements that were confirmed in another tab after this preview.
+        # The conditional keeps older, already-created pending actions usable.
+        base_revision = updates_to_persist.pop("_base_requirements_revision", None)
+        previous_revision = int((previous_state or {}).get("requirements_revision") or 1)
+        if base_revision is not None and int(base_revision) != previous_revision:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This requirement update is outdated because the requirements changed. "
+                    "Discard it and create a new update preview."
+                ),
+            )
         # Older pending actions contain ``version_number`` from the time that
         # requirements and PRD releases shared one counter.  Never let that
         # legacy field advance the PRD version during a requirements-only save.
         updates_to_persist.pop("version_number", None)
-        previous_revision = int((previous_state or {}).get("requirements_revision") or 1)
         updates_to_persist["requirements_revision"] = max(
             int(updates_to_persist.get("requirements_revision") or 0),
             previous_revision + 1,

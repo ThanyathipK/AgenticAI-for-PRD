@@ -21,7 +21,6 @@ Run from the ``backend`` directory::
     ../venv/bin/python -m pytest tests/test_prd_sections.py -v
 """
 import uuid
-from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
@@ -52,6 +51,7 @@ from app.repositories.prd_section import (
 )
 from app.repositories.requirement_state import RequirementStateRepository
 from app.routes.prd_sections import list_prd_sections, update_prd_section
+from app.routes.projects import get_project_requirement_state
 from app.schemas import PrdSectionUpdate
 
 
@@ -160,6 +160,28 @@ def _latest_markdown_prd() -> str:
             "|Non-Functional Requirements|1. Performance: p95 < 300ms|",
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_initial_project_state_returns_saved_intake_section_draft(db_session):
+    session, project_id = db_session
+    await RequirementStateRepository.save_or_update(
+        project_id,
+        {"generated_prd": "", "version_number": 1, "validation_status": "pending"},
+        session,
+    )
+    await ensure_sections_seeded(project_id, session, _markdown_prd())
+    current_user = AuthenticatedUser(
+        id=str((await session.execute(select(UserModel))).scalar_one().id),
+        email="ba@example.com",
+        full_name="Product Owner",
+        role="product_owner",
+    )
+
+    state = await get_project_requirement_state(project_id, current_user, session)
+
+    assert "Problem Statement" in state["generated_prd"]
+    assert "Slow refunds" in state["generated_prd"]
 
 
 def _section_content(document: str, section_key: str) -> str:

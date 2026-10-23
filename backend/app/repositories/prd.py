@@ -219,9 +219,24 @@ class PRDVersionRepository:
     @staticmethod
     # VERSION 4.3 — SELECT the project's snapshots NEWEST FIRST (the timeline order
     #             VERSION 2.1 promises to the UI).
-    async def get_by_project(project_id: str, session: AsyncSession) -> List[Dict[str, Any]]:
+    async def get_by_project(
+        project_id: str,
+        session: AsyncSession,
+        *,
+        limit: Optional[int] = None,
+        before_version: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         pid = as_uuid(project_id)
-        stmt = select(PRDVersionModel).where(PRDVersionModel.project_id == pid).order_by(PRDVersionModel.version_number.desc())
+        conditions = [PRDVersionModel.project_id == pid]
+        if before_version is not None:
+            conditions.append(PRDVersionModel.version_number < before_version)
+        stmt = (
+            select(PRDVersionModel)
+            .where(*conditions)
+            .order_by(PRDVersionModel.version_number.desc())
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
         result = await session.execute(stmt)
         records = result.scalars().all()
         return [serialize_prd_version(v) for v in records]

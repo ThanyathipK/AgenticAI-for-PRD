@@ -778,6 +778,7 @@ async def detect_requirement_intent(raw_input: str, current_stories: Optional[Li
     #              at 0.80. Deliberately conservative: anything unrecognised stays a
     #              conversation rather than fabricating a requirement operation.
     lower_inp = raw_input.lower().strip()
+    polite_prefix = r"^(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?"
     delete_command = bool(
         "no longer need" in lower_inp
         or re.match(
@@ -788,6 +789,27 @@ async def detect_requirement_intent(raw_input: str, current_stories: Optional[Li
             r"^(?:can|could|would)\s+you\s+(?:please\s+)?(?:remove|delete|cancel|drop|discard|retire|archive)\b",
             lower_inp,
         )
+    )
+    audit_command = bool(
+        re.match(
+            polite_prefix + r"(?:validate|audit|review|check)\b.*\b(?:requirement|requirements|user stor(?:y|ies)|acceptance criteria)\b",
+            lower_inp,
+        )
+        or re.match(polite_prefix + r"(?:run|perform)\s+(?:an?\s+)?(?:audit|validation)\b", lower_inp)
+    )
+    update_command = bool(
+        re.match(
+            polite_prefix + r"(?:update|change|modify|adjust|revise|edit|replace|rename|set|increase|decrease|correct|fix|amend|refine|restore|reopen|reactivate|unarchive)\b",
+            lower_inp,
+        )
+        or re.match(r"^(?:req|us)-\d+\b.*\b(?:should|must|needs?\s+to)\b", lower_inp)
+    )
+    create_command = bool(
+        re.match(
+            polite_prefix + r"(?:add|create|implement|introduce|append)\b",
+            lower_inp,
+        )
+        or re.match(polite_prefix + r"include\s+(?:a|an|new)\b", lower_inp)
     )
     if lower_inp in ["hello", "hi", "thank you", "thanks", "good morning", "good afternoon", "good evening", "ok", "okay", "got it", "awesome", "great"]:
         return {
@@ -801,29 +823,29 @@ async def detect_requirement_intent(raw_input: str, current_stories: Optional[Li
             "confidence": 0.85,
             "reason": "The user is requesting to archive an existing requirement."
         }
-    elif lower_inp.startswith("what") or lower_inp.startswith("explain") or lower_inp.startswith("how") or lower_inp.startswith("can you") or lower_inp.endswith("?"):
+    elif audit_command:
+        return {
+            "intent": "CLARIFY_REQUIREMENT",
+            "confidence": 0.90,
+            "reason": "The user explicitly requested validation, audit, or review of saved requirements."
+        }
+    elif update_command:
+        return {
+            "intent": "UPDATE_REQUIREMENT",
+            "confidence": 0.90,
+            "reason": "The user issued an explicit action to modify an existing project artifact."
+        }
+    elif create_command:
+        return {
+            "intent": "CREATE_REQUIREMENT",
+            "confidence": 0.90,
+            "reason": "The user issued an explicit action to add a new project artifact."
+        }
+    elif lower_inp.startswith("what") or lower_inp.startswith("explain") or lower_inp.startswith("how") or lower_inp.startswith("can you explain") or lower_inp.endswith("?"):
         return {
             "intent": "GENERAL_CHAT",
             "confidence": 0.90,
-            "reason": "The user is asking a question or seeking an explanation."
-        }
-    elif any(kw in lower_inp for kw in ["run audit", "run auditor", "audit", "validate", "clarify", "review requirement"]):
-        return {
-            "intent": "CLARIFY_REQUIREMENT",
-            "confidence": 0.85,
-            "reason": "The user is requesting validation, audit, or clarification of requirements."
-        }
-    elif any(kw in lower_inp for kw in ["update ", "change ", "modify ", "adjust ", "revise ", "edit "]):
-        return {
-            "intent": "UPDATE_REQUIREMENT",
-            "confidence": 0.85,
-            "reason": "The user is requesting to modify or update an existing requirement."
-        }
-    elif any(kw in lower_inp for kw in ["add ", "create ", "new ", "implement ", "introduce "]):
-        return {
-            "intent": "CREATE_REQUIREMENT",
-            "confidence": 0.85,
-            "reason": "The user is requesting to add a new requirement or feature."
+            "reason": "The user is asking a question or seeking an explanation without issuing a change action."
         }
     else:
         return {
@@ -1199,23 +1221,40 @@ async def classify_workflow(raw_input: str) -> Dict[str, Any]:
     #              0.85. The default differs from INTENT 2.8.1's chat default: this
     #              ladder assumes a requirement rather than a conversation.
     lower_inp = clean_input.lower()
+    polite_prefix = r"^(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?"
+    requirement_action = bool(re.match(
+        polite_prefix + r"(?:add|create|implement|introduce|append|include|update|change|modify|adjust|revise|edit|replace|rename|set|increase|decrease|correct|fix|amend|refine|restore|reopen|reactivate|unarchive|remove|delete|cancel|drop|discard|retire|archive)\b",
+        lower_inp,
+    ))
+    command_action = bool(
+        re.match(polite_prefix + r"(?:create|generate)(?:\s+a|\s+the)?(?:\s+complete)?\s+prd\b", lower_inp)
+        or re.match(polite_prefix + r"(?:validate|audit)\b.*\brequirements?\b", lower_inp)
+        or re.match(polite_prefix + r"(?:run|perform)\s+(?:an?\s+)?(?:audit|validation)\b", lower_inp)
+        or re.match(polite_prefix + r"export\s+(?:the\s+)?(?:prd\s+)?(?:as\s+)?(?:docx|pdf)\b", lower_inp)
+    )
     if lower_inp in ["hello", "hi", "thank you", "thanks", "good morning", "good afternoon", "good evening"]:
         return {
             "workflow": "CHAT",
             "confidence": 0.95,
             "reason": "The user is providing a conversational greeting or pleasantry."
         }
+    elif command_action:
+        return {
+            "workflow": "COMMAND",
+            "confidence": 0.92,
+            "reason": "The user explicitly requested a supported workspace command."
+        }
+    elif requirement_action:
+        return {
+            "workflow": "REQUIREMENT",
+            "confidence": 0.92,
+            "reason": "The user explicitly requested a requirement create, update, or archive action."
+        }
     elif lower_inp.startswith("what") or lower_inp.startswith("explain") or lower_inp.startswith("how") or lower_inp.startswith("can you explain") or lower_inp.endswith("?"):
         return {
             "workflow": "QUESTION",
             "confidence": 0.90,
             "reason": "The user is asking a direct question or seeking an explanation."
-        }
-    elif any(cmd in lower_inp for cmd in ["run auditor", "generate prd", "generate diagram", "export docx", "audit requirements"]):
-        return {
-            "workflow": "COMMAND",
-            "confidence": 0.90,
-            "reason": "The user is requesting an automated backend command execution."
         }
     else:
         return {

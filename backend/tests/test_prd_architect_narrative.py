@@ -132,6 +132,17 @@ Open questions and risks:
     assert all(field["confidence"] == 1.0 for field in gathered.values())
 
 
+def test_inline_problem_statement_is_extracted_without_model_cooperation():
+    gathered = _extract_explicit_prd_narrative(
+        "Problem Statement: Customers must visit a branch to request refunds."
+    )
+
+    assert gathered["problem_statement"]["value"] == (
+        "1. Customers must visit a branch to request refunds."
+    )
+    assert gathered["problem_statement"]["confidence"] == 1.0
+
+
 def test_attached_template_sections_are_extracted_and_rendered_in_their_rows():
     raw_input = """Introduction & Executive Summary:
 - A self-service refund portal for retail customers.

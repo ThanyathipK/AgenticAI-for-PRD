@@ -86,6 +86,46 @@ def merge_audit_passes(
         except (TypeError, ValueError):
             finding["confidence"] = 0.5
 
+    # A conflict must always give the stakeholder a way to resolve it. Models
+    # sometimes return a valid conflicting finding without the companion
+    # question, leaving the UI with a red card that cannot be answered. Add a
+    # deterministic, evidence-preserving question only when no question already
+    # targets the same requirement/story and category.
+    for finding in findings:
+        if str(finding.get("finding_type") or "").lower() != "conflicting":
+            continue
+        target = str(finding.get("target_requirement_id") or "").strip()
+        category = str(finding.get("category") or "Requirement conflict").strip()
+        already_covered = any(
+            str(
+                question.get("target_requirement_id")
+                or question.get("target_user_story_id")
+                or ""
+            ).strip() == target
+            and str(question.get("checklist_category") or "").strip().casefold()
+            == category.casefold()
+            for question in questions
+        )
+        if already_covered:
+            continue
+        target_label = target or "the affected requirement"
+        description = str(finding.get("description") or "the identified contradiction").strip()
+        questions.append({
+            "checklist_category": category,
+            "target_user_story_id": target or None,
+            "target_requirement_id": target or None,
+            "question_text": (
+                f"What should {target_label} state to resolve this conflict: "
+                f"{description.rstrip('.')}?"
+            ),
+            "is_resolved": False,
+            "source_references": list(finding.get("source_references") or []),
+        })
+    questions = dedupe_dicts(
+        questions,
+        ("checklist_category", "target_user_story_id", "question_text"),
+    )
+
     impact_rank = {"blocking": 0, "warning": 1, "suggestion": 2}
     severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     findings.sort(

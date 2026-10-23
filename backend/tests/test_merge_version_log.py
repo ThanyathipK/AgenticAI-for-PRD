@@ -156,6 +156,44 @@ async def _create_merge_action(session: AsyncSession, project_id: str, message: 
 # =====================================================================
 class TestMergeVersionLog:
     @pytest.mark.asyncio
+    async def test_confirm_rejects_stale_requirement_update(
+        self, seeded_project, client, db_session
+    ):
+        """A full-state preview must not overwrite a newer requirement save."""
+        from app.repositories.requirement_state import RequirementStateRepository
+
+        await RequirementStateRepository.save_or_update(
+            seeded_project,
+            {**_merged_state(1), "requirements_revision": 2},
+            db_session,
+        )
+        stale_draft = {
+            **_merged_state(1),
+            "_base_requirements_revision": 1,
+            "requirements_revision": 2,
+        }
+        action = PendingActionModel(
+            project_id=seeded_project,
+            action_type="MERGE",
+            original_user_message="Stale update",
+            proposed_changes=stale_draft,
+            workflow_stage="REVIEWING",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        db_session.add(action)
+        await db_session.commit()
+
+        confirm = await client.post(
+            f"/api/confirm-action/{action.id}", params={"project_id": seeded_project}
+        )
+
+        assert confirm.status_code == status.HTTP_409_CONFLICT
+        assert "outdated" in confirm.json()["detail"].lower()
+        state = await RequirementStateRepository.get_by_project_id(seeded_project, db_session)
+        assert state["requirements_revision"] == 2
+        assert await _count(db_session, PendingActionModel) == 1
+
+    @pytest.mark.asyncio
     async def test_confirm_merge_does_not_create_a_prd_version(
         self, seeded_project, client, db_session
     ):

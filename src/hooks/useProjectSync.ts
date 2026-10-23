@@ -10,6 +10,7 @@ import type {
 } from "../api/types";
 import {
   epicNameFromRequirements,
+  mergeChatMessages,
   toAuditResult,
   toChatMessages,
   toLockMaps,
@@ -41,6 +42,17 @@ export interface ProjectSyncOptions {
   onDocumentExtractionProgress?: (data: Record<string, unknown>) => void;
 }
 
+export function isOlderProjectSnapshot(
+  incomingUpdatedAt: string | null | undefined,
+  appliedUpdatedAt: string | null | undefined,
+): boolean {
+  return Boolean(
+    incomingUpdatedAt &&
+      appliedUpdatedAt &&
+      incomingUpdatedAt < appliedUpdatedAt,
+  );
+}
+
 export function useProjectSync(
   store: RequirementStore,
   projectId: string | null,
@@ -55,6 +67,9 @@ export function useProjectSync(
   const currentVersionRef = useRef(store.currentVersion);
   const editingSectionIdRef = useRef(store.editingSectionId);
   const activeProjectIdRef = useRef(projectId);
+  const loadedTimelineProjectIdRef = useRef<string | null>(null);
+  const projectLoadControllerRef = useRef<AbortController | null>(null);
+  const appliedUpdatedAtRef = useRef<string | null>(null);
   activeProjectIdRef.current = projectId;
   useEffect(() => {
     prdMarkdownRef.current = store.prdMarkdown;
@@ -109,6 +124,12 @@ export function useProjectSync(
     store.setLockedArtifacts({});
     store.setLockedRequirements({});
 
+    // A response for the previously selected project has no UI consumer. Abort
+    // it at the transport layer instead of merely discarding it after download.
+    projectLoadControllerRef.current?.abort();
+    const loadController = new AbortController();
+    projectLoadControllerRef.current = loadController;
+
     try {
       // PERF (project switch) — fire the independent reads BEFORE awaiting the
       // main state fetch so they overlap on the wire instead of queueing behind
@@ -126,12 +147,19 @@ export function useProjectSync(
       // Load per-part PRD section lock/ownership metadata (non-blocking).
       store.loadSectionLocks(projId);
       // Load the immutable PRD version ledger (AI + manual snapshots)
-      store.loadVersionHistory(projId);
+      // Only the latest lightweight ledger row is needed for the PRD SemVer
+      // badge. The Versions tab loads the paginated timeline on demand.
+      store.loadVersionHistory(projId, { limit: 1 });
 
       // PROJECT 2.2 — API boundary → GET /api/project/{id} (route PROJECT 2.3).
-      const payload = await api.getProjectState(projId);
+      const payload = await api.getProjectState(projId, loadController.signal);
       if (activeProjectIdRef.current !== projId) return;
       if (payload) {
+        const incomingUpdatedAt = payload.updated_at || null;
+        if (isOlderProjectSnapshot(incomingUpdatedAt, appliedUpdatedAtRef.current)) {
+          return;
+        }
+        appliedUpdatedAtRef.current = incomingUpdatedAt;
         // PROJECT 2.4 — Response applied to the UI store: structured
         //              requirements/stories, lock maps, version number, audit
         //              result, PRD markdown, Mermaid diagram, workflow node and
@@ -153,6 +181,17 @@ export function useProjectSync(
         store.setMermaidDiagram(payload.generated_diagrams || "");
         store.setDiagramGeneratedAt(payload.diagram_generated_at || null);
         store.setCurrentAgentNode(payload.current_workflow_state || null);
+        // Requirements, audit findings and the bounded chat timeline come from
+        // one response and are committed together. In particular, do this
+        // before the optional template request below so a slow template fetch
+        // cannot make part of the selected project's UI appear later.
+        const loadedMessages = toChatMessages(payload);
+        if (loadedTimelineProjectIdRef.current === projId) {
+          store.setMessages(current => mergeChatMessages(current, loadedMessages));
+        } else {
+          store.setMessages(loadedMessages);
+        }
+        loadedTimelineProjectIdRef.current = projId;
         setActiveTab("prd");
 
         // No generated PRD yet -> show the official Krungsri Nimble template
@@ -161,9 +200,6 @@ export function useProjectSync(
           const tpl = await getPrdTemplateMarkdown();
           if (tpl) store.setPrdMarkdown((prev) => prev || tpl);
         }
-
-        // Load conversation history — always from Supabase, in chronological order
-        store.setMessages(toChatMessages(payload));
 
         // CONFIRM 1.7 — Pending-action load (initial project open, non-blocking): the
         //              first paint already knows whether a draft is staged, so no extra
@@ -184,6 +220,7 @@ export function useProjectSync(
         store.setSyncStatus("Synced with Supabase Cloud");
       }
     } catch (err) {
+      if (loadController.signal.aborted) return;
       if (activeProjectIdRef.current !== projId) return;
       if (retries > 0 && activeProjectIdRef.current === projId) {
         retryScheduled = true;
@@ -212,6 +249,7 @@ export function useProjectSync(
   // Load project state whenever the selected project changes.
   useEffect(() => {
     if (projectId && projectId !== "null") {
+      appliedUpdatedAtRef.current = null;
       // PROJECT 2.1 — Trigger: the selected project changed (PROJECT 1.5
       //              auto-select, sidebar row click, or dashboard row open)
       //              → PROJECT 2.2. Effect depends on projectId only.
@@ -419,7 +457,9 @@ export function useProjectSync(
           // 8. Sync per-part PRD section lock/ownership metadata (non-blocking)
           if (isSubscribed) store.loadSectionLocks(projectId);
           // 9. Sync the immutable PRD version ledger (non-blocking)
-          if (isSubscribed) store.loadVersionHistory(projectId);
+          if (isSubscribed) {
+            store.loadVersionHistory(projectId, { limit: 1, append: true });
+          }
 
           store.setSyncStatus("Synced via live updates");
         }
@@ -505,6 +545,7 @@ export function useProjectSync(
       refreshFromServerRef.current = null;
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
       source.close();
+      projectLoadControllerRef.current?.abort();
     };
     // `store` is recreated every render; only re-subscribe when the project changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps

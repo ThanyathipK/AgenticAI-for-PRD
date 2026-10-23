@@ -55,7 +55,7 @@ async def test_append_message_is_idempotent_and_keeps_rapid_order(
 
 
 @pytest.mark.asyncio
-async def test_project_state_returns_latest_50_and_endpoint_keeps_complete_timeline(
+async def test_project_state_returns_latest_five_and_endpoint_supports_cursor_pages(
     client, seeded_project,
 ):
     for index in range(105):
@@ -66,8 +66,8 @@ async def test_project_state_returns_latest_50_and_endpoint_keeps_complete_timel
         assert response.status_code == 201
 
     state = (await client.get(f"/api/project/{seeded_project}")).json()
-    assert len(state["conversation_history"]) == 50
-    assert state["conversation_history"][0]["message"] == "timeline-055"
+    assert len(state["conversation_history"]) == 5
+    assert state["conversation_history"][0]["message"] == "timeline-100"
     assert state["conversation_history"][-1]["message"] == "timeline-104"
 
     complete = (await client.get(
@@ -76,3 +76,11 @@ async def test_project_state_returns_latest_50_and_endpoint_keeps_complete_timel
     assert len(complete) == 105
     assert complete[0]["message"] == "timeline-000"
     assert complete[-1]["message"] == "timeline-104"
+
+    previous = (await client.get(
+        f"/api/project/{seeded_project}/conversations",
+        params={"limit": 5, "before": state["conversation_history"][0]["id"]},
+    )).json()
+    assert [message["message"] for message in previous] == [
+        "timeline-095", "timeline-096", "timeline-097", "timeline-098", "timeline-099",
+    ]

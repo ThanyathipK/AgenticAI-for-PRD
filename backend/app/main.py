@@ -199,7 +199,9 @@ async def request_lifecycle_log(request: Request, call_next):
             (time.perf_counter() - started) * 1000,
         )
         raise
+    elapsed_ms = (time.perf_counter() - started) * 1000
     response.headers["X-Request-ID"] = request_id
+    response.headers["Server-Timing"] = f'app;dur={elapsed_ms:.1f}'
     # Browser hardening that is safe for API and development responses. HSTS is
     # deliberately HTTPS-only so local HTTP development is never pinned or
     # redirected. CSP is kept restrictive because this service returns JSON,
@@ -218,7 +220,7 @@ async def request_lifecycle_log(request: Request, call_next):
     logger.info(
         "[REQUEST][%s][DONE] %s %s status=%s elapsed_ms=%.1f",
         request_id, request.method, request.url.path, response.status_code,
-        (time.perf_counter() - started) * 1000,
+        elapsed_ms,
     )
     return response
 
@@ -231,7 +233,7 @@ app.add_middleware(
     allow_origins=settings.cors_origins_list,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition", "X-PRD-SemVer"],
+    expose_headers=["Content-Disposition", "X-PRD-SemVer", "X-Request-ID", "Server-Timing"],
 )
 
 # GZip response compression. The biggest payloads are the project-state reads,

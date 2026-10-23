@@ -7,6 +7,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { api, detailFromJsonError } from '../api/client';
 import type { PendingActionPayload, ProjectStatus, ProjectSummary } from '../api/types';
 import { handleError } from '../components/Toast';
+import { applyProjectPinOrder } from '../utils/projectOrdering';
 
 export interface ProjectContextMenuState {
   projectId: string;
@@ -294,16 +295,16 @@ export function useProjects(isAuthenticated: boolean, authUserId: string | null)
     const target = projects.find(p => p.id === projectIdToPin);
     const nextPinned = !(target && target.is_pinned);
     // Optimistic update for snappy UI, then reconcile with the server.
-    setProjects(prev =>
-      prev.map(p => (p.id === projectIdToPin ? { ...p, is_pinned: nextPinned } : p))
-    );
+    setProjects(prev => applyProjectPinOrder(prev, projectIdToPin, nextPinned));
     try {
       // PROJECT 7.2 — API boundary → PUT /api/projects/{id}/pin (route PROJECT 7.3).
       const updated = await api.toggleProjectPin(projectIdToPin, nextPinned);
-      setProjects(prev => prev.map(p => (p.id === projectIdToPin ? { ...p, is_pinned: updated.is_pinned } : p)));
+      setProjects(prev =>
+        applyProjectPinOrder(prev, projectIdToPin, Boolean(updated.is_pinned))
+      );
     } catch (err) {
       setProjects(prev =>
-        prev.map(p => (p.id === projectIdToPin ? { ...p, is_pinned: !nextPinned } : p))
+        applyProjectPinOrder(prev, projectIdToPin, !nextPinned)
       );
       handleError('Failed to update the pin.', err);
     }

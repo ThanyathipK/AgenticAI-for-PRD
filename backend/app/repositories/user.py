@@ -19,10 +19,10 @@ import logging
 import uuid
 from typing import Any, Dict, Optional, Union
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import UserModel
+from app.models import ProjectModel, UserModel
 from app.repositories.base import as_uuid, dt_iso_or_none
 
 logger = logging.getLogger(__name__)
@@ -151,3 +151,24 @@ class UserRepository:
         """Store a new bcrypt hash on *user* and flush the change."""
         user.password_hash = password_hash
         await session.flush()
+
+    @staticmethod
+    async def delete_account(
+        user: UserModel,
+        session: AsyncSession,
+    ) -> int:
+        """Delete an account and all of its owned projects in one transaction.
+
+        ``projects.user_id`` is intentionally RESTRICT, so projects must be
+        removed first. Their complete requirement/document/chat/PRD hierarchy
+        is database-cascaded; user-owned knowledge and jobs cascade when the
+        user row is deleted. The route owns the final commit.
+        """
+        project_ids = list((await session.execute(
+            select(ProjectModel.id).where(ProjectModel.user_id == user.id)
+        )).scalars().all())
+        if project_ids:
+            await session.execute(delete(ProjectModel).where(ProjectModel.id.in_(project_ids)))
+        await session.delete(user)
+        await session.flush()
+        return len(project_ids)

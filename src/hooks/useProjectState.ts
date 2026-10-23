@@ -194,11 +194,15 @@ export interface ProjectState {
   /** Restore the whole PRD document from a ledger version (append-only;
    *  locked parts preserved). Resolves to true on success. */
   handleRestoreVersion: (versionNumber: number) => Promise<boolean>;
+  loadVersionHistory: (
+    projectId: string,
+    options?: { append?: boolean; beforeVersion?: number; limit?: number },
+  ) => Promise<number>;
 
   // Tabs / flows / history (document library lives inside the history tab)
   activeTab: WorkspaceTab;
   setActiveTab: (tab: WorkspaceTab) => void;
-  /** Top-level view next to the project sidebar: 'workspace' | 'dashboard'. */
+  /** Top-level view next to the project sidebar: workspace, dashboard, or help. */
   activeView: AppView;
   setActiveView: (view: AppView) => void;
   mermaidDiagram: string;
@@ -537,6 +541,7 @@ export function useProjectState(
     handleToggleSectionLock: store.handleToggleSectionLock,
     handleHandSectionToAi: store.handleHandSectionToAi,
     handleRestoreVersion: store.handleRestoreVersion,
+    loadVersionHistory: store.loadVersionHistory,
     activeTab: ui.activeTab,
     setActiveTab: ui.setActiveTab,
     activeView: ui.activeView,

@@ -39,6 +39,7 @@ from app.database import Base, get_db as app_get_db
 from app.main import app as fastapi_app
 from app.rate_limit import limiter
 from app.repositories.user import UserRepository, normalize_email
+from app.repositories.project import ProjectRepository
 
 # A valid bcrypt hash of "Correct-Horse-1" is built per test through
 # get_password_hash() rather than hard-coded, so the cost factor stays in sync
@@ -538,6 +539,51 @@ async def test_change_password_rejects_wrong_old_password(client, db_session):
     )
 
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_delete_account_requires_password_and_exact_confirmation(client, db_session):
+    await _create_user(db_session, email="ba@bank.com")
+    login = await client.post(
+        "/api/auth/login", data={"username": "ba@bank.com", "password": PASSWORD}
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    wrong_phrase = await client.request(
+        "DELETE", "/api/auth/account",
+        json={"password": PASSWORD, "confirmation": "delete"}, headers=headers,
+    )
+    wrong_password = await client.request(
+        "DELETE", "/api/auth/account",
+        json={"password": "wrong", "confirmation": "DELETE"}, headers=headers,
+    )
+
+    assert wrong_phrase.status_code == 400
+    assert wrong_password.status_code == 401
+    assert await UserRepository.get_by_email("ba@bank.com", db_session) is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_account_removes_owned_projects_and_invalidates_token(client, db_session):
+    user = await _create_user(db_session, email="ba@bank.com")
+    await ProjectRepository.create_project(
+        {"name": "Owned project", "user_id": str(user.id)}, db_session,
+    )
+    await db_session.commit()
+    login = await client.post(
+        "/api/auth/login", data={"username": "ba@bank.com", "password": PASSWORD}
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    deleted = await client.request(
+        "DELETE", "/api/auth/account",
+        json={"password": PASSWORD, "confirmation": "DELETE"}, headers=headers,
+    )
+
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["deleted_projects"] == 1
+    assert await UserRepository.get_by_email("ba@bank.com", db_session) is None
+    assert (await client.get("/api/projects", headers=headers)).status_code == 401
 
 
 # =====================================================================

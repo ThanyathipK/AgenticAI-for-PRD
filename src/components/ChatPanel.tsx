@@ -22,8 +22,357 @@ import { Tooltip } from './Tooltip';
 import { highlightMatch } from '../utils/highlight';
 import { displayUserName } from '../utils/actorName';
 import { renderInlineFormatting } from './MarkdownRenderer';
+import type { AuditFindingPayload, AuditSourceReferencePayload } from '../api/types';
+import type { AuditResult, ClarificationQuestion, RequirementItem } from './types';
+import { api } from '../api/client';
+import { toChatMessages } from '../api/transforms';
 
 const CHAT_INPUT_MAX_LENGTH = 4000;
+
+const sourceNames = (
+  references: AuditSourceReferencePayload[] | undefined,
+  provenanceDocument?: string | null,
+): string[] => Array.from(new Set([
+  ...(references || []).map(reference => reference.document_name?.trim()).filter(Boolean),
+  provenanceDocument?.trim(),
+].filter((name): name is string => Boolean(name))));
+
+const sourceLabels = (
+  references: AuditSourceReferencePayload[] | undefined,
+  provenanceDocument?: string | null,
+  provenanceSection?: string | null,
+): string[] => {
+  const labels = (references || []).map(reference =>
+    [reference.document_name?.trim(), reference.section?.trim()].filter(Boolean).join(' · '),
+  );
+  if (provenanceDocument?.trim()) {
+    labels.push([provenanceDocument.trim(), provenanceSection?.trim()].filter(Boolean).join(' · '));
+  }
+  return Array.from(new Set(labels.filter(Boolean)));
+};
+
+const readableCode = (value: string): string => value
+  .replace(/[_-]+/g, ' ')
+  .replace(/\b\w/g, character => character.toUpperCase());
+
+const readableAuditRule = (value: string): string => readableCode(
+  value.replace(/(?:[_-]|\s)\d+$/i, ''),
+);
+
+const contextRecord = (value: string | null | undefined): Record<string, unknown> | null => {
+  const context = value?.trim();
+  if (!context?.startsWith('{')) return null;
+  try {
+    const parsed = JSON.parse(context) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const readableContext = (value: string | null | undefined): string | null => {
+  const context = value?.trim();
+  if (!context) return null;
+  if (!context.startsWith('{') && !context.startsWith('[')) return context;
+  try {
+    const parsed = contextRecord(context);
+    if (!parsed) return null;
+    const story = parsed.target_story && typeof parsed.target_story === 'object'
+      ? parsed.target_story as Record<string, unknown>
+      : null;
+    const criterion = parsed.target_acceptance_criterion && typeof parsed.target_acceptance_criterion === 'object'
+      ? parsed.target_acceptance_criterion as Record<string, unknown>
+      : null;
+    const parts = [
+      parsed.requirement_code,
+      parsed.title,
+      story?.ticket_code,
+      story?.story_title,
+      criterion?.criterion_code,
+      criterion?.title,
+    ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
+    return parts.length ? parts.join(' · ') : null;
+  } catch {
+    // Never expose a large serialized payload as a heading. The identifiers
+    // below still provide a useful target when legacy context is malformed.
+    return null;
+  }
+};
+
+const clarificationTarget = (question: ClarificationQuestion): string => {
+  const context = readableContext(question.requirement_context);
+  if (question.target_requirement_id) return context || `Requirement ${question.target_requirement_id}`;
+  if (question.target_user_story_id) return context || `User story ${question.target_user_story_id}`;
+  if (/acceptance|criteria/i.test(question.checklist_category)) return context || 'Acceptance criteria';
+  return context || readableCode(question.checklist_category || 'Requirement detail');
+};
+
+const findingTarget = (finding: AuditFindingPayload): string => {
+  if (finding.target_requirement_id) return `Requirement ${finding.target_requirement_id}`;
+  return readableCode(finding.category || finding.rule_id || 'Validation finding');
+};
+
+function SourceFiles({ names }: { names: string[] }) {
+  if (!names.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-on-surface-variant">
+      <FileText className="h-3 w-3 shrink-0" />
+      <span className="font-semibold">Source:</span>
+      {names.map(name => (
+        <span key={name} className="max-w-full truncate rounded-md border border-outline bg-white px-1.5 py-0.5 font-mono" title={name}>
+          {name}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ValidationCard({
+  audit,
+  requirements,
+  isPending,
+  isProcessing,
+  clarificationAnswers,
+  onAnswerChange,
+}: {
+  audit: AuditResult;
+  requirements: RequirementItem[];
+  isPending: boolean;
+  isProcessing: boolean;
+  clarificationAnswers: Record<string, string>;
+  onAnswerChange: (key: string, value: string) => void;
+}) {
+  const questions = audit.clarification_questions || [];
+  const findings = audit.findings || [];
+  const currentRequirements = requirements.filter(requirement =>
+    !requirement.status || requirement.status.toLowerCase() === 'active',
+  );
+  const conflicts = findings.filter(finding => finding.finding_type === 'conflicting');
+  const blockingIssues = findings.filter(finding =>
+    finding.impact === 'blocking' && finding.finding_type !== 'conflicting',
+  );
+  const reviews = findings.filter(finding => finding.impact !== 'blocking');
+  const findingGroups = Array.from(findings.reduce((groups, finding, index) => {
+    const key = finding.target_requirement_id || findingTarget(finding);
+    const existing = groups.get(key) || { key, target: findingTarget(finding), findings: [] as Array<{ finding: AuditFindingPayload; index: number }> };
+    existing.findings.push({ finding, index });
+    groups.set(key, existing);
+    return groups;
+  }, new Map<string, { key: string; target: string; findings: Array<{ finding: AuditFindingPayload; index: number }> }>()).values())
+    .map(group => ({
+      ...group,
+      findings: [...group.findings].sort((left, right) =>
+        (left.finding.rule_id || left.finding.description).localeCompare(
+          right.finding.rule_id || right.finding.description,
+          undefined,
+          { numeric: true },
+        ),
+      ),
+    }))
+    .sort((left, right) => left.target.localeCompare(right.target, undefined, { numeric: true }));
+  const unresolvedQuestions = questions.filter(question => !question.is_resolved);
+  const affectedRequirementKeys = new Set<string>();
+  findings.forEach(finding => {
+    if (finding.target_requirement_id) affectedRequirementKeys.add(finding.target_requirement_id);
+  });
+  questions.forEach(question => {
+    if (question.target_requirement_id) affectedRequirementKeys.add(question.target_requirement_id);
+    const parsed = contextRecord(question.requirement_context);
+    if (typeof parsed?.requirement_code === 'string') affectedRequirementKeys.add(parsed.requirement_code);
+    if (question.target_user_story_id) {
+      const owner = currentRequirements.find(requirement =>
+        requirement.user_stories.some(story => story.ticket_code === question.target_user_story_id),
+      );
+      if (owner?.id) affectedRequirementKeys.add(owner.id);
+      if (owner?.requirement_code) affectedRequirementKeys.add(owner.requirement_code);
+    }
+  });
+  const passedRequirements = currentRequirements
+    .filter(requirement =>
+      !affectedRequirementKeys.has(requirement.id || '') &&
+      !affectedRequirementKeys.has(requirement.requirement_code),
+    )
+    .sort((left, right) => left.requirement_code.localeCompare(
+      right.requirement_code,
+      undefined,
+      { numeric: true },
+    ));
+  const orderedQuestions = questions
+    .map((question, originalIndex) => ({ question, originalIndex }))
+    .sort((left, right) => clarificationTarget(left.question).localeCompare(
+      clarificationTarget(right.question),
+      undefined,
+      { numeric: true },
+    ));
+  const requirementOrder = (target: string | null | undefined): number => {
+    const matchedRequirement = currentRequirements.find(requirement =>
+      requirement.id === target || requirement.requirement_code === target,
+    );
+    const sortable = matchedRequirement?.requirement_code || target || '';
+    const numericCode = sortable.match(/\bREQ\D*0*(\d+)\b/i);
+    return numericCode ? Number(numericCode[1]) : Number.MAX_SAFE_INTEGER;
+  };
+  const passedCount = passedRequirements.length;
+  const passedRules = Array.from(new Set(
+    (audit.passed_checks || []).map(readableAuditRule).filter(Boolean),
+  ));
+  const total = currentRequirements.length || passedCount + findings.length + questions.length;
+  const allSources = Array.from(new Set([
+    ...sourceNames([
+      ...(audit.source_references || []),
+      ...findings.flatMap(finding => finding.source_references || []),
+      ...questions.flatMap(question => question.source_references || []),
+    ]),
+    ...questions
+      .map(question => question.provenance?.document?.trim())
+      .filter((name): name is string => Boolean(name)),
+  ]));
+  const hasDraftAnswer = Object.values(clarificationAnswers).some(value => value.trim());
+
+  return (
+    <div className="w-full min-w-0">
+      <p className="text-[13px] leading-relaxed text-on-surface">
+        Validated <strong>{total} requirement{total === 1 ? '' : 's'}</strong>
+        {allSources.length ? ' against the project knowledge base.' : '.'}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700">✓ {passedCount} Passed</span>
+        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-semibold text-amber-700">⚠ {reviews.length + unresolvedQuestions.length} Needs review</span>
+        <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-semibold text-red-700">! {blockingIssues.length} Blocking</span>
+        <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-semibold text-red-700">× {conflicts.length} Conflict{conflicts.length === 1 ? '' : 's'}</span>
+      </div>
+
+      {passedRules.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] font-semibold text-on-surface-variant">Passed checks:</span>
+          {passedRules.map(rule => (
+            <span key={rule} className="rounded-md border border-emerald-200 bg-white px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+              {rule}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-col gap-2">
+        {passedRequirements.map(requirement => (
+          <div
+            key={requirement.id || requirement.requirement_code}
+            style={{ order: requirementOrder(requirement.requirement_code) * 10 }}
+            className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-white px-3 py-2.5"
+          >
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-700" />
+            <span className="min-w-0 flex-1 break-words text-xs">
+              <strong>{requirement.requirement_code}</strong>{requirement.title ? ` · ${requirement.title}` : ''}
+            </span>
+            <span className="text-[10px] font-semibold text-emerald-700">Passed</span>
+          </div>
+        ))}
+
+        {findingGroups.map(group => {
+          const conflict = group.findings.some(({ finding }) => finding.finding_type === 'conflicting');
+          const blocking = group.findings.some(({ finding }) => finding.impact === 'blocking');
+          const requirement = currentRequirements.find(item =>
+            item.id === group.key || item.requirement_code === group.key,
+          );
+          const target = requirement
+            ? `Requirement ${requirement.requirement_code}${requirement.title ? ` · ${requirement.title}` : ''}`
+            : group.target;
+          return (
+            <div
+              key={group.key}
+              style={{ order: requirementOrder(requirement?.requirement_code || group.target) * 10 + 1 }}
+              className={`rounded-xl border bg-white px-3 py-3 ${blocking ? 'border-red-300' : 'border-amber-300'}`}
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle className={`mt-0.5 h-4 w-4 shrink-0 ${blocking ? 'text-red-600' : 'text-amber-600'}`} />
+                <div className="min-w-0 flex-1">
+                  <p className={`break-words text-xs font-semibold ${blocking ? 'text-red-800' : 'text-amber-800'}`}>{target}</p>
+                </div>
+                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-bold ${blocking ? 'border-red-200 bg-red-100 text-red-700' : 'border-amber-200 bg-amber-100 text-amber-700'}`}>
+                  {conflict ? 'Conflict' : blocking ? 'Blocking issue' : 'Needs review'}
+                </span>
+              </div>
+              <div className="mt-2 divide-y divide-outline">
+                {group.findings.map(({ finding, index }, issueIndex) => (
+                  <div key={`${finding.rule_id}-${index}`} className="flex gap-2 py-2 first:pt-0 last:pb-0">
+                    <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${blocking ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                      {issueIndex + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="break-words text-[11px] leading-relaxed text-on-surface-variant">{finding.description}</p>
+                      <SourceFiles names={sourceLabels(finding.source_references)} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+
+        {orderedQuestions.map(({ question, originalIndex }) => {
+          const answerKey = question.id || `q-${originalIndex}`;
+          const answered = Boolean(question.is_resolved);
+          const names = sourceLabels(
+            question.source_references,
+            question.provenance?.document,
+            question.provenance?.section,
+          );
+          const targetParts = clarificationTarget(question).split(' · ').filter(Boolean);
+          return (
+            <div
+              key={answerKey}
+              style={{ order: requirementOrder(question.target_requirement_id || clarificationTarget(question)) * 10 + 2 }}
+              className={`rounded-xl border bg-white px-3 py-3 ${answered ? 'border-emerald-300' : 'border-amber-300'}`}
+            >
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold">
+                <span className={`h-2 w-2 rounded-full ${answered ? 'bg-emerald-500' : 'bg-amber-500'}`} aria-hidden="true" />
+                <span className={answered ? 'text-emerald-700' : 'text-amber-700'}>{answered ? 'Answered' : 'Needs review'}</span>
+              </div>
+              <div className="mt-2 space-y-0.5">
+                {targetParts.map((part, partIndex) => (
+                  <p key={`${part}-${partIndex}`} className={partIndex === 0 ? 'break-words text-xs font-bold text-on-surface' : 'break-words text-[11px] font-medium text-on-surface-variant'}>
+                    {part}
+                  </p>
+                ))}
+              </div>
+              <p className="mt-2 break-words text-[13px] font-medium leading-relaxed text-on-surface">{question.question_text}</p>
+              <SourceFiles names={names} />
+              {answered ? (
+                <div className="mt-2 rounded-lg border border-outline bg-white px-3 py-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Answer</p>
+                  <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-on-surface">{question.user_answer || 'Answered'}</p>
+                </div>
+              ) : (
+                <textarea
+                  rows={1}
+                  value={clarificationAnswers[answerKey] || ''}
+                  onChange={event => onAnswerChange(answerKey, event.target.value)}
+                  onInput={event => {
+                    const element = event.currentTarget;
+                    element.style.height = 'auto';
+                    element.style.height = `${Math.min(element.scrollHeight, 160)}px`;
+                  }}
+                  disabled={isProcessing || !isPending}
+                  placeholder={isPending ? 'Enter the missing detail…' : 'This clarification is no longer active'}
+                  className="mt-2 min-h-10 max-h-40 w-full resize-none rounded-lg border border-outline bg-white px-3 py-2.5 text-xs leading-relaxed text-on-surface outline-none placeholder:text-on-surface-variant/40 focus:border-primary focus:ring-1 focus:ring-primary/30 disabled:bg-slate-50"
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {isPending && hasDraftAnswer && (
+        <button type="submit" disabled={isProcessing} className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-xs font-bold text-on-primary transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
+          {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          {isProcessing ? 'Preparing update…' : 'Submit answers & prepare update'}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export function ChatPanel({ state, userName }: { state: ProjectState; userName: string }) {
   const {
@@ -38,6 +387,8 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
     handleSendMessage,
     handleStopGeneration,
     clarificationAnswers,
+    structuredRequirements,
+    lockableRequirements,
     handleUpdateAnswerValue,
     handleSubmitClarifications,
     handleValidateRequirements,
@@ -86,9 +437,6 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
   // stay disabled until real content exists.
   const llmUnavailable = lmStudioOnline === false || !lmStudioModelLoaded;
   const agentActionsDisabled = isLoading || isProcessing || !canRunAgentActions || llmUnavailable;
-  const hasDraftClarificationAnswer = Object.values(clarificationAnswers).some(
-    answer => answer.trim().length > 0,
-  );
   const agentActionHint = !projectId
     ? 'Create or select a project first'
     : agentActionsBlockedReason
@@ -148,6 +496,50 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const isNearBottomRef = useRef(true);
   const [showJumpPill, setShowJumpPill] = useState<boolean>(false);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(true);
+  const loadingOlderRef = useRef(false);
+  const activeProjectRef = useRef(projectId);
+  activeProjectRef.current = projectId;
+
+  useEffect(() => {
+    setHasOlderMessages(true);
+    setIsLoadingOlder(false);
+    loadingOlderRef.current = false;
+  }, [projectId]);
+
+  const loadOlderMessages = async (): Promise<void> => {
+    const container = chatScrollRef.current;
+    const oldestId = messages[0]?.id;
+    if (!projectId || !oldestId || !container || loadingOlderRef.current || !hasOlderMessages) return;
+    loadingOlderRef.current = true;
+    setIsLoadingOlder(true);
+    const previousHeight = container.scrollHeight;
+    try {
+      const rows = await api.listConversationMessages(projectId, { limit: 5, before: oldestId });
+      if (activeProjectRef.current !== projectId) return;
+      const older = toChatMessages({ conversation_history: rows }, false);
+      if (rows.length < 5) setHasOlderMessages(false);
+      if (older.length > 0) {
+        state.setMessages(current => {
+          const existingIds = new Set(current.map(message => message.id));
+          const uniqueOlder = older.filter(message => !existingIds.has(message.id));
+          if (uniqueOlder.length > 0) {
+          requestAnimationFrame(() => {
+            const currentContainer = chatScrollRef.current;
+            if (currentContainer) currentContainer.scrollTop += currentContainer.scrollHeight - previousHeight;
+          });
+          }
+          return uniqueOlder.length > 0 ? [...uniqueOlder, ...current] : current;
+        });
+      }
+    } catch {
+      // Keep the existing timeline usable; another upward scroll can retry.
+    } finally {
+      loadingOlderRef.current = false;
+      setIsLoadingOlder(false);
+    }
+  };
 
   const handleChatScroll = (): void => {
     const container = chatScrollRef.current;
@@ -155,6 +547,7 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
     const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
     isNearBottomRef.current = distance <= 96;
     setShowJumpPill(distance > 200);
+    if (container.scrollTop <= 48) void loadOlderMessages();
   };
 
   const scrollToLatest = (): void => {
@@ -199,6 +592,11 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
       {/* Chat Logs scroll list — extra bottom padding on <sm screens because
           the action buttons stack into two rows and the composer grows taller. */}
       <div ref={chatScrollRef} onScroll={handleChatScroll} className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-5 custom-scrollbar pb-44 sm:pb-32 bg-white">
+        {isLoadingOlder && (
+          <div className="flex items-center justify-center gap-1.5 text-[10px] text-on-surface-variant">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading earlier messages…
+          </div>
+        )}
         {messages.length === 0 && (
           // CHAT 1.1 — Empty-state suggestion chips: `onPick` feeds the same
           // handler as the composer (CHAT 1.2), so a suggested prompt is just a
@@ -258,114 +656,30 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
                   </span>
 
                   {/* Chat text box */}
-                  <div className={`px-4 py-3 rounded-[16px] border text-[13.5px] leading-[1.6] ${
+                  <div className={`${msg.auditResultSnapshot ? 'w-full' : ''} px-4 py-3 rounded-[16px] border text-[13.5px] leading-[1.6] ${
                     isUser 
                       ? 'bg-[#f4ece4] text-on-surface border-[#e8e2d9] rounded-tr-[4px]' 
                       : 'bg-white text-on-surface border-[#e8e2d9] rounded-tl-[4px] shadow-[0_2px_3px_rgba(0,0,0,0.02)]'
                   }`}>
-                    <p className="whitespace-pre-line break-words">
-                      {renderInlineFormatting(msg.content, projectSearchQuery, bubbleHighlightClass)}
-                    </p>
-                  </div>
-
-                  {/* AUDIT 5.3.1 — Embedded clarification form: rendered from the
-                      bubble's `auditResultSnapshot` (AUDIT 5.3) so the user can answer
-                      the auditor's questions inline. Answers are submitted through the
-                      CLARIFICATION flow (FLOW 10), which resolves them server-side
-                      (AUDIT 3.x / CONFIRM depends on where the question row lives). */}
-                  {msg.isPendingClarifications && msg.auditResultSnapshot?.clarification_questions && (
-                    <motion.div 
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: 0.1 }}
-                      className="w-full mt-3 bg-white border-2 border-primary/20 rounded-2xl p-4.5 shadow-lg relative overflow-hidden"
-                    >
-                      {/* Aureate golden backdrop overlay */}
-                      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent pointer-events-none"></div>
-                      
-                      <div className="flex items-center gap-2 mb-3 relative z-10">
-                        <AlertTriangle className="text-primary w-4.5 h-4.5" />
-                        <h3 className="font-bold text-xs text-on-surface">Clarification Required</h3>
-                      </div>
-
-                      {/* CLARIFY 1.2 — ChatPanel embedded form: same handler (1.3) as the
-                          dashboard panel; the questions come from the audit BUBBLE's
-                          snapshot (AUDIT 5.3.1), while the answers land in the shared
-                          store (1.4). */}
-                      <form
-                        onSubmit={handleSubmitClarifications}
-                        className="space-y-3 relative z-10"
-                      >
-                        {msg.auditResultSnapshot.clarification_questions
-                          .map((q, idx) => ({ q, idx }))
-                          .map(({ q, idx }) => {
-                          const answerKey = q.id || `q-${idx}`;
-                          const isAnswered = Boolean(q.is_resolved);
-                          return (
-                          <div key={answerKey} className="space-y-1.5 bg-black/5 p-3 rounded-xl border border-black/5 min-w-0">
-                            <div className="flex flex-wrap items-center justify-between gap-1.5">
-                              <span className="text-[10px] font-mono font-bold text-primary uppercase bg-primary/10 px-1.5 py-0.5 rounded break-words">
-                                {q.checklist_category}
-                              </span>
-                              <span className="text-[10px] font-mono text-on-surface-variant font-semibold break-words min-w-0 text-right">
-                                Target: {q.target_user_story_id}
-                              </span>
-                              {isAnswered && (
-                                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
-                                  Answered
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-[12.5px] font-medium text-on-surface leading-tight break-words">
-                              {q.question_text}
-                            </p>
-                            <p className="text-[10px] text-on-surface-variant break-words">
-                              Source: {q.provenance?.type || (q.source_references?.length ? 'Project file' : 'System analysis')}
-                              {q.provenance?.document ? ` · ${q.provenance.document}` : ''}
-                              {q.provenance?.section ? ` · ${q.provenance.section}` : ''}
-                              {q.provenance?.type === 'System analysis' && (q.provenance.analyzed_target || q.target_requirement_id || q.target_user_story_id)
-                                ? ` · ${q.provenance.analyzed_target || q.target_requirement_id || q.target_user_story_id}`
-                                : ''}
-                            </p>
-                            <textarea
-                              rows={2}
-                              ref={(element) => {
-                                if (!element) return;
-                                element.style.height = 'auto';
-                                element.style.height = `${Math.min(element.scrollHeight, 180)}px`;
-                              }}
-                              value={isAnswered ? q.user_answer || "" : clarificationAnswers[answerKey] || ""}
-                              onChange={(e) => handleUpdateAnswerValue(answerKey, e.target.value)}
-                              onInput={(event) => {
-                                const element = event.currentTarget;
-                                element.style.height = 'auto';
-                                element.style.height = `${Math.min(element.scrollHeight, 180)}px`;
-                              }}
-                              disabled={isProcessing || isAnswered}
-                              placeholder="Type your answer"
-                              className="w-full min-h-[58px] max-h-[180px] resize-y bg-white border border-outline rounded-lg px-3 py-2 text-xs leading-relaxed text-on-surface focus:ring-1 focus:ring-primary/40 focus:border-primary placeholder:text-on-surface-variant/40 outline-none disabled:bg-slate-50 disabled:text-slate-700 disabled:cursor-default"
-                            />
-                          </div>
-                          );
-                        })}
-
-                        {hasDraftClarificationAnswer && (
-                          <button
-                            type="submit"
-                            disabled={isProcessing}
-                            className={`w-full py-2 rounded-xl font-label-md text-xs transition-all font-bold shadow-md flex items-center justify-center gap-1.5 ${
-                              isProcessing
-                                ? 'bg-slate-400 text-white cursor-wait shadow-none'
-                                : 'bg-primary hover:brightness-110 active:scale-[0.99] text-on-primary shadow-primary/20'
-                            }`}
-                          >
-                            {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                            <span>{isProcessing ? 'Sending to Gatherer…' : 'Save Answered Questions'}</span>
-                          </button>
-                        )}
+                    {msg.auditResultSnapshot ? (
+                      <form onSubmit={handleSubmitClarifications}>
+                        <ValidationCard
+                          audit={msg.auditResultSnapshot}
+                          requirements={(structuredRequirements.requirements?.length ?? 0) > 0
+                            ? structuredRequirements.requirements || []
+                            : lockableRequirements}
+                          isPending={Boolean(msg.isPendingClarifications)}
+                          isProcessing={isProcessing}
+                          clarificationAnswers={clarificationAnswers}
+                          onAnswerChange={handleUpdateAnswerValue}
+                        />
                       </form>
-                    </motion.div>
-                  )}
+                    ) : (
+                      <p className="whitespace-pre-line break-words">
+                        {renderInlineFormatting(msg.content, projectSearchQuery, bubbleHighlightClass)}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </motion.div>
             );

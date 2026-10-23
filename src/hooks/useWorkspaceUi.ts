@@ -7,7 +7,7 @@ import type { Dispatch, SetStateAction } from 'react';
 export type WorkspaceTab = 'prd' | 'flows' | 'trace' | 'history';
 
 /** Top-level app view: the chat/PRD workspace or the projects overview dashboard. */
-export type AppView = 'workspace' | 'dashboard';
+export type AppView = 'workspace' | 'dashboard' | 'help';
 
 export interface UseWorkspaceUiResult {
   splitPct: number;
@@ -64,8 +64,7 @@ export function useWorkspaceUi(): UseWorkspaceUiResult {
   // Layout Tab Active States: 'prd' | 'flows' | 'trace' | 'history'
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('prd');
 
-  // Top-level view next to the project sidebar: 'workspace' (chat + PRD tabs)
-  // or 'dashboard' (projects overview table). Toggled from the sidebar nav.
+  // Top-level view next to the project sidebar: workspace, dashboard, or help.
   const [activeView, setActiveView] = useState<AppView>('workspace');
 
   // Interactive Flowchart/Sequence Visualizer zoom/state

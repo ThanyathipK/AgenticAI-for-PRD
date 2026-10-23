@@ -11,10 +11,12 @@
 // AUTH 1.6  — signed-in branch: avatar + name/role chip, i.e. the visible
 //             authenticated state produced by AUTH 1.5 / AUTH 2.3.
 // AUTH 4.1  — the "Log out" buttons in both branches.
-import { LogIn, LogOut, ShieldCheck } from 'lucide-react';
+import { LogIn, LogOut, Settings, ShieldCheck } from 'lucide-react';
+import { useState } from 'react';
 import type { AuthUserPayload } from '../api/types';
 import { authInitials } from '../hooks/useAuth';
 import { Tooltip } from './Tooltip';
+import { DeleteAccountModal } from './DeleteAccountModal';
 
 interface AuthPanelProps {
   user: AuthUserPayload | null;
@@ -24,6 +26,7 @@ interface AuthPanelProps {
   collapsed: boolean;
   onOpenAuth: () => void;
   onLogout: () => void;
+  onDeleteAccount: (password: string, confirmation: string) => Promise<string | null>;
 }
 
 export function AuthPanel({
@@ -32,7 +35,9 @@ export function AuthPanel({
   collapsed,
   onOpenAuth,
   onLogout,
+  onDeleteAccount,
 }: AuthPanelProps) {
+  const [isAccountOpen, setIsAccountOpen] = useState(false);
   if (!user) {
     return (
       <div className="p-2 border-t border-outline">
@@ -71,6 +76,11 @@ export function AuthPanel({
             {initials}
           </div>
         </Tooltip>
+        <Tooltip label="Account settings" side="right">
+          <button type="button" onClick={() => setIsAccountOpen(true)} disabled={isAuthenticating} aria-label="Account settings" className="w-8 h-8 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-primary/10 hover:text-primary transition-colors disabled:opacity-50">
+            <Settings className="w-4 h-4" />
+          </button>
+        </Tooltip>
         {/* AUTH 4.1 — Sign-out trigger (collapsed rail): onLogout = useAuth.logout
             → api.authLogout (AUTH 4.2) → clearSession (AUTH 4.3) → AUTH 1.6
             reverts to the signed-out branch above. */}
@@ -85,6 +95,7 @@ export function AuthPanel({
             <LogOut className="w-4 h-4" />
           </button>
         </Tooltip>
+        <DeleteAccountModal isOpen={isAccountOpen} isWorking={isAuthenticating} onClose={() => setIsAccountOpen(false)} onDelete={onDeleteAccount} />
       </div>
     );
   }
@@ -120,7 +131,13 @@ export function AuthPanel({
             <LogOut className="w-3.5 h-3.5" />
           </button>
         </Tooltip>
+        <Tooltip label="Account settings" side="left">
+          <button type="button" onClick={() => setIsAccountOpen(true)} disabled={isAuthenticating} aria-label="Account settings" className="p-1.5 rounded-lg text-on-surface-variant hover:bg-primary/10 hover:text-primary transition-colors shrink-0 disabled:opacity-50">
+            <Settings className="w-3.5 h-3.5" />
+          </button>
+        </Tooltip>
       </div>
+      <DeleteAccountModal isOpen={isAccountOpen} isWorking={isAuthenticating} onClose={() => setIsAccountOpen(false)} onDelete={onDeleteAccount} />
     </div>
   );
 }

@@ -17,6 +17,7 @@ import {
 } from "../src/hooks/chat/agentErrors";
 import { runBackgroundAgentJob } from "../src/hooks/chat/backgroundJobs";
 import { cancelActiveAgent } from "../src/hooks/chat/useAgentCancellation";
+import { isOlderProjectSnapshot } from "../src/hooks/useProjectSync";
 
 class MemoryStorage {
   private values = new Map<string, string>();
@@ -61,6 +62,22 @@ test("agent errors distinguish abort, rate limit, payload size, and auth expiry"
     payloadTooLargeContent({ response: { data: { detail: "9000 tokens" } } }),
     /9000 tokens/,
   );
+});
+
+test("project refresh rejects only older snapshots and accepts equal/new revisions", () => {
+  assert.equal(
+    isOlderProjectSnapshot("2026-10-23T10:00:00Z", "2026-10-24T10:00:00Z"),
+    true,
+  );
+  assert.equal(
+    isOlderProjectSnapshot("2026-10-24T10:00:00Z", "2026-10-24T10:00:00Z"),
+    false,
+  );
+  assert.equal(
+    isOlderProjectSnapshot("2026-10-25T10:00:00Z", "2026-10-24T10:00:00Z"),
+    false,
+  );
+  assert.equal(isOlderProjectSnapshot(null, "2026-10-24T10:00:00Z"), false);
 });
 
 test("background polling resumes a saved job and removes it after completion", async () => {
@@ -260,3 +277,15 @@ test("cancelling a background job aborts locally and requests server cancellatio
   assert.equal(controller.signal.aborted, true);
   assert.deepEqual(calls, ["project-1:job-1", "Stopping generation..."]);
 });
+
+// Traceability UI contracts are registered before implementation so they stay
+// visible in the test report without making the existing frontend suite red.
+// Promote each TODO to an executable component test when the traceability view
+// exposes an injectable loader/event source (or the suite gains a DOM renderer).
+test.todo(
+  "traceability refreshes automatically after create, update, archive, restore, lock, unlock, clarification, validation, PRD generation, and PRD restore mutations",
+);
+
+test.todo(
+  "traceability renders PRD sections, current and historical diagrams, coverage gaps, validation freshness, and source references for each requirement",
+);

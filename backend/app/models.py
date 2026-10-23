@@ -548,6 +548,15 @@ class ConversationMessageModel(Base):
     intent = Column(String(50), nullable=True, default="")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
+    __table_args__ = (
+        Index(
+            "idx_conversation_messages_project_created_id",
+            "project_id",
+            "created_at",
+            "id",
+        ),
+    )
+
 class PendingActionModel(Base):
     __tablename__ = "pending_actions"
     

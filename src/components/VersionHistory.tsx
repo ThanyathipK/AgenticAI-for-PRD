@@ -8,6 +8,7 @@ import { ConfirmModal } from "./ConfirmModal";
 import type { PrdVersionDiffPayload, PrdVersionDiffSectionPayload } from "../api/types";
 import { displayVersionAuthor, extractProjectAuthor } from "../utils/actorName";
 import { formatPrdVersionLabel } from "../utils/version";
+import { formatDateTime } from "../utils/time";
 
 // VERSION 1.3 — Diff renderer primitives: `DiffLines` paints add/del/context lines;
 //              `SectionDiffCard` (1.4) wraps one section's change kind, counters and
@@ -133,6 +134,7 @@ export function VersionHistory({ state }: { state: ProjectState }) {
     diffBaseVersion,
     setDiffBaseVersion,
     handleRestoreVersion,
+    loadVersionHistory,
     prdMarkdown,
   } = state;
   const projectAuthor = extractProjectAuthor(prdMarkdown);
@@ -140,6 +142,24 @@ export function VersionHistory({ state }: { state: ProjectState }) {
   // Pending restore target: the version number awaiting user confirmation via
   // the ConfirmModal (null = no restore in flight).
   const [restoreTarget, setRestoreTarget] = useState<number | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [hasOlderVersions, setHasOlderVersions] = useState(true);
+
+  // The full ledger is intentionally lazy: project opening fetches only the
+  // latest SemVer row, while mounting this tab fetches the first metadata page.
+  useEffect(() => {
+    if (!projectId) return;
+    let active = true;
+    setHistoryLoading(true);
+    void loadVersionHistory(projectId, { limit: 20 }).then((count) => {
+      if (!active) return;
+      setHasOlderVersions(count === 20);
+      setHistoryLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [projectId, loadVersionHistory]);
 
   // The ledger is newest-first, so its head is the current document version —
   // restoring it would be a no-op, hence no Restore button on the first entry.
@@ -214,7 +234,7 @@ export function VersionHistory({ state }: { state: ProjectState }) {
               >
                 <span className="min-w-0 flex-1">
                   <strong className="block text-sm font-bold">{formatPrdVersionLabel(v.semVersion, v.version)}</strong>
-                  <span className="block mt-0.5 text-[11px] text-on-surface-variant font-normal">{v.timestamp}</span>
+                  <span className="block mt-0.5 text-[11px] text-on-surface-variant font-normal">{formatDateTime(v.timestamp)}</span>
                 </span>
                 {selectedHistVersion === v.version
                   ? <ChevronDown className="w-4 h-4 shrink-0" />
@@ -273,6 +293,32 @@ export function VersionHistory({ state }: { state: ProjectState }) {
           <div className="rounded-[10px] border border-dashed border-outline bg-white px-4 py-10 text-center text-sm text-on-surface-variant">
             No version history yet. Generate a PRD to start tracking changes.
           </div>
+        )}
+
+        {historyLoading && (
+          <p className="py-2 text-center text-xs text-on-surface-variant">
+            Loading version history…
+          </p>
+        )}
+        {!historyLoading && hasOlderVersions && versionHistory.length > 0 && (
+          <button
+            type="button"
+            className="w-full rounded-[8px] border border-outline bg-white px-3 py-2 text-xs font-semibold text-on-surface hover:bg-[#faf8f4]"
+            onClick={async () => {
+              if (!projectId) return;
+              setHistoryLoading(true);
+              const oldest = versionHistory[versionHistory.length - 1]?.version;
+              const count = await loadVersionHistory(projectId, {
+                append: true,
+                beforeVersion: oldest,
+                limit: 20,
+              });
+              setHasOlderVersions(count === 20);
+              setHistoryLoading(false);
+            }}
+          >
+            Load older versions
+          </button>
         )}
 
       </div>

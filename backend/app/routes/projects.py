@@ -61,7 +61,7 @@ router = APIRouter()
 
 # Keep ordinary project refreshes bounded. The dedicated conversations endpoint
 # remains the durable, complete audit trail and can support paginated history UI.
-PROJECT_STATE_HISTORY_LIMIT = 50
+PROJECT_STATE_HISTORY_LIMIT = 5
 
 
 def _duplicate_project_name_detail(name: str) -> str:
@@ -544,6 +544,17 @@ async def get_project_requirement_state(
         # PROJECT 2.3.3.3 — Real-time fan-out for the first-open initialization.
         await event_manager.publish(project_id, "state_initialized", {"project_id": project_id})
 
+    # A new project's intake is stored immediately in the canonical PRD
+    # sections, before the first compiled PRD/version exists. Return that saved
+    # draft as the initial document instead of making the client fall back to a
+    # blank static template. This keeps Problem Statement and the other intake
+    # fields visible from the first project load.
+    if isinstance(state, dict) and not str(state.get("generated_prd") or "").strip():
+        section_draft = await assemble_document_markdown(project_id, session)
+        if section_draft.strip():
+            state = dict(state)
+            state["generated_prd"] = section_draft
+
     # Reuse the request's AsyncSession instead of opening a second pooled
     # connection just for the conversation history read (one fewer network
     # round-trip to the database on every project-state load).
@@ -575,6 +586,8 @@ async def get_project_requirement_state(
 @router.get("/api/project/{project_id}/conversations", response_model=List[ConversationMessageResponse], status_code=status.HTTP_200_OK)
 async def get_project_conversations(
     project_id: str,
+    limit: Optional[int] = Query(None, ge=1, le=50),
+    before: Optional[str] = Query(None),
     current_user: AuthenticatedUser = Depends(require_project_owner),
     session: AsyncSession = Depends(get_db),
 ) -> List[ConversationMessageResponse]:
@@ -592,9 +605,16 @@ async def get_project_conversations(
     """
     try:
         UUID(project_id)
+        if before:
+            UUID(before)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project_id format")
-    return await ConversationMessageRepository.get_conversation_history(project_id, session=session)
+    return await ConversationMessageRepository.get_conversation_history(
+        project_id,
+        session=session,
+        limit=limit,
+        before_message_id=before,
+    )
 
 
 @router.post(
@@ -1419,6 +1439,8 @@ async def convert_prd_to_markdown(
 @router.get("/api/project/{project_id}/prd-versions", response_model=List[PRDVersionResponse], status_code=status.HTTP_200_OK)
 async def get_prd_versions(
     project_id: str,
+    limit: Optional[int] = Query(None, ge=1, le=100),
+    before_version: Optional[int] = Query(None, ge=1),
     current_user: AuthenticatedUser = Depends(require_project_owner),
     session: AsyncSession = Depends(get_db),
 ) -> List[PRDVersionResponse]:
@@ -1440,7 +1462,12 @@ async def get_prd_versions(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project_id format")
 
-    versions = await PRDVersionRepository.get_by_project(project_id, session)
+    versions = await PRDVersionRepository.get_by_project(
+        project_id,
+        session,
+        limit=limit,
+        before_version=before_version,
+    )
     # PERF (project switch) — the timeline only needs METADATA: semver, author,
     # change summary and the per-section change records. Serializing every
     # snapshot's full PRD body made this list the largest payload in the app

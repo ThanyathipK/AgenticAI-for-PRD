@@ -781,6 +781,15 @@ def _extract_explicit_prd_narrative(raw_input: str) -> Dict[str, Dict[str, Any]]
         line = raw_line.strip()
         if not line:
             continue
+        # New-project intake and natural chat commonly use ``Heading: value``
+        # on one line. Capture that value deterministically instead of relying
+        # on the model to transform it into a separate headed block.
+        inline_heading = re.match(r"^(?:#{1,6}\s*)?([^:]+):\s*(.+)$", line)
+        if inline_heading:
+            inline_label = inline_heading.group(1).strip().lower()
+            if inline_label in heading_keys:
+                current = heading_keys[inline_label]
+                line = inline_heading.group(2).strip()
         possible_heading = re.sub(r"^#{1,6}\s*", "", line).rstrip(":").strip().lower()
         if possible_heading in heading_keys:
             current = heading_keys[possible_heading]

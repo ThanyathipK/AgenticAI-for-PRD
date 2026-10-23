@@ -228,31 +228,38 @@ export function toLockMaps(requirements: RequirementsField): {
 // Conversation history
 // ----------------------------------------------------------------------------
 
-const LEGACY_PRD_PREVIEW_PREFIX = 'Enterprise PRD compiled successfully.';
-const CURRENT_PRD_PREVIEW_PREFIX = 'PRD draft generated';
+/**
+ * Merge a bounded server refresh into the timeline already visible for the
+ * same project. Project-state responses intentionally contain only the newest
+ * messages, so replacing state here would make older loaded messages vanish.
+ */
+export function mergeChatMessages(
+  current: ChatMessage[],
+  incoming: ChatMessage[],
+): ChatMessage[] {
+  const byId = new Map(incoming.map(message => [message.id, message]));
+  const merged = current.map(message => {
+    const refreshed = byId.get(message.id);
+    if (!refreshed) return message;
+    byId.delete(message.id);
+    return {
+      ...message,
+      ...refreshed,
+      auditResultSnapshot: refreshed.auditResultSnapshot ?? message.auditResultSnapshot,
+    };
+  });
+  return [...merged, ...byId.values()];
+}
 
-export const isLegacyPrdPreviewMessage = (content: string | null | undefined) =>
-  String(content || '').trim().startsWith(LEGACY_PRD_PREVIEW_PREFIX);
-
-export const isCurrentPrdPreviewMessage = (content: string | null | undefined) =>
-  String(content || '').trim().startsWith(CURRENT_PRD_PREVIEW_PREFIX);
-
-export function toChatMessages(payload: RequirementStatePayload): ChatMessage[] {
+export function toChatMessages(
+  payload: RequirementStatePayload,
+  attachLatestAuditSnapshot = true,
+): ChatMessage[] {
   const rawHistory = payload.conversation_history;
   const loaded: ChatMessage[] = [];
 
   if (Array.isArray(rawHistory)) {
-    // Older builds persisted the Architect's preview message server-side and
-    // then persisted the SPA's preview message again. Suppress only that known
-    // obsolete twin when the replacement event exists; keep all other history.
-    const hasCurrentPreview = rawHistory.some((message) =>
-      isCurrentPrdPreviewMessage(message.content || message.message),
-    );
-    const history = hasCurrentPreview
-      ? rawHistory.filter((message) =>
-          !isLegacyPrdPreviewMessage(message.content || message.message),
-        )
-      : rawHistory;
+    const history = rawHistory;
     const latestClarificationIndex = history.reduce(
       (latest, message, index) =>
         message.intent === 'CLARIFICATION_REQUEST' ||
@@ -269,7 +276,7 @@ export function toChatMessages(payload: RequirementStatePayload): ChatMessage[] 
           ? dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           : m.timestamp || '';
 
-      const ownsClarifications = idx === latestClarificationIndex;
+      const ownsClarifications = attachLatestAuditSnapshot && idx === latestClarificationIndex;
       const hasClarifications = (payload.clarification_questions?.length ?? 0) > 0;
 
       loaded.push({

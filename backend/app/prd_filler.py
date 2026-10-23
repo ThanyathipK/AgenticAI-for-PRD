@@ -212,6 +212,49 @@ _PRD_SECTION_TITLES = (
     "appendix",
 )
 
+_TECHNICAL_COMPLETION_GUIDANCE = {
+    "non_functional": (
+        "Define measurable performance, availability, security, privacy, recovery, "
+        "and observability requirements before implementation."
+    ),
+    "tps_volume": (
+        "Confirm peak transactions per second, concurrent users, and monthly volume "
+        "before capacity planning."
+    ),
+    "growth": (
+        "Confirm the year-over-year growth forecast, planning horizon, and scaling thresholds."
+    ),
+    "launch_plan": (
+        "Define pilot users, release stages, readiness criteria, monitoring, ownership, "
+        "and rollback steps."
+    ),
+}
+_OPEN_ITEMS_GUIDANCE = (
+    "Confirm performance targets, integration limits, security controls, data retention, "
+    "operational ownership, rollout criteria, and rollback conditions."
+)
+_ASSUMPTIONS_GUIDANCE = (
+    "Confirm assumptions for external services, data availability, compliance ownership, "
+    "support coverage, and deployment environments."
+)
+_RELATED_DOCUMENTS_GUIDANCE = (
+    "Reference the source requirements, architecture decisions, API specifications, "
+    "compliance policies, and operating procedures used by this PRD."
+)
+_GLOSSARY_GUIDANCE_TERM = "Project terminology"
+_GLOSSARY_GUIDANCE_DEFINITION = (
+    "Define domain terms, acronyms, system names, and business rules used in this PRD."
+)
+
+_EVIDENCE_GAP_TEXT = {
+    *(value.lower() for value in _TECHNICAL_COMPLETION_GUIDANCE.values()),
+    _OPEN_ITEMS_GUIDANCE.lower(),
+    _ASSUMPTIONS_GUIDANCE.lower(),
+    _RELATED_DOCUMENTS_GUIDANCE.lower(),
+    _GLOSSARY_GUIDANCE_TERM.lower(),
+    _GLOSSARY_GUIDANCE_DEFINITION.lower(),
+}
+
 
 def is_template_only_detail(value: Any, field: str = "") -> bool:
     """Return True when an extracted cell contains template structure, not data.
@@ -223,7 +266,7 @@ def is_template_only_detail(value: Any, field: str = "") -> bool:
     """
     normalized = re.sub(r"\s+", " ", str(value or "")).strip().lower()
     normalized = re.sub(r"^\d+[.)]?\s*", "", normalized)
-    if not normalized or normalized == "tbd":
+    if not normalized or normalized == "tbd" or normalized in _EVIDENCE_GAP_TEXT:
         return True
     if sum(title in normalized for title in _PRD_SECTION_TITLES) >= 2:
         return True
@@ -429,7 +472,14 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
                 term, definition = cells[-2].strip(), cells[-1].strip()
                 if label(term) == "term" and label(definition) == "definition":
                     continue
-                if term and definition and term.upper() != "TBD" and definition.upper() != "TBD":
+                if (
+                    term
+                    and definition
+                    and term.upper() != "TBD"
+                    and definition.upper() != "TBD"
+                    and term.lower() not in _EVIDENCE_GAP_TEXT
+                    and definition.lower() not in _EVIDENCE_GAP_TEXT
+                ):
                     glossary.append((term, definition))
 
     if glossary:
@@ -830,10 +880,11 @@ Wireframes}
 
 
 def _fill_tech_appendix(body: str, narrative: Optional[Dict[str, str]]) -> str:
-    def _cell(key: str, fallback: str) -> str:
+    def _cell(key: str, _legacy_fallback: str = "") -> str:
         if narrative and narrative.get(key):
             return r"\prdfield{" + escape_latex(_numbered_text(narrative[key])) + "}"
-        return fallback.replace("{TBD}", "{}")
+        guidance = _TECHNICAL_COMPLETION_GUIDANCE[key]
+        return r"\prdfield{" + escape_latex(guidance) + "}"
 
     def _launch_cell() -> str:
         parts = []
@@ -846,7 +897,8 @@ def _fill_tech_appendix(body: str, narrative: Optional[Dict[str, str]]) -> str:
             if value:
                 parts.append(escape_latex(f"{label}: {value}"))
         if not parts:
-            return r"\prdfield{}"
+            guidance = _TECHNICAL_COMPLETION_GUIDANCE["launch_plan"]
+            return r"\prdfield{" + escape_latex(guidance) + "}"
         return r"\prdfield{" + r"\newline ".join(parts) + "}"
 
     def _appendix_cell(key: str, *, minimum_height: bool = False) -> str:
@@ -856,7 +908,12 @@ def _fill_tech_appendix(body: str, narrative: Optional[Dict[str, str]]) -> str:
         items = [item for item in items if item]
         height = r"\rule{0pt}{1cm}" if minimum_height else ""
         if not items:
-            return height + r"\prdfield{}"
+            fallback = {
+                "open_questions": _OPEN_ITEMS_GUIDANCE,
+                "assumptions": _ASSUMPTIONS_GUIDANCE,
+                "related_documents": _RELATED_DOCUMENTS_GUIDANCE,
+            }.get(key, _TECHNICAL_COMPLETION_GUIDANCE["non_functional"])
+            return height + r"\prdfield{" + escape_latex(fallback) + "}"
         numbered = r"\newline ".join(
             f"{index}. {escape_latex(item)}"
             for index, item in enumerate(items, start=1)
@@ -943,7 +1000,13 @@ def _normalize_glossary_entries(value: Any) -> List[tuple[str, str]]:
 def _fill_glossary_rows(body: str, narrative: Optional[Dict[str, Any]]) -> str:
     entries = _normalize_glossary_entries((narrative or {}).get("glossary"))
     if not entries:
-        blank = "\n  \\cline{2-3}\n  & \\prdfield{} & \\prdfield{} \\\\"
+        blank = (
+            "\n  \\cline{2-3}\n  & \\prdfield{"
+            + escape_latex(_GLOSSARY_GUIDANCE_TERM)
+            + "} & \\prdfield{"
+            + escape_latex(_GLOSSARY_GUIDANCE_DEFINITION)
+            + "} \\\\"
+        )
         return _GLOSSARY_GRID_RE.sub(lambda _match: blank, body, count=1)
     rows = []
     for term, definition in entries:

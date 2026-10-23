@@ -310,14 +310,29 @@ def test_appendix_export_keeps_layout_and_numbers_only_real_details():
 
     assert (
         r"Open\newline Questions \&\newline Risks & "
-        r"\multicolumn{2}{L{12.56cm}|}{\prdfield{}}"
+        r"\multicolumn{2}{L{12.56cm}|}{\prdfield{Confirm performance targets, integration limits, security controls, data retention, operational ownership, rollout criteria, and rollback conditions.}}"
     ) in empty
     assert (
-        r"Assumptions & \multicolumn{2}{L{12.56cm}|}{\prdfield{}}"
+        r"Assumptions & \multicolumn{2}{L{12.56cm}|}{\prdfield{Confirm assumptions for external services, data availability, compliance ownership, support coverage, and deployment environments.}}"
     ) in empty
     assert r"\prdfield{1. Confirm the retention period}" in populated
     assert r"\prdfield{1. Identity provider remains available}" in populated
     assert r"\prdfield{1. Security architecture decision record}" in populated
+
+
+def test_technical_and_appendix_show_actionable_guidance_without_guessing():
+    markdown = prd_to_markdown(fill_template_body(data={}, narrative={}))
+
+    technical = markdown[markdown.index("### 3. Technical & Operational Considerations"):]
+    appendix = markdown[markdown.index("### 4. Appendix"):]
+    assert "Define measurable performance, availability, security, privacy" in technical
+    assert "Confirm peak transactions per second, concurrent users" in technical
+    assert "Confirm the year-over-year growth forecast" in technical
+    assert "Define pilot users, release stages, readiness criteria" in technical
+    assert "Confirm performance targets, integration limits" in appendix
+    assert "Confirm assumptions for external services" in appendix
+    assert "Reference the source requirements, architecture decisions" in appendix
+    assert "Project terminology" in appendix
 
 
 def test_version_history_writes_every_version_as_its_own_row():

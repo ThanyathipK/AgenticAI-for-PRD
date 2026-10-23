@@ -947,6 +947,10 @@ export interface AuthMessageResponse {
   message: string;
 }
 
+export interface AuthAccountDeleteResponse extends AuthMessageResponse {
+  deleted_projects: number;
+}
+
 /** Roles offered by the sign-up form (mirrors the roles documented in init.sql
  *  and enforced server-side by POST /api/auth/register). */
 export const AUTH_ROLES = [

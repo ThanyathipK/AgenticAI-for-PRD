@@ -25,6 +25,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { applyProjectPinOrder } from '../src/utils/projectOrdering';
+import type { ProjectSummary } from '../src/api/types';
 import { formatDate, formatRelativeUpdated } from '../src/utils/time';
 import {
   getSafeSectionContent,
@@ -39,6 +41,7 @@ import {
   DEFAULT_FAILED_CHECKS,
   DEFAULT_PASSED_CHECKS,
   epicNameFromRequirements,
+  mergeChatMessages,
   toRequirementItem,
   toRequirementItems,
   toStructuredRequirements,
@@ -60,12 +63,46 @@ import { getPrdTemplateMarkdown } from '../src/hooks/useRequirementStore';
 import { displayUserName, displayVersionAuthor, extractProjectAuthor } from '../src/utils/actorName';
 import type { UserStory, RequirementItem } from '../src/components/types';
 import type { RequirementPayload, UserStoryPayload } from '../src/api/types';
+import { assessPrdClarity } from '../src/utils/prdClarity';
 
 // ----------------------------------------------------------------------------
 // src/utils/time.ts — all inputs are LOCAL wall-clock strings so the suite is
 // deterministic in every timezone.
 // ----------------------------------------------------------------------------
 const NOW = new Date('2024-01-15T12:00:00');
+
+test('PRD clarity is high only with specific, measurable, and operational detail', () => {
+  const result = assessPrdClarity(`
+    The PromptPay Payment API must let an operations officer submit a settlement request.
+    Given a valid request, when it is submitted, then respond within 500 ms.
+    Retry twice, retain the audit trail for 180 days, and alert operations after failure.
+  `);
+  assert.equal(result.level, 'High');
+});
+
+test('PRD clarity does not mark ordinary specific content as high', () => {
+  const result = assessPrdClarity(`
+    The PromptPay Payment API must let customers submit payments.
+    Given a valid request, when the customer submits it, then the system records it within 500 ms.
+    Retry a failed request before returning an error.
+  `);
+
+  assert.equal(result.level, 'Medium');
+});
+
+test('PRD clarity does not treat generated completion guidance as project evidence', () => {
+  const result = assessPrdClarity(`
+    Define measurable performance, availability, security, privacy, recovery, and observability requirements before implementation.
+    Confirm peak transactions per second, concurrent users, and monthly volume before capacity planning.
+  `);
+  assert.equal(result.level, 'Low');
+});
+
+test('a generic API mention is not treated as a named technology', () => {
+  const result = assessPrdClarity('The system should use an API and work correctly.');
+  assert.equal(result.level, 'Low');
+  assert.ok(result.missing.includes('a named system, API, or tool'));
+});
 
 test('actor labels use the signed-in name only for human entries', () => {
   assert.equal(displayUserName('  Ada Lovelace  '), 'Ada Lovelace');
@@ -579,7 +616,7 @@ test('toChatMessages gives clarification controls to only the latest request', (
   assert.equal(messages[1].auditResultSnapshot?.clarification_questions?.length, 1);
 });
 
-test('toChatMessages suppresses only the obsolete duplicate PRD preview bubble', () => {
+test('toChatMessages never removes a persisted timeline message', () => {
   const messages = toChatMessages({
     project_id: 'project-1',
     version_number: 3,
@@ -611,7 +648,23 @@ test('toChatMessages suppresses only the obsolete duplicate PRD preview bubble',
     ],
   });
 
-  assert.deepEqual(messages.map((message) => message.id), ['current-preview', 'saved']);
+  assert.deepEqual(messages.map((message) => message.id), ['legacy-preview', 'current-preview', 'saved']);
+});
+
+test('bounded same-project refreshes merge without removing loaded history', () => {
+  const messages = mergeChatMessages(
+    [
+      { id: 'older', role: 'user', content: 'Older message', timestamp: '10:00' },
+      { id: 'newest', role: 'assistant', content: 'Pending response', timestamp: '10:01' },
+    ],
+    [
+      { id: 'newest', role: 'assistant', content: 'Saved response', timestamp: '10:01' },
+      { id: 'latest', role: 'system', content: 'Latest message', timestamp: '10:02' },
+    ],
+  );
+
+  assert.deepEqual(messages.map((message) => message.id), ['older', 'newest', 'latest']);
+  assert.equal(messages[1].content, 'Saved response');
 });
 
 // ----------------------------------------------------------------------------
@@ -1012,4 +1065,38 @@ test('getPrdTemplateMarkdown: an unreachable backend degrades to an empty templa
   // The empty template is cached, so no further fetches happen.
   assert.equal(await getPrdTemplateMarkdown(), '');
   assert.equal(calls, 1);
+});
+
+test('pinning a project moves it above every existing pinned project', () => {
+  const projects = [
+    { id: 'pinned-old', name: 'Pinned old', is_pinned: true },
+    { id: 'recent-a', name: 'Recent A', is_pinned: false },
+    { id: 'recent-b', name: 'Recent B', is_pinned: false },
+  ] as ProjectSummary[];
+
+  const ordered = applyProjectPinOrder(projects, 'recent-b', true);
+
+  assert.deepEqual(ordered.map((project) => project.id), [
+    'recent-b',
+    'pinned-old',
+    'recent-a',
+  ]);
+  assert.equal(ordered[0].is_pinned, true);
+});
+
+test('unpinning keeps pinned projects first and puts the target atop recent projects', () => {
+  const projects = [
+    { id: 'pinned-new', name: 'Pinned new', is_pinned: true },
+    { id: 'pinned-old', name: 'Pinned old', is_pinned: true },
+    { id: 'recent', name: 'Recent', is_pinned: false },
+  ] as ProjectSummary[];
+
+  const ordered = applyProjectPinOrder(projects, 'pinned-new', false);
+
+  assert.deepEqual(ordered.map((project) => project.id), [
+    'pinned-old',
+    'pinned-new',
+    'recent',
+  ]);
+  assert.equal(ordered[1].is_pinned, false);
 });

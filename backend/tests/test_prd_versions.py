@@ -29,6 +29,7 @@ from app.lock_service import LockService
 from app.models import PRDVersionModel, ProjectModel, UserModel
 from app.prd_section_service import CANONICAL_KEYS, ensure_sections_seeded
 from app.repositories.prd_section import PRDSectionRepository
+from app.repositories.prd import PRDVersionRepository
 from app.repositories.requirement_state import RequirementStateRepository
 from app.version_service import (
     CHANGE_CREATED,
@@ -398,3 +399,40 @@ async def test_resolve_document_semver_first_snapshot(db_session):
         project_id, session, generated_prd=_doc_v1(), change_type="ai",
     )
     assert row["semver"] == resolved
+
+
+@pytest.mark.asyncio
+async def test_version_metadata_uses_stable_cursor_pages(db_session):
+    """Version history stays bounded and never duplicates/skips cursor pages."""
+    session, project_id = db_session
+    for version in range(1, 46):
+        session.add(
+            PRDVersionModel(
+                project_id=project_id,
+                version_number=version,
+                generated_prd=f"# Version {version}",
+                semver=f"1.0.{version}",
+            )
+        )
+    await session.flush()
+
+    first = await PRDVersionRepository.get_by_project(
+        project_id, session, limit=20
+    )
+    second = await PRDVersionRepository.get_by_project(
+        project_id,
+        session,
+        limit=20,
+        before_version=first[-1]["version_number"],
+    )
+    third = await PRDVersionRepository.get_by_project(
+        project_id,
+        session,
+        limit=20,
+        before_version=second[-1]["version_number"],
+    )
+
+    versions = [row["version_number"] for row in first + second + third]
+    assert [len(first), len(second), len(third)] == [20, 20, 5]
+    assert versions == list(range(45, 0, -1))
+    assert len(versions) == len(set(versions))

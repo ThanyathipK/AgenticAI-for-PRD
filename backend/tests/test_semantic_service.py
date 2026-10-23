@@ -609,3 +609,37 @@ async def test_create_prd_is_document_command_not_gatherer_trigger(monkeypatch):
     monkeypatch.setattr(semantic_service, "invoke_llm_structured", should_not_call)
     result = await semantic_service.classify_workflow("Create a complete PRD")
     assert result["workflow"] == "COMMAND"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", [
+    "Can you update REQ-002 to use a 30 second timeout?",
+    "Please fix AC-003 to require an audit timestamp",
+    "REQ-004 should also cover duplicate requests",
+    "Increase the retry count to five",
+])
+async def test_update_action_phrases_survive_llm_fallback(monkeypatch, message):
+    async def unavailable(*args, **kwargs):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(semantic_service, "invoke_llm_structured", unavailable)
+    workflow = await semantic_service.classify_workflow(message)
+    intent = await semantic_service.detect_requirement_intent(message, [])
+
+    assert workflow["workflow"] == "REQUIREMENT"
+    assert intent["intent"] == "UPDATE_REQUIREMENT"
+
+
+@pytest.mark.asyncio
+async def test_explanation_remains_read_only_during_llm_fallback(monkeypatch):
+    async def unavailable(*args, **kwargs):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(semantic_service, "invoke_llm_structured", unavailable)
+    workflow = await semantic_service.classify_workflow("Can you explain how REQ-002 retries work?")
+    intent = await semantic_service.detect_requirement_intent(
+        "Can you explain how REQ-002 retries work?", [],
+    )
+
+    assert workflow["workflow"] == "QUESTION"
+    assert intent["intent"] == "GENERAL_CHAT"

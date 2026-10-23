@@ -35,6 +35,9 @@ Agentic AI turns plain-English banking product briefs into **audited, versioned,
 - **Persistent background generation** — Architect and scoped-regeneration jobs continue after a browser disconnect, are requeued after a server restart, and can be cancelled explicitly; partial work is rolled back
 - **Generic artifact locking** — lock/unlock projects, epics, requirements, user stories, acceptance criteria, clarification questions, PRD documents, and individual PRD sections; optimistic UI with automatic rollback
 - **Real-time updates** — Server-Sent Events push state changes to the dashboard instead of polling
+- **Bounded project loading** — project switches abort obsolete state requests, reject older snapshots, load only the newest five chat messages, and fetch only the latest lightweight PRD SemVer row until the Version History tab is opened
+- **Paginated version history** — the Version History tab loads metadata newest-first in cursor-based chunks of 20; full snapshot bodies and diffs remain on-demand
+- **Performance observability** — every API response includes an `X-Request-ID` correlation value and a browser-readable `Server-Timing: app;dur=<milliseconds>` measurement
 - **Rate limiting** — in-process sliding-window limiter guards the LLM-facing endpoints (chat, workflow, document extraction) with per-IP 429s (Finding #39)
 - **LM Studio health check & graceful degradation** — the backend probes the local gateway at startup and on every `/api/health` call; the chat header shows an **LLM Offline** pill when the local server is down (auto-refreshing, no restart needed) instead of failing with opaque 503s (Finding #40)
 - **JWT authentication & role-based accounts** — self-service sign-up (`SIGNUP_ENABLED`, canonical roles only), `POST /api/auth/login` (OAuth2 password flow), `/api/auth/me`, password change, and bcrypt-hashed credentials stored in `users.password_hash`; projects are **scoped to the signed-in owner**, so each account sees only its own workspace
@@ -466,6 +469,10 @@ In a normal requirement pass the map is: **Router → Matcher → Gatherer** (pr
 | **architect_node** | Synthesizes the final template-based **PRD document** and project flowchart from the audited dataset, honouring human-owned/locked PRD parts. The resulting artifacts are persisted without rewriting the gathered requirements. |
 | **delete_requirement_node** | Handles `DELETE_REQUIREMENT` intent to archive/remove a requirement, asking for disambiguation when the target is unclear. |
 
+### Restoring an archived requirement
+
+Use an explicit reactivation verb with the requirement's stable code: `Restore REQ-001`, `Reopen REQ-001`, `Reactivate REQ-001`, or `Unarchive REQ-001`. The system loads the archived database record and its stored user-story/acceptance-criteria hierarchy, then creates a governed preview. Nothing changes until the user selects **Save**. Confirmation reuses the original `REQ` code, increments the requirements revision, marks dependent artifacts for review, and resets validation to pending. Locked requirements or child stories must be unlocked first. Restoration never creates a replacement requirement or rewrites earlier history.
+
 Every agent output crosses a **typed boundary**: it is parsed into Pydantic schemas from [`backend/app/schemas.py`](backend/app/schemas.py) (with a markdown-fence-stripping fallback in `llm_utils.invoke_llm_structured`), so malformed JSON can never silently reach the database.
 
 ### Semantic change detection
@@ -540,6 +547,19 @@ When the Matcher cannot safely identify the intended story, it adds a clarificat
 ## Real-Time Updates (SSE)
 
 Instead of periodic polling, the dashboard opens an authenticated `EventSource` on `/api/project/{id}/sse` (the browser client supplies its JWT through the `token` query parameter because native `EventSource` cannot set an Authorization header). The backend's in-memory `EventManager` streams `{"event": ..., "data": {...}}` frames with `: ping` heartbeats every 15 seconds. Mutation events trigger a debounced state refresh; document-extraction progress events update the progress UI directly without downloading full project state.
+
+The debounced full-state refresh remains the correctness fallback for every
+governed mutation and unknown event. During a project switch, the previous
+project's in-flight state request is aborted. Responses are also checked against
+the most recently applied `updated_at` revision, so an older response cannot
+overwrite newer UI state. Equal revisions are still accepted because PRD and
+lock metadata may change independently of the requirements revision.
+
+Ordinary project opening loads only the latest PRD-version metadata row, which
+keeps the current SemVer visible without downloading the ledger. Opening the
+**Version History** tab requests the newest 20 metadata rows; **Load older
+versions** requests the next page using `before_version`. Snapshot content and
+line diffs are fetched only when needed.
 ---
 
 ## API Reference
@@ -563,6 +583,7 @@ The backend is a FastAPI app; full interactive documentation (with request/respo
 | `GET` | `/api/auth/config` | Public capability probe (`signup_enabled`, `token_expiration_minutes`) so the UI can hide the sign-up form |
 | `POST` | `/api/auth/logout` | Audit-logged logout (JWTs are stateless, so this is primarily client-side) |
 | `POST` | `/api/auth/change-password` | Rotate the caller's password (also how the seeded system account is rotated) |
+| `DELETE` | `/api/auth/account` | Permanently delete the authenticated account after current-password verification and exact `DELETE` confirmation; owned projects and their requirements, documents, chats, and PRDs are removed transactionally, while historical actor references use the schema's anonymizing `SET NULL` behavior |
 
 > Project endpoints are protected by the `get_current_user` dependency and **scoped to the signed-in owner** — a caller only ever sees their own projects. Auth is header-based (`Authorization: Bearer <token>`, never cookies), which is why the CORS setup must never use `"*"` with credentials.
 
@@ -648,7 +669,7 @@ The backend is a FastAPI app; full interactive documentation (with request/respo
 | `POST` | `/api/project/{project_id}/export/docx` | Export the latest stored PRD as DOCX with the same SemVer filename contract |
 | `POST` | `/api/prd/convert` | Convert LaTeX PRD source → markdown preview (`{latex_source}`) |
 | `GET` | `/api/prd/template` | Authoritative PRD templates (`template_latex` + markdown preview skeleton) |
-| `GET` | `/api/project/{project_id}/prd-versions` | List all PRD versions |
+| `GET` | `/api/project/{project_id}/prd-versions` | List PRD-version metadata newest-first. Optional `limit` (1–100) and exclusive `before_version` cursor provide bounded pagination; omitting both preserves the legacy all-versions response |
 | `GET` | `/api/project/{project_id}/prd-versions/latest` | Latest PRD version |
 | `GET` | `/api/project/{project_id}/prd-versions/{version_number}` | A specific PRD version |
 | `GET` | `/api/project/{project_id}/prd-versions/{version_number}/diff` | Section-level line diff; version 1 compares against an empty document and later versions default to their predecessor |
@@ -739,6 +760,13 @@ curl -X POST "http://localhost:3000/api/confirm-action/<action-id>?project_id=00
 
 Tables are provisioned by **Alembic migrations that run automatically at backend startup** (see [`backend/app/migrations.py`](backend/app/migrations.py)). The full PostgreSQL reference DDL lives in [`backend/init.sql`](backend/init.sql).
 
+Migration `0029_add_read_path_indexes.py` adds the composite
+`conversation_messages(project_id, created_at, id)` index used by newest-first
+chat loading and its `before` cursor. The index was added only after query-plan
+verification showed the bounded conversation read could use it directly. The
+existing unique `(project_id, version_number)` PRD-version index already serves
+the new version-history cursor, so no redundant ledger index is created.
+
 ### Single source of truth & drift checking
 
 `backend/init.sql` is the **canonical schema** for the project. The
@@ -800,6 +828,11 @@ npm test
 
 # Backend tests
 (cd backend && ../venv/bin/python -m pytest tests/)
+
+# Focused performance/ordering regressions: bounded traceability queries,
+# version-history cursor pages, response timing headers, stale revisions
+(cd backend && ../venv/bin/python -m pytest \
+  tests/test_traceability.py tests/test_prd_versions.py)
 
 # Backend branch coverage (the CI floor is 75%)
 (cd backend && ../venv/bin/python -m pytest \

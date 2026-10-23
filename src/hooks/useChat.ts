@@ -12,7 +12,6 @@ import type {
   ProjectSummary,
 } from "../api/types";
 import {
-  isLegacyPrdPreviewMessage,
   toAuditResultFromPayload,
   toGatheredRequirementsPayload,
   toStructuredRequirementsFromGathered,
@@ -388,7 +387,7 @@ export function useChat(
               content:
                 detectedIntent === "DELETE_REQUIREMENT"
                   ? `${data.message || "Archive preview ready."}\n\nNothing has been archived yet. Review the alert below and select Confirm archive or Cancel.\n\n"${inputMsg}"`
-                  : `Merge preview ready.\nI have analyzed your input and prepared the merged requirements. Please review the changes below and select Save or Cancel.\n\n"${inputMsg}"`,
+                  : `${data.message || "Merge preview ready. I have prepared the requirement changes."}\n\nNothing has been changed yet. Review the changes below and select Save or Cancel.\n\n"${inputMsg}"`,
               timestamp: nowTime(),
             },
           ]);
@@ -674,6 +673,7 @@ export function useChat(
             role: "assistant",
             content: successContent,
             timestamp: nowTime(),
+            auditResultSnapshot: receivedAudit,
           },
         ]);
 
@@ -864,7 +864,7 @@ export function useChat(
       }
 
       store.setMessages((prev) => [
-        ...prev.filter((message) => !isLegacyPrdPreviewMessage(message.content)),
+        ...prev,
         {
           id: `prd-generated-${Date.now()}`,
           role: "assistant",

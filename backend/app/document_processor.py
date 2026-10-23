@@ -385,6 +385,9 @@ def build_merge_preview(
         "generated_diagrams": current_state.get("generated_diagrams") or "",
         "current_workflow_state": "gatherer_node",
         "requirements_revision": next_revision,
+        "_base_requirements_revision": max(
+            1, int(current_state.get("requirements_revision") or 1)
+        ),
     }
     if document_id:
         draft[DRAFT_DOCUMENT_REF_KEY] = {

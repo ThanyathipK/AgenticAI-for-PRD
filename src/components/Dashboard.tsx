@@ -18,6 +18,7 @@ import {
   XCircle,
   Pencil,
   LayoutGrid,
+  CircleHelp,
   Lock,
   Pin,
   PinOff,
@@ -39,6 +40,7 @@ import type { ProjectIntake } from './NewProjectModal';
 import { WorkspaceNavigation } from './WorkspaceNavigation';
 import { MainArtifactPanel } from './MainArtifactPanel';
 import { PRDGenerationPreview } from './PRDGenerationPreview';
+import { HelpGuidelines } from './HelpGuidelines';
 import { formatPrdVersionLabel } from '../utils/version';
 
 const escapeTableCell = (value: string) => value.replaceAll('|', '\\|').replaceAll('\n', '<br>');
@@ -121,6 +123,7 @@ export default function Dashboard() {
     login: handleLogin,
     register: handleRegister,
     logout: handleLogout,
+    deleteAccount: handleDeleteAccount,
     isAuthModalOpen,
     setIsAuthModalOpen,
   } = useAuth();
@@ -367,6 +370,21 @@ export default function Dashboard() {
               )}
             </div>
           )}
+          <Tooltip label="Help & Guidelines" side="right" className="w-full">
+            <button
+              className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-[13px] font-semibold transition-colors ${collapsed ? 'justify-center' : ''} ${
+                activeView === 'help'
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-on-surface-variant hover:bg-primary/10 hover:text-primary'
+              }`}
+              aria-label="Help and Guidelines"
+              aria-current={activeView === 'help' ? 'page' : undefined}
+              onClick={() => setActiveView('help')}
+            >
+              <CircleHelp className="w-4 h-4 shrink-0" />
+              {expanded && <span>Help &amp; Guidelines</span>}
+            </button>
+          </Tooltip>
         </div>
 
         {/* Section headers ("Pinned" / "Recent Projects") render inside the
@@ -628,6 +646,7 @@ export default function Dashboard() {
             collapsed={collapsed}
             onOpenAuth={() => setIsAuthModalOpen(true)}
             onLogout={handleLogout}
+            onDeleteAccount={handleDeleteAccount}
           />
         </div>
       </aside>
@@ -641,6 +660,8 @@ export default function Dashboard() {
         // project list state, so flag (7.4.x), workflow status (7.5.x) and row
         // open (PROJECT 2.1) all write through the hooks documented above.
         <ProjectsDashboard state={state} />
+      ) : activeView === 'help' ? (
+        <HelpGuidelines />
       ) : (
       <div id="split-container" className="flex-1 min-w-0 min-h-0 flex flex-col md:flex-row overflow-hidden bg-white" ref={splitContainerRef}>
         

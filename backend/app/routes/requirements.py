@@ -1,6 +1,8 @@
 import copy
 import logging
+import re
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List
 from uuid import UUID, uuid4
 
@@ -26,6 +28,8 @@ from app.input_validation import validate_text_budget, validate_body_budget
 from app.repositories import (
     RequirementRepository,
     RequirementStateRepository,
+    UserStoryRepository,
+    AcceptanceCriteriaRepository,
     ConversationMessageRepository,
     PendingActionRepository,
     ClarificationQuestionRepository,
@@ -50,7 +54,7 @@ from app.schemas import (
 )
 from app.agents import prd_workflow, gather_clarification_answer_batch
 from app.event_manager import event_manager
-from app.requirement_codes import default_requirement_code
+from app.requirement_codes import default_requirement_code, extract_requirement_codes, normalize_requirement_code
 from app.services.requirement_processing_service import RequirementProcessingService
 from app.errors import classify_exception
 from app.observability import LogContext, log_event
@@ -58,6 +62,16 @@ from app.observability import LogContext, log_event
 logger = logging.getLogger("app.routes.requirements")
 
 router = APIRouter()
+
+
+def _is_requirement_restore_command(value: str) -> bool:
+    """Recognise an explicit governed reactivation request, never a discussion."""
+    return bool(re.match(
+        r"^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?"
+        r"(?:restore|reopen|reactivate|unarchive)\b",
+        value or "",
+        flags=re.IGNORECASE,
+    ))
 
 
 def _ensure_requirement_ids(reqs: Any) -> List[Dict[str, Any]]:
@@ -87,6 +101,150 @@ def _ensure_requirement_ids(reqs: Any) -> List[Dict[str, Any]]:
             item["title"] = ""
         safe.append(item)
     return safe
+
+
+async def _stage_requirement_reactivation(
+    project_id: str,
+    raw_input: str,
+    req_state: Dict[str, Any],
+    session: AsyncSession,
+) -> Dict[str, Any]:
+    """Stage archived REQ records and their stored hierarchy for confirmation."""
+    requested_codes = extract_requirement_codes(raw_input)
+    if not requested_codes:
+        return {
+            "status": "no_change",
+            "detected_intent": "UPDATE_REQUIREMENT",
+            "message": "Specify the archived requirement code to restore, for example: Restore REQ-001.",
+            "pending_merge": False,
+            "pending_action_id": None,
+            "no_changes": True,
+        }
+
+    all_requirements = await RequirementRepository.get_by_project(project_id, session)
+    by_code = {
+        normalize_requirement_code(item.get("requirement_code")): item
+        for item in all_requirements
+        if item.get("requirement_code")
+    }
+    missing = [code for code in requested_codes if code not in by_code]
+    if missing:
+        return {
+            "status": "no_change",
+            "detected_intent": "UPDATE_REQUIREMENT",
+            "message": f"I couldn't restore {', '.join(missing)} because it does not exist in this project. No changes were made.",
+            "pending_merge": False,
+            "pending_action_id": None,
+            "no_changes": True,
+        }
+
+    active = [code for code in requested_codes if str(by_code[code].get("status") or "active").lower() == "active"]
+    archived = [code for code in requested_codes if str(by_code[code].get("status") or "active").lower() == "archived"]
+    unavailable = [code for code in requested_codes if code not in active and code not in archived]
+    if active or unavailable:
+        details = []
+        if active:
+            details.append(f"already active: {', '.join(active)}")
+        if unavailable:
+            details.append(f"not restorable from its current status: {', '.join(unavailable)}")
+        return {
+            "status": "no_change",
+            "detected_intent": "UPDATE_REQUIREMENT",
+            "message": f"No changes were made ({'; '.join(details)}).",
+            "pending_merge": False,
+            "pending_action_id": None,
+            "no_changes": True,
+        }
+
+    targets = [by_code[code] for code in archived]
+    locked = [item["requirement_code"] for item in targets if item.get("is_locked")]
+    target_ids = [UUID(str(item["id"])) for item in targets]
+    stories_by_requirement = await UserStoryRepository.get_by_requirement_ids(target_ids, session)
+    criteria_by_requirement = await AcceptanceCriteriaRepository.get_by_requirement_ids(
+        target_ids, project_id, session,
+    )
+
+    restored_requirements: List[Dict[str, Any]] = []
+    for requirement in targets:
+        requirement_id = UUID(str(requirement["id"]))
+        stories = stories_by_requirement.get(requirement_id, [])
+        if any(story.get("is_locked") for story in stories):
+            locked.append(str(requirement["requirement_code"]))
+            continue
+        criteria = criteria_by_requirement.get(requirement_id, [])
+        criteria_by_story: Dict[str, List[str]] = {}
+        for criterion in criteria:
+            criteria_by_story.setdefault(str(criterion.get("ticket_code") or ""), []).append(
+                str(criterion.get("criteria_text") or "")
+            )
+        restored_stories = []
+        for story in stories:
+            restored_story = {**story, "status": "active"}
+            restored_story["acceptance_criteria"] = criteria_by_story.get(
+                str(story.get("ticket_code") or ""), []
+            )
+            restored_stories.append(restored_story)
+        restored_requirements.append({
+            **requirement,
+            "status": "active",
+            "user_stories": restored_stories,
+        })
+
+    if locked:
+        return {
+            "status": "locked",
+            "detected_intent": "UPDATE_REQUIREMENT",
+            "message": f"No changes were made because {', '.join(sorted(set(locked)))} or one of its child stories is locked. Unlock it before restoring it.",
+            "pending_merge": False,
+            "pending_action_id": None,
+            "no_changes": True,
+        }
+
+    proposal = copy.deepcopy(req_state)
+    proposal["requirements"] = [
+        *copy.deepcopy(req_state.get("requirements") or []),
+        *restored_requirements,
+    ]
+    proposal["user_stories"] = [
+        story
+        for requirement in proposal["requirements"]
+        for story in (requirement.get("user_stories") or [])
+    ]
+    proposal["acceptance_criteria"] = [
+        criterion
+        for story in proposal["user_stories"]
+        for criterion in (story.get("acceptance_criteria") or [])
+    ]
+    proposal["validation_status"] = "pending"
+    proposal["current_workflow_state"] = "REACTIVATION_REVIEW"
+    proposal["_base_requirements_revision"] = int(req_state.get("requirements_revision") or 1)
+
+    pending_action = await PendingActionRepository.create(
+        project_id=project_id,
+        data={
+            "action_type": "MERGE",
+            "original_user_message": raw_input,
+            "proposed_changes": proposal,
+            "workflow_stage": "reactivation_review",
+        },
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        session=session,
+    )
+    codes = ", ".join(archived)
+    return {
+        "status": "draft_ready",
+        "detected_intent": "UPDATE_REQUIREMENT",
+        "message": f"Restore preview ready for {codes}. Its original code and stored requirement hierarchy will be reactivated after you select Save. Validation will need to run again.",
+        "structured_requirements": {
+            "epic_name": proposal.get("epic_name") or "",
+            "version": proposal.get("version_number") or 1,
+            "user_stories": proposal["user_stories"],
+            "requirements": _ensure_requirement_ids(proposal["requirements"]),
+        },
+        "pending_merge": True,
+        "pending_action_id": pending_action.get("id"),
+        "no_changes": False,
+    }
 
 
 # ==========================================
@@ -565,6 +723,9 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
 
     from datetime import datetime, timedelta, timezone
     proposal_state = copy.deepcopy(saved_state)
+    proposal_state["_base_requirements_revision"] = int(
+        saved_state.get("requirements_revision") or 1
+    )
     proposal_state["requirements"] = list(proposed_by_code.values())
     proposal_state["user_stories"] = [
         story for req in proposal_state["requirements"] for story in (req.get("user_stories") or [])
@@ -818,6 +979,42 @@ async def _process_requirements_pipeline(
         "[WORKFLOW][%s][DETECT_INTENT][DONE] intent=%s confidence=%.3f",
         run_id, detected_intent, intent_confidence,
     )
+
+    # Explicit reactivation is deterministic and must not be reconstructed by
+    # the LLM: archived records are absent from normal Gatherer context. Stage
+    # the original stored hierarchy through the same confirmation boundary as
+    # every other governed requirement update.
+    if _is_requirement_restore_command(request.raw_input or ""):
+        if not req_state:
+            return {
+                "status": "no_change",
+                "detected_intent": "UPDATE_REQUIREMENT",
+                "message": "This project has no requirement state to restore.",
+                "pending_merge": False,
+                "pending_action_id": None,
+                "no_changes": True,
+            }
+        restore_result = await _stage_requirement_reactivation(
+            str(request.project_id), request.raw_input or "", req_state, session,
+        )
+        message = str(restore_result.get("message") or "")
+        if not request.client_persists_timeline and message:
+            await ConversationMessageRepository.save_message(
+                project_id=str(request.project_id),
+                role="assistant",
+                message=message,
+                session=session,
+                workflow_state="reactivation_review",
+                intent="UPDATE_REQUIREMENT",
+            )
+        await event_manager.publish(str(request.project_id), "workflow_update", {
+            "project_id": str(request.project_id),
+            "workflow_state": "REACTIVATION_REVIEW",
+            "validation_status": req_state.get("validation_status"),
+            "pending_action_id": restore_result.get("pending_action_id"),
+            "target_agent": "gatherer",
+        })
+        return restore_result
 
     # An explicit story ID is authoritative. If the user asks to update/delete
     # an ID that does not exist, stop before the matcher/LLM and do not create a
@@ -1480,7 +1677,10 @@ async def _process_requirements_pipeline(
                     "action_type": pending_action_type,
                     "target_requirement_id": None,
                     "original_user_message": request.raw_input or "",
-                    "proposed_changes": req_state,
+                    "proposed_changes": {
+                        **req_state,
+                        "_base_requirements_revision": persisted_requirements_revision_at_start,
+                    },
                     # Archive actions store canonical REQ/US codes here for a
                     # second lock check at confirmation time. Other merge types
                     # keep the established empty-list behavior.

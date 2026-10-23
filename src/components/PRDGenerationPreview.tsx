@@ -5,6 +5,7 @@ import type { ConfirmActionResponse, PendingActionPayload } from "../api/types";
 import { parseAndRenderMarkdown } from "./MarkdownRenderer";
 import { handleError } from "./Toast";
 import { formatPrdVersionLabel } from "../utils/version";
+import { PrdClarityStatus } from "./PrdClarityStatus";
 
 interface PRDGenerationPreviewProps {
   action: PendingActionPayload;
@@ -103,6 +104,7 @@ export function PRDGenerationPreview({
               <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">
                 Not saved
               </span>
+              <PrdClarityStatus markdown={previewMarkdown || source} />
               {proposedVersion !== undefined && (
                 <span className="text-[10px] font-mono text-on-surface-variant">
                   Approval creates {formatPrdVersionLabel(proposedSemVer, proposedVersion)}

@@ -7,6 +7,8 @@ import { ProjectState } from '../hooks/useProjectState';
 import { getSafeSectionTitle, getSafeSectionContent } from '../utils/markdown';
 import { parseAndRenderMarkdown } from './MarkdownRenderer';
 import { StructuredSectionEditor } from './StructuredSectionEditor';
+import { PrdClarityStatus } from './PrdClarityStatus';
+import { formatPrdVersionLabel } from '../utils/version';
 
 const isHeadingOnlySection = (content: string) => {
   const body = content
@@ -27,7 +29,10 @@ export function PRDEditor({ state }: { state: ProjectState }) {
     handleSaveSection,
     sectionLocks,
     handleToggleSectionLock,
+    currentVersion,
+    versionHistory,
   } = state;
+  const currentSemVer = versionHistory.find(version => version.version === currentVersion)?.semVersion;
 
   // The section text the current edit STARTED from. Sent back as
   // `base_content` so the server can three-way merge the save onto the
@@ -40,7 +45,12 @@ export function PRDEditor({ state }: { state: ProjectState }) {
       <article className="bg-white p-4 sm:p-5 rounded-[12px] border border-outline prose prose-neutral max-w-none min-w-0">
         
         {/* Header decorative accent */}
-        <div className="text-[10px] font-bold tracking-[0.12em] text-[#a89b91] mb-2 no-print">KRUNGSRI NIMBLE CONFIDENTIAL</div>
+        <div className="mb-3 flex flex-wrap items-center gap-2 no-print">
+          <div className="mr-auto text-[10px] font-bold tracking-[0.12em] text-[#a89b91]">KRUNGSRI NIMBLE CONFIDENTIAL</div>
+          {prdMarkdown && <span className="text-[10px] font-mono text-on-surface-variant">{formatPrdVersionLabel(currentSemVer, currentVersion)}</span>}
+          {prdMarkdown && <span className="rounded-full border border-outline bg-surface px-2 py-0.5 text-[10px] font-semibold text-on-surface-variant">Saved</span>}
+          {prdMarkdown && <PrdClarityStatus markdown={prdMarkdown} />}
+        </div>
         
         {!prdMarkdown ? (
           <div className="flex flex-col items-center justify-center py-20 text-center text-on-surface-variant no-print">

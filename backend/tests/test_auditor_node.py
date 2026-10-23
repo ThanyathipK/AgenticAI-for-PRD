@@ -339,6 +339,53 @@ def test_unanswered_questions_cannot_produce_a_valid_audit():
     assert merged["verdict"] == "needs_clarification"
 
 
+def test_conflicting_finding_always_has_a_targeted_clarification_question():
+    source = {"document_id": "doc-1", "document_name": "policy.md", "section": "Retention"}
+    merged = agents._merge_audit_passes([{
+        "findings": [{
+            "finding_type": "conflicting",
+            "category": "Audit retention",
+            "target_requirement_id": "REQ-002",
+            "description": "Deletion contradicts the required retention period.",
+            "source_references": [source],
+            "evidence_status": "supported",
+            "applicability": "applicable_required",
+            "impact": "blocking",
+            "confidence": 0.95,
+        }],
+        "clarification_questions": [],
+    }], 1)
+
+    assert len(merged["clarification_questions"]) == 1
+    question = merged["clarification_questions"][0]
+    assert question["target_requirement_id"] == "REQ-002"
+    assert question["target_user_story_id"] == "REQ-002"
+    assert "REQ-002" in question["question_text"]
+    assert question["source_references"] == [source]
+
+
+def test_conflicting_finding_does_not_duplicate_existing_targeted_question():
+    merged = agents._merge_audit_passes([{
+        "findings": [{
+            "finding_type": "conflicting",
+            "category": "Audit retention",
+            "target_requirement_id": "REQ-002",
+            "description": "Deletion contradicts retention.",
+        }],
+        "clarification_questions": [{
+            "checklist_category": "Audit retention",
+            "target_user_story_id": "REQ-002",
+            "question_text": "Should REQ-002 preserve audit history?",
+            "is_resolved": False,
+        }],
+    }], 1)
+
+    assert len(merged["clarification_questions"]) == 1
+    assert merged["clarification_questions"][0]["question_text"] == (
+        "Should REQ-002 preserve audit history?"
+    )
+
+
 def test_auditor_prompt_renders_without_accidental_template_variables():
     """Literal JSON/source examples must use escaped braces for LangChain."""
     prompt = agents.PromptTemplate(

@@ -9,6 +9,7 @@ import type {
   ActionStatusResponse,
   ArtifactLockResponse,
   AuthConfigPayload,
+  AuthAccountDeleteResponse,
   AuthMessageResponse,
   AuthRegisterRequest,
   AuthRegisterResponse,
@@ -78,9 +79,14 @@ function bearerHeaders(token?: string | null): Record<string, string> {
 async function get<T>(
   url: string,
   params?: Record<string, unknown>,
-  token?: string | null
+  token?: string | null,
+  signal?: AbortSignal,
 ): Promise<T> {
-  const { data } = await axios.get<T>(url, { params, headers: bearerHeaders(token) });
+  const { data } = await axios.get<T>(url, {
+    params,
+    headers: bearerHeaders(token),
+    signal,
+  });
   return data;
 }
 
@@ -219,8 +225,16 @@ export const api = {
   // manual part edit/revert) appends a version that ALWAYS advances; each row
   // carries change_type ('ai' | 'manual'), a change summary, and the
   // per-section change records incl. locked_preserved markers.
-  getPrdVersions: (projectId: string) =>
-    get<PrdVersionPayload[]>(`/api/project/${projectId}/prd-versions`),
+  getPrdVersions: (
+    projectId: string,
+    options?: { limit?: number; beforeVersion?: number; signal?: AbortSignal },
+  ) =>
+    get<PrdVersionPayload[]>(
+      `/api/project/${projectId}/prd-versions`,
+      { limit: options?.limit, before_version: options?.beforeVersion },
+      null,
+      options?.signal,
+    ),
   // VERSION 1.2 — diff read (VERSION 2.2): `baseVersion` is the user-picked base from
   //               the timeline; omitted ⇒ the backend uses the immediate predecessor.
   getPrdVersionDiff: (projectId: string, versionNumber: number, baseVersion?: number) =>
@@ -300,8 +314,8 @@ export const api = {
   // PROJECT 2.2 — API client for the full project-state read that opens a
   //               project (trigger PROJECT 2.1 → route PROJECT 2.3); the payload
   //               is mapped into the store in PROJECT 2.4.
-  getProjectState: (projectId: string) =>
-    get<RequirementStatePayload>(`/api/project/${projectId}`),
+  getProjectState: (projectId: string, signal?: AbortSignal) =>
+    get<RequirementStatePayload>(`/api/project/${projectId}`, undefined, null, signal),
   // PROJECT 8.1 — API client for the DIRECT state write (manual/legacy
   //               fallback; the AI write path is the CONFIRMATION flow)
   //               → route PROJECT 8.2.
@@ -315,8 +329,8 @@ export const api = {
   //               only). Also drives CONFIRM 1.7.
   listPendingActions: (projectId: string) =>
     get<PendingActionPayload[]>(`/api/pending-actions/${projectId}`),
-  listConversationMessages: (projectId: string) =>
-    get<ConversationMessagePayload[]>(`/api/project/${projectId}/conversations`),
+  listConversationMessages: (projectId: string, options?: { limit?: number; before?: string }) =>
+    get<ConversationMessagePayload[]>(`/api/project/${projectId}/conversations`, options),
   appendConversationMessage: (projectId: string, message: ConversationMessageCreatePayload) =>
     post<ConversationMessagePayload>(`/api/project/${projectId}/conversations`, message),
   // CONFIRM 2.3 — THE write call of the whole product's AI path: it commits the
@@ -549,6 +563,14 @@ export const api = {
   /** Server-side logout (audit log). JWT is stateless, so also clear client state. */
   authLogout: (token: string) =>
     post<AuthMessageResponse>('/api/auth/logout', undefined, undefined, undefined, token),
+  /** Permanently delete the authenticated account after password re-verification. */
+  authDeleteAccount: async (password: string, confirmation: string, token: string) => {
+    const { data } = await axios.delete<AuthAccountDeleteResponse>('/api/auth/account', {
+      data: { password, confirmation },
+      headers: bearerHeaders(token),
+    });
+    return data;
+  },
   // AUTH 2.2 — API-client layer of SESSION RESTORE → route AUTH 2.3, where the
   //            Bearer token is re-resolved via AUTH 7.1 (verify + users-table
   //            read). A 401 here is AUTH 2.4 (clear the stale session).

@@ -19,6 +19,7 @@ from app.auth import (
     create_access_token,
     get_password_hash,
     change_password as auth_change_password,
+    verify_password,
     authenticate_user,
     AuthenticatedUser,
     get_current_user,
@@ -73,6 +74,17 @@ class PasswordChangeRequest(BaseModel):
 class PasswordChangeResponse(BaseModel):
     """Response from successful password change."""
     message: str = "Password changed successfully"
+
+
+class AccountDeleteRequest(BaseModel):
+    """Re-authentication and deliberate confirmation for permanent deletion."""
+    password: str
+    confirmation: str
+
+
+class AccountDeleteResponse(BaseModel):
+    message: str = "Account deleted permanently"
+    deleted_projects: int = 0
 
 
 class RegisterRequest(BaseModel):
@@ -271,6 +283,46 @@ async def change_password_endpoint(
     # AUTH 5.1.3 — Response: message only (never a token), so already-issued JWTs
     #              stay valid until they expire.
     return PasswordChangeResponse(message="Password changed successfully")
+
+
+@router.delete(
+    "/api/auth/account",
+    response_model=AccountDeleteResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def delete_account(
+    request: AccountDeleteRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """Permanently delete the caller's account after password verification."""
+    if request.confirmation != "DELETE":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Type "DELETE" exactly to confirm permanent account deletion',
+        )
+
+    user = await UserRepository.get_by_id(current_user.id, session)
+    if user is None or not verify_password(request.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect",
+        )
+
+    if str(user.id) == str(settings.SYSTEM_USER_ID):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The protected system account cannot be deleted",
+        )
+
+    deleted_projects = await UserRepository.delete_account(user, session)
+    await session.commit()
+    logger.info(
+        "User permanently deleted own account: user_id=%s deleted_projects=%d",
+        current_user.id,
+        deleted_projects,
+    )
+    return AccountDeleteResponse(deleted_projects=deleted_projects)
 
 
 # ---------------------------------------------------------------------------

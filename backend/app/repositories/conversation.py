@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import uuid
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
@@ -95,15 +95,28 @@ class ConversationMessageRepository:
         project_id: str,
         session: Optional[AsyncSession] = None,
         limit: Optional[int] = None,
+        before_message_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         pid = as_uuid(project_id)
 
         async def _fetch(s: AsyncSession):
             if limit is not None and limit > 0:
+                filters = [ConversationMessageModel.project_id == pid]
+                if before_message_id:
+                    cursor = await s.get(ConversationMessageModel, as_uuid(before_message_id))
+                    if cursor is None or str(cursor.project_id) != str(pid):
+                        return []
+                    filters.append(or_(
+                        ConversationMessageModel.created_at < cursor.created_at,
+                        and_(
+                            ConversationMessageModel.created_at == cursor.created_at,
+                            ConversationMessageModel.id < cursor.id,
+                        ),
+                    ))
                 # Newest N first, then reversed back to chronological order.
                 stmt = (
                     select(ConversationMessageModel)
-                    .where(ConversationMessageModel.project_id == pid)
+                    .where(*filters)
                     .order_by(
                         ConversationMessageModel.created_at.desc(),
                         ConversationMessageModel.id.desc(),

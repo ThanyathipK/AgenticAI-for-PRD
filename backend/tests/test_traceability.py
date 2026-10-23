@@ -12,6 +12,11 @@ Covers:
     and stale code references pointing at non-existent artifacts
   - the HTTP route: 200 with a full matrix, 400 invalid UUID, 404 unknown project
 
+Pending contract tests at the end of this file capture the next traceability
+behaviour before production code changes.  They are strict ``xfail`` tests:
+the suite stays green while the work is staged, and an accidental partial fix
+becomes an ``XPASS`` failure until the contract is promoted to a normal test.
+
 Run from the ``backend`` directory::
 
     ../venv/bin/python -m pytest tests/test_traceability.py -v
@@ -21,7 +26,7 @@ import uuid
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import get_db as app_get_db
@@ -30,6 +35,7 @@ from app.models import (
     AcceptanceCriteriaModel,
     EpicModel,
     PRDDocumentModel,
+    PRDVersionModel,
     PRDSectionModel,
     ProjectModel,
     RequirementModel,
@@ -297,6 +303,468 @@ async def test_empty_project_yields_empty_matrix(db_session, seeded_project):
 
 
 # =====================================================================
+# Pending traceability contracts (tests first; implementation follows)
+# =====================================================================
+PENDING_TRACEABILITY = pytest.mark.xfail(
+    strict=True,
+    reason="Traceability hardening contract; production implementation is pending",
+)
+
+
+@PENDING_TRACEABILITY
+@pytest.mark.asyncio
+async def test_active_coverage_excludes_archived_requirements(db_session, seeded_project):
+    """Archived requirements must not lower the current PRD coverage score."""
+    pid = uuid.UUID(seeded_project)
+    db_session.add_all(
+        [
+            RequirementModel(
+                project_id=pid,
+                requirement_code="REQ-001",
+                title="Current requirement",
+                status="active",
+            ),
+            RequirementModel(
+                project_id=pid,
+                requirement_code="REQ-002",
+                title="Archived requirement",
+                status="archived",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+
+    assert [row["requirement"]["requirement_code"] for row in matrix["rows"]] == ["REQ-001"]
+    assert matrix["coverage"]["total_requirements"] == 1
+
+
+@PENDING_TRACEABILITY
+@pytest.mark.asyncio
+async def test_requirement_rows_use_numeric_code_order(db_session, seeded_project):
+    """REQ-2 sorts before REQ-10 regardless of insertion/database order."""
+    pid = uuid.UUID(seeded_project)
+    db_session.add_all(
+        [
+            RequirementModel(project_id=pid, requirement_code="REQ-010", title="Tenth"),
+            RequirementModel(project_id=pid, requirement_code="REQ-002", title="Second"),
+        ]
+    )
+    await db_session.flush()
+
+    matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+
+    assert [row["requirement"]["requirement_code"] for row in matrix["rows"]] == [
+        "REQ-002",
+        "REQ-010",
+    ]
+
+
+@PENDING_TRACEABILITY
+@pytest.mark.asyncio
+async def test_archived_story_reference_is_not_reported_as_stale(db_session, seeded_project):
+    """Known archived artifacts are historical references, not broken links."""
+    pid = uuid.UUID(seeded_project)
+    req = RequirementModel(project_id=pid, requirement_code="REQ-001", title="Payments")
+    db_session.add(req)
+    await db_session.flush()
+    db_session.add(
+        UserStoryModel(
+            project_id=pid,
+            requirement_id=req.id,
+            ticket_code="US-001",
+            story_title="Old payment flow",
+            as_a="customer",
+            i_want_to="pay",
+            so_that="I can complete checkout",
+            status="archived",
+        )
+    )
+    db_session.add(
+        PRDSectionModel(
+            project_id=pid,
+            section_key="product_scope",
+            title="Product Scope",
+            content="Historical flow US-001 was retired.",
+            section_order=1,
+        )
+    )
+    await db_session.flush()
+
+    matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+
+    stale_codes = {
+        item["code"] for item in matrix["coverage"]["stale_section_references"]
+    }
+    assert "US-001" not in stale_codes
+
+
+@PENDING_TRACEABILITY
+@pytest.mark.asyncio
+async def test_current_coverage_uses_latest_prd_diagram_only(db_session, seeded_project):
+    """An obsolete diagram must not make the current PRD appear covered."""
+    pid = uuid.UUID(seeded_project)
+    req = RequirementModel(project_id=pid, requirement_code="REQ-001", title="Payments")
+    db_session.add(req)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            PRDDocumentModel(
+                project_id=pid,
+                version=1,
+                prd_markdown="Old PRD",
+                mermaid_diagram="flowchart LR\nREQ-001 --> Done",
+            ),
+            PRDDocumentModel(
+                project_id=pid,
+                version=2,
+                prd_markdown="Current PRD",
+                mermaid_diagram="flowchart LR\nStart --> Done",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+    row = matrix["rows"][0]
+
+    assert row["diagrams"] == []
+    assert matrix["coverage"]["requirements_without_diagram"] == ["REQ-001"]
+
+
+@PENDING_TRACEABILITY
+@pytest.mark.asyncio
+async def test_acceptance_criteria_expose_persistent_identity(db_session, seeded_project):
+    """The UI must update a criterion by UUID, never by its array position."""
+    await seed_full_project(db_session, seeded_project)
+
+    matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+    row = next(r for r in matrix["rows"] if r["requirement"]["requirement_code"] == "REQ-001")
+    story = next(s for s in row["user_stories"] if s["ticket_code"] == "US-001")
+    criterion = story["acceptance_criteria"][0]
+
+    assert uuid.UUID(criterion["id"])
+    assert criterion["criteria_text"].startswith("Given a valid QR")
+
+
+@PENDING_TRACEABILITY
+@pytest.mark.asyncio
+async def test_duplicate_requirement_codes_are_reported_as_ambiguous(db_session, seeded_project):
+    """Duplicate codes must be visible instead of silently overwriting a link target."""
+    pid = uuid.UUID(seeded_project)
+    db_session.add_all(
+        [
+            RequirementModel(project_id=pid, requirement_code="REQ-001", title="First"),
+            RequirementModel(project_id=pid, requirement_code="REQ-001", title="Duplicate"),
+        ]
+    )
+    db_session.add(
+        PRDSectionModel(
+            project_id=pid,
+            section_key="product_scope",
+            title="Product Scope",
+            content="Scope for REQ-001.",
+            section_order=1,
+        )
+    )
+    await db_session.flush()
+
+    matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+
+    assert matrix["coverage"]["duplicate_requirement_codes"] == ["REQ-001"]
+
+
+@pytest.mark.asyncio
+async def test_restored_requirement_returns_with_original_codes_and_hierarchy(
+    db_session, seeded_project
+):
+    """Reactivated rows retain their persisted IDs/codes and original parentage."""
+    pid = uuid.UUID(seeded_project)
+    requirement = RequirementModel(
+        project_id=pid,
+        requirement_code="REQ-042",
+        title="Restored payments",
+        status="archived",
+    )
+    db_session.add(requirement)
+    await db_session.flush()
+    story = UserStoryModel(
+        project_id=pid,
+        requirement_id=requirement.id,
+        ticket_code="US-042",
+        story_title="Restore a payment",
+        as_a="support agent",
+        i_want_to="restore an archived payment",
+        so_that="the customer can continue",
+        status="archived",
+    )
+    db_session.add(story)
+    await db_session.flush()
+    criterion = AcceptanceCriteriaModel(
+        user_story_id=story.id,
+        criteria_text="Given an archived payment, When restored, Then it is active",
+        status="archived",
+    )
+    db_session.add(criterion)
+    await db_session.flush()
+
+    original_ids = (requirement.id, story.id, criterion.id)
+    requirement.status = story.status = criterion.status = "active"
+    await db_session.flush()
+
+    matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+    row = matrix["rows"][0]
+
+    assert uuid.UUID(row["requirement"]["id"]) == original_ids[0]
+    assert row["requirement"]["requirement_code"] == "REQ-042"
+    assert uuid.UUID(row["user_stories"][0]["id"]) == original_ids[1]
+    assert row["user_stories"][0]["ticket_code"] == "US-042"
+    assert row["user_stories"][0]["acceptance_criteria"] == [criterion.criteria_text]
+
+
+@PENDING_TRACEABILITY
+@pytest.mark.asyncio
+async def test_acceptance_criteria_have_persistent_codes_across_text_edits(
+    db_session, seeded_project
+):
+    """AC codes are stored identities and must not be regenerated from list order."""
+    await seed_full_project(db_session, seeded_project)
+    first = await TraceabilityService.build_traceability(seeded_project, db_session)
+    first_criterion = first["rows"][0]["user_stories"][0]["acceptance_criteria"][0]
+
+    model = (await db_session.execute(select(AcceptanceCriteriaModel))).scalars().first()
+    model.criteria_text = "Given a valid QR, When edited, Then the same criterion remains"
+    await db_session.flush()
+    second = await TraceabilityService.build_traceability(seeded_project, db_session)
+    second_criterion = second["rows"][0]["user_stories"][0]["acceptance_criteria"][0]
+
+    assert first_criterion["criterion_code"] == second_criterion["criterion_code"]
+    assert first_criterion["id"] == second_criterion["id"]
+    assert first_criterion["criteria_text"] != second_criterion["criteria_text"]
+
+
+@PENDING_TRACEABILITY
+@pytest.mark.asyncio
+async def test_duplicate_req_us_and_ac_codes_are_all_reported(db_session, seeded_project):
+    """Every governed identifier namespace reports ambiguity in one response."""
+    pid = uuid.UUID(seeded_project)
+    req_a = RequirementModel(project_id=pid, requirement_code="REQ-001", title="A")
+    req_b = RequirementModel(project_id=pid, requirement_code="REQ-001", title="B")
+    db_session.add_all([req_a, req_b])
+    await db_session.flush()
+    story_a = UserStoryModel(
+        requirement_id=req_a.id,
+        ticket_code="US-001",
+        story_title="A",
+        as_a="user",
+        i_want_to="act",
+        so_that="it works",
+    )
+    story_b = UserStoryModel(
+        requirement_id=req_b.id,
+        ticket_code="US-001",
+        story_title="B",
+        as_a="user",
+        i_want_to="act",
+        so_that="it works",
+    )
+    db_session.add_all([story_a, story_b])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            AcceptanceCriteriaModel(user_story_id=story_a.id, criteria_text="First"),
+            AcceptanceCriteriaModel(user_story_id=story_b.id, criteria_text="Second"),
+        ]
+    )
+    await db_session.flush()
+
+    matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+
+    assert matrix["coverage"]["duplicate_requirement_codes"] == ["REQ-001"]
+    assert matrix["coverage"]["duplicate_story_codes"] == ["US-001"]
+    assert matrix["coverage"]["duplicate_criterion_codes"] == ["AC-001"]
+
+
+@PENDING_TRACEABILITY
+@pytest.mark.asyncio
+async def test_current_semver_coverage_is_separate_from_historical_coverage(
+    db_session, seeded_project
+):
+    """Current coverage uses the latest SemVer while history remains inspectable."""
+    pid = uuid.UUID(seeded_project)
+    req = RequirementModel(project_id=pid, requirement_code="REQ-001", title="Payments")
+    db_session.add(req)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            PRDDocumentModel(
+                project_id=pid,
+                version=1,
+                prd_markdown="Old",
+                mermaid_diagram="flowchart LR\nREQ-001 --> Done",
+            ),
+            PRDDocumentModel(
+                project_id=pid,
+                version=2,
+                prd_markdown="Current",
+                mermaid_diagram="flowchart LR\nStart --> Done",
+            ),
+            PRDVersionModel(
+                project_id=pid,
+                version_number=1,
+                generated_prd="Old",
+                semver="1.0.0",
+            ),
+            PRDVersionModel(
+                project_id=pid,
+                version_number=2,
+                generated_prd="Current",
+                semver="1.1.0",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+
+    assert matrix["current_version"]["semver"] == "1.1.0"
+    assert matrix["rows"][0]["diagrams"] == []
+    assert matrix["historical_versions"][0]["semver"] == "1.0.0"
+    assert matrix["historical_versions"][0]["requirements"] == ["REQ-001"]
+
+
+@PENDING_TRACEABILITY
+@pytest.mark.asyncio
+async def test_archived_and_missing_references_are_reported_separately(
+    db_session, seeded_project
+):
+    """A retired known code is historical; only an unknown code is stale."""
+    pid = uuid.UUID(seeded_project)
+    req = RequirementModel(
+        project_id=pid,
+        requirement_code="REQ-001",
+        title="Retired flow",
+        status="archived",
+    )
+    db_session.add(req)
+    db_session.add(
+        PRDSectionModel(
+            project_id=pid,
+            section_key="appendix",
+            title="Appendix",
+            content="Historical REQ-001; unknown REQ-999.",
+            section_order=9,
+        )
+    )
+    await db_session.flush()
+
+    matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+    archived = {item["code"] for item in matrix["coverage"]["archived_section_references"]}
+    missing = {item["code"] for item in matrix["coverage"]["stale_section_references"]}
+
+    assert archived == {"REQ-001"}
+    assert missing == {"REQ-999"}
+
+
+@PENDING_TRACEABILITY
+@pytest.mark.asyncio
+async def test_requirement_change_invalidates_validation_and_prd_links(
+    db_session, seeded_project
+):
+    """Changing a validated requirement makes both validation and links stale."""
+    await seed_full_project(db_session, seeded_project)
+    before = await TraceabilityService.build_traceability(seeded_project, db_session)
+    req = (await db_session.execute(
+        select(RequirementModel).where(RequirementModel.requirement_code == "REQ-001")
+    )).scalar_one()
+    req.description = "Materially changed refund rules."
+    req.version += 1
+    await db_session.flush()
+
+    after = await TraceabilityService.build_traceability(seeded_project, db_session)
+    row = next(r for r in after["rows"] if r["requirement"]["requirement_code"] == "REQ-001")
+
+    assert before["rows"][0]["validation"]["stale"] is False
+    assert row["validation"]["stale"] is True
+    assert row["prd_link_status"] == "review_required"
+
+
+@pytest.mark.asyncio
+async def test_large_project_traceability_uses_bounded_queries(db_session, seeded_project):
+    """Query count stays constant as requirements grow; guards against N+1 reads."""
+    pid = uuid.UUID(seeded_project)
+    requirements = [
+        RequirementModel(
+            project_id=pid,
+            requirement_code=f"REQ-{index:03d}",
+            title=f"Requirement {index}",
+        )
+        for index in range(1, 201)
+    ]
+    db_session.add_all(requirements)
+    await db_session.flush()
+    stories = [
+        UserStoryModel(
+            project_id=pid,
+            requirement_id=requirement.id,
+            ticket_code=f"US-{index:03d}",
+            story_title=f"Story {index}",
+            as_a="user",
+            i_want_to="complete a task",
+            so_that="I get value",
+        )
+        for index, requirement in enumerate(requirements, start=1)
+    ]
+    db_session.add_all(stories)
+    await db_session.flush()
+    db_session.add_all(
+        AcceptanceCriteriaModel(
+            user_story_id=story.id,
+            criteria_text=f"Given story {index}, When used, Then it works",
+        )
+        for index, story in enumerate(stories, start=1)
+    )
+    await db_session.flush()
+
+    statements = 0
+
+    def count_statement(*_args):
+        nonlocal statements
+        statements += 1
+
+    engine = db_session.bind.sync_engine
+    event.listen(engine, "before_cursor_execute", count_statement)
+    try:
+        matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+    finally:
+        event.remove(engine, "before_cursor_execute", count_statement)
+
+    assert len(matrix["rows"]) == 200
+    assert statements <= 7
+
+
+@PENDING_TRACEABILITY
+@pytest.mark.asyncio
+async def test_traceability_exposes_consistency_snapshot_for_other_governance_views(
+    db_session, seeded_project
+):
+    """Impact, graph, and health consume the same versioned coverage snapshot."""
+    await seed_full_project(db_session, seeded_project)
+    matrix = await TraceabilityService.build_traceability(seeded_project, db_session)
+
+    snapshot = matrix["consistency"]
+    assert snapshot["traceability_revision"] == snapshot["impact_analysis_revision"]
+    assert snapshot["traceability_revision"] == snapshot["dependency_graph_revision"]
+    assert snapshot["traceability_revision"] == snapshot["project_health_revision"]
+    assert snapshot["artifact_counts"] == {
+        "requirements": matrix["coverage"]["total_requirements"],
+        "user_stories": matrix["coverage"]["total_user_stories"],
+        "acceptance_criteria": matrix["coverage"]["total_acceptance_criteria"],
+    }
+
+
+# =====================================================================
 # Route-level tests (GET /api/project/{id}/traceability)
 # =====================================================================
 @pytest.mark.asyncio
@@ -305,6 +773,8 @@ async def test_route_returns_matrix(client, db_session, seeded_project):
 
     resp = await client.get(f"/api/project/{seeded_project}/traceability")
     assert resp.status_code == 200
+    assert resp.headers["server-timing"].startswith("app;dur=")
+    assert resp.headers["x-request-id"]
     body = resp.json()
 
     assert body["project_id"] == seeded_project

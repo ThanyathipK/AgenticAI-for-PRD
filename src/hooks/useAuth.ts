@@ -76,6 +76,8 @@ export interface UseAuthResult {
   ) => Promise<string | null>;
   /** Clear the session (the server audit call is best-effort). */
   logout: () => Promise<void>;
+  /** Permanently delete the signed-in account after re-authentication. */
+  deleteAccount: (password: string, confirmation: string) => Promise<string | null>;
   /** Controls the sign-in / sign-up dialog rendered by Dashboard. */
   isAuthModalOpen: boolean;
   setIsAuthModalOpen: Dispatch<SetStateAction<boolean>>;
@@ -261,6 +263,21 @@ export function useAuth(): UseAuthResult {
     }
   }, [clearSession, token]);
 
+  const deleteAccount = useCallback(async (password: string, confirmation: string) => {
+    if (!token) return 'Your session is no longer active. Please sign in again.';
+    setIsAuthenticating(true);
+    try {
+      await api.authDeleteAccount(password, confirmation, token);
+      clearSession();
+      notify('Account and owned data deleted permanently', 'success');
+      return null;
+    } catch (err: unknown) {
+      return detailFromJsonError(err) ?? 'Account deletion failed. Nothing was deleted.';
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }, [clearSession, token]);
+
   return {
     user,
     token,
@@ -269,6 +286,7 @@ export function useAuth(): UseAuthResult {
     login,
     register,
     logout,
+    deleteAccount,
     isAuthModalOpen,
     setIsAuthModalOpen,
   };
