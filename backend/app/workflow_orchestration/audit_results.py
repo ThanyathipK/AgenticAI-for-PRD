@@ -98,10 +98,9 @@ def merge_audit_passes(
         category = str(finding.get("category") or "Requirement conflict").strip()
         already_covered = any(
             str(
-                question.get("target_requirement_id")
-                or question.get("target_user_story_id")
-                or ""
-            ).strip() == target
+                question.get("target_requirement_id") or question.get("target_user_story_id") or ""
+            ).strip()
+            == target
             and str(question.get("checklist_category") or "").strip().casefold()
             == category.casefold()
             for question in questions
@@ -110,17 +109,19 @@ def merge_audit_passes(
             continue
         target_label = target or "the affected requirement"
         description = str(finding.get("description") or "the identified contradiction").strip()
-        questions.append({
-            "checklist_category": category,
-            "target_user_story_id": target or None,
-            "target_requirement_id": target or None,
-            "question_text": (
-                f"What should {target_label} state to resolve this conflict: "
-                f"{description.rstrip('.')}?"
-            ),
-            "is_resolved": False,
-            "source_references": list(finding.get("source_references") or []),
-        })
+        questions.append(
+            {
+                "checklist_category": category,
+                "target_user_story_id": target or None,
+                "target_requirement_id": target or None,
+                "question_text": (
+                    f"What should {target_label} state to resolve this conflict: "
+                    f"{description.rstrip('.')}?"
+                ),
+                "is_resolved": False,
+                "source_references": list(finding.get("source_references") or []),
+            }
+        )
     questions = dedupe_dicts(
         questions,
         ("checklist_category", "target_user_story_id", "question_text"),
