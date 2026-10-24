@@ -71,6 +71,13 @@ const storageValue = (value: string) => value
   .replace(/\|/g, '\\|')
   .replace(/\r?\n/g, '<br>');
 
+const isBoldLabel = (value: string) => /^\*\*[^*]+\*\*$/.test(value.trim());
+
+const isEmbeddedHeaderRow = (cells: string[]) => {
+  const populatedCells = cells.filter(cell => cell.trim());
+  return populatedCells.length >= 2 && populatedCells.every(isBoldLabel);
+};
+
 export function StructuredSectionEditor({ value, onChange }: StructuredSectionEditorProps) {
   const lines = value.split('\n');
   const tables = findTables(lines);
@@ -101,10 +108,36 @@ export function StructuredSectionEditor({ value, onChange }: StructuredSectionEd
   return (
     <div className="space-y-4">
       {tables.map((table, tableIndex) => {
-        const headers = splitRow(lines[table.separator - 1]).map(cleanLabel);
+        const tableHeaders = splitRow(lines[table.separator - 1]).map(cleanLabel);
+        const allDataRows = Array.from(
+          { length: table.end - table.separator },
+          (_, offset) => table.separator + 1 + offset,
+        );
+        const embeddedHeaderRow = allDataRows.find(lineIndex =>
+          isEmbeddedHeaderRow(splitRow(lines[lineIndex])),
+        );
+        const embeddedHeaders = embeddedHeaderRow === undefined
+          ? []
+          : splitRow(lines[embeddedHeaderRow]).map(cleanLabel);
+        const headers = tableHeaders.map((header, cellIndex) =>
+          header || embeddedHeaders[cellIndex] || '',
+        );
         const isScopeComparison =
           headers[0]?.toLowerCase().startsWith('scope in')
           && headers[1]?.toLowerCase().startsWith('scope out');
+        const sectionHeading = lines
+          .slice(0, table.start)
+          .reverse()
+          .find(line => /^#{1,3}\s+/.test(line.trim()))
+          ?.trim()
+          .replace(/^#{1,3}\s+/, '') ?? '';
+        const hasFixedFirstColumn =
+          !isScopeComparison && (
+            headers[0]?.toLowerCase() === 'appendix item'
+            || sectionHeading === 'Version History'
+            || sectionHeading === 'Reviews'
+            || sectionHeading.includes('Product Scope & Functional Requirements')
+          );
         const precedingHeading = lines
           .slice(0, table.start)
           .reverse()
@@ -112,10 +145,7 @@ export function StructuredSectionEditor({ value, onChange }: StructuredSectionEd
         const tableTitle = precedingHeading
           ? precedingHeading.trim().replace(/^#{4,6}\s+/, '')
           : tables.length === 1 ? 'Section fields' : `Table ${tableIndex + 1}`;
-        const dataRows = Array.from(
-          { length: table.end - table.separator },
-          (_, offset) => table.separator + 1 + offset,
-        );
+        const dataRows = allDataRows.filter(lineIndex => lineIndex !== embeddedHeaderRow);
         return (
           <section key={`${table.start}-${table.end}`} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
             <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-3.5 py-2.5">
@@ -146,17 +176,30 @@ export function StructuredSectionEditor({ value, onChange }: StructuredSectionEd
                 }
                 return (
                   <div key={lineIndex} className="grid gap-2 p-3" style={{ gridTemplateColumns: `repeat(${Math.max(cells.length, 1)}, minmax(130px, 1fr))` }}>
-                    {cells.map((cell, cellIndex) => (
-                      <label key={cellIndex} className="min-w-0 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                        {headers[cellIndex] || `Column ${cellIndex + 1}`}
-                        <textarea
-                          value={displayValue(cell)}
-                          onChange={(event) => updateCell(lineIndex, cellIndex, event.target.value)}
-                          rows={2}
-                          className="mt-1.5 min-h-[58px] w-full resize-y rounded-lg border border-slate-200 bg-[#fcfbf9] px-2.5 py-2 text-sm font-normal normal-case tracking-normal text-slate-800 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/15"
-                        />
-                      </label>
-                    ))}
+                    {cells.map((cell, cellIndex) => {
+                      const columnLabel = headers[cellIndex] || `Column ${cellIndex + 1}`;
+                      if (cellIndex === 0 && hasFixedFirstColumn) {
+                        return (
+                          <div key={cellIndex} className="min-w-0 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                            {columnLabel}
+                            <div className="mt-1.5 min-h-[58px] w-full px-2.5 py-2 text-sm font-semibold normal-case tracking-normal text-slate-800">
+                              {displayValue(cell)}
+                            </div>
+                          </div>
+                        );
+                      }
+                      return (
+                        <label key={cellIndex} className="min-w-0 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                          {columnLabel}
+                          <textarea
+                            value={displayValue(cell)}
+                            onChange={(event) => updateCell(lineIndex, cellIndex, event.target.value)}
+                            rows={2}
+                            className="mt-1.5 min-h-[58px] w-full resize-y rounded-lg border border-slate-200 bg-[#fcfbf9] px-2.5 py-2 text-sm font-normal normal-case tracking-normal text-slate-800 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/15"
+                          />
+                        </label>
+                      );
+                    })}
                   </div>
                 );
               })}
