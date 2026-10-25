@@ -3,7 +3,6 @@
 import re
 from typing import Any
 
-
 # Supporting facts for the Technical and Appendix PRD parts are useful even
 # when the extractor is moderately confident.  Keep genuinely weak guesses
 # out, but do not require the stricter requirement-mutation threshold.
