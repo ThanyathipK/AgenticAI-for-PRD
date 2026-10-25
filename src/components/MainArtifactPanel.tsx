@@ -1,10 +1,19 @@
+import { lazy, Suspense } from "react";
 import type { useProjectState } from "../hooks/useProjectState";
-import { ArchitectureFlows } from "./ArchitectureFlows";
 import { DocumentLibrary } from "./DocumentLibrary";
 import { PRDEditor } from "./PRDEditor";
-import { RequirementTraceability } from "./RequirementTraceability";
+import {
+  RequirementTraceability,
+  traceabilityRefreshToken,
+} from "./RequirementTraceability";
 import { VersionHistory } from "./VersionHistory";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, LoaderCircle } from "lucide-react";
+
+const ArchitectureFlows = lazy(() =>
+  import("./ArchitectureFlows").then(({ ArchitectureFlows }) => ({
+    default: ArchitectureFlows,
+  })),
+);
 
 interface MainArtifactPanelProps {
   state: ReturnType<typeof useProjectState>;
@@ -12,11 +21,32 @@ interface MainArtifactPanelProps {
 
 export function MainArtifactPanel({ state }: MainArtifactPanelProps) {
   const { activeTab, projectId, documents } = state;
+  const traceabilityToken = traceabilityRefreshToken({
+    requirements: state.structuredRequirements,
+    clarificationAnswers: state.clarificationAnswers,
+    auditResult: state.auditResult,
+    prdMarkdown: state.prdMarkdown,
+    mermaidDiagram: state.mermaidDiagram,
+  });
 
   return (
     <div className="max-w-4xl mx-auto">
       {activeTab === "prd" && <PRDEditor state={state} />}
-      {activeTab === "flows" && <ArchitectureFlows state={state} />}
+      {activeTab === "flows" && (
+        <Suspense
+          fallback={
+            <div
+              className="flex min-h-72 items-center justify-center gap-2 rounded-[12px] border border-outline bg-white text-sm text-on-surface-variant"
+              role="status"
+            >
+              <LoaderCircle className="h-5 w-5 animate-spin text-primary" />
+              Loading flowchart view…
+            </div>
+          }
+        >
+          <ArchitectureFlows state={state} />
+        </Suspense>
+      )}
       {activeTab === "trace" && (
         <>
           <DocumentLibrary projectId={projectId} docs={documents} />
@@ -26,7 +56,10 @@ export function MainArtifactPanel({ state }: MainArtifactPanelProps) {
               <ChevronDown className="w-4 h-4 text-on-surface-variant" />
             </summary>
             <div className="border-t border-outline p-3">
-              <RequirementTraceability projectId={projectId} />
+              <RequirementTraceability
+                projectId={projectId}
+                refreshToken={traceabilityToken}
+              />
             </div>
           </details>
         </>

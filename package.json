@@ -19,6 +19,7 @@
     "format:write": "prettier --write src/hooks/chat src/components/MainArtifactPanel.tsx src/components/WorkspaceNavigation.tsx scripts/frontend_workflows.test.ts",
     "schema:parse": "tsx scripts/parse_check.ts",
     "schema:drift": "./venv/bin/python backend/check_schema_drift.py",
+    "inventory:tests": "./venv/bin/python scripts/generate_untested_inventory.py",
     "test": "tsx --test scripts/unit.test.ts scripts/auth.test.ts scripts/requirement_locks.test.ts scripts/frontend_workflows.test.ts"
   },
   "dependencies": {

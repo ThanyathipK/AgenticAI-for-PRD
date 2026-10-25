@@ -18,6 +18,14 @@ import {
 import { runBackgroundAgentJob } from "../src/hooks/chat/backgroundJobs";
 import { cancelActiveAgent } from "../src/hooks/chat/useAgentCancellation";
 import { isOlderProjectSnapshot } from "../src/hooks/useProjectSync";
+import { renderToStaticMarkup } from "react-dom/server";
+import React from "react";
+import {
+  RequirementTree,
+  traceabilityRefreshToken,
+  type TraceabilityRefreshState,
+} from "../src/components/RequirementTraceability";
+import type { TraceabilityRow } from "../src/api/types";
 
 class MemoryStorage {
   private values = new Map<string, string>();
@@ -278,14 +286,82 @@ test("cancelling a background job aborts locally and requests server cancellatio
   assert.deepEqual(calls, ["project-1:job-1", "Stopping generation..."]);
 });
 
-// Traceability UI contracts are registered before implementation so they stay
-// visible in the test report without making the existing frontend suite red.
-// Promote each TODO to an executable component test when the traceability view
-// exposes an injectable loader/event source (or the suite gains a DOM renderer).
-test.todo(
-  "traceability refreshes automatically after create, update, archive, restore, lock, unlock, clarification, validation, PRD generation, and PRD restore mutations",
-);
+test("traceability refreshes automatically after create, update, archive, restore, lock, unlock, clarification, validation, PRD generation, and PRD restore mutations", () => {
+  const base: TraceabilityRefreshState = {
+    requirements: { requirements: [], user_stories: [] },
+    clarificationAnswers: {},
+    auditResult: null,
+    prdMarkdown: "",
+    mermaidDiagram: "",
+  };
+  const initial = traceabilityRefreshToken(base);
+  const mutations: TraceabilityRefreshState[] = [
+    { ...base, requirements: { requirements: [{ id: "created" }] } },
+    {
+      ...base,
+      requirements: { requirements: [{ id: "r1", title: "updated" }] },
+    },
+    {
+      ...base,
+      requirements: { requirements: [{ id: "r1", status: "archived" }] },
+    },
+    {
+      ...base,
+      requirements: { requirements: [{ id: "r1", status: "active" }] },
+    },
+    {
+      ...base,
+      requirements: { requirements: [{ id: "r1", is_locked: true }] },
+    },
+    {
+      ...base,
+      requirements: { requirements: [{ id: "r1", is_locked: false }] },
+    },
+    { ...base, clarificationAnswers: { q1: "confirmed" } },
+    { ...base, auditResult: { status: "completed", findings: [] } },
+    { ...base, prdMarkdown: "# Generated PRD", mermaidDiagram: "flowchart LR" },
+    { ...base, prdMarkdown: "# Restored PRD" },
+  ];
 
-test.todo(
-  "traceability renders PRD sections, current and historical diagrams, coverage gaps, validation freshness, and source references for each requirement",
-);
+  for (const mutation of mutations) {
+    assert.notEqual(traceabilityRefreshToken(mutation), initial);
+  }
+});
+
+test("traceability renders PRD sections, current and historical diagrams, coverage gaps, validation freshness, and source references for each requirement", () => {
+  const row: TraceabilityRow = {
+    requirement: {
+      id: "req-1",
+      requirement_code: "REQ-001",
+      title: "Verified transfer",
+      description: "Source requirement",
+      epic_name: "Payments",
+      is_locked: false,
+    },
+    user_stories: [
+      {
+        id: "story-1",
+        ticket_code: "US-001",
+        story_title: "Submit a transfer",
+        acceptance_criteria: ["Transfer requires approval"],
+        criteria_needing_review: ["Transfer requires approval"],
+        is_locked: false,
+      },
+    ],
+    prd_sections: ["functional_requirements"],
+    diagrams: ["PRD v1", "PRD v2"],
+    traced: false,
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(RequirementTree, { row }),
+  );
+  assert.match(html, /REQ-001/);
+  assert.match(html, /US-001-AC-001/);
+  assert.match(html, /PRD: functional_requirements/);
+  assert.match(html, /Diagram: PRD v1/);
+  assert.match(html, /Diagram: PRD v2/);
+  assert.match(html, /Coverage gap/);
+  assert.match(html, /Review/);
+  assert.match(html, /Transfer requires approval/);
+});

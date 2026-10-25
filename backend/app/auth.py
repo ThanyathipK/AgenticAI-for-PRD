@@ -46,7 +46,7 @@ logger = logging.getLogger("app.auth")
 #   AUTH 6.x  REGISTER          useAuth 6.1 → api 6.2 → route 6.3.1…6.3.6 → 6.4
 #   AUTH 7.x  AUTHORIZATION     get_current_user 7.1 (verify_token 7.1.1, repo
 #                                7.1.2, projection 7.1.3) · flexible 7.2 (+7.2.1)
-#                                · optional 7.3 · project ownership 7.4 →
+#                                · project ownership 7.4 →
 #                                require_project_owner 7.5/7.6
 # ---------------------------------------------------------------------------
 # Configuration
@@ -447,38 +447,6 @@ async def get_current_user(
 
 
 # ---------------------------------------------------------------------------
-# Optional Auth (for routes that allow anonymous access but support auth)
-# ---------------------------------------------------------------------------
-
-
-# AUTH 7.3 — OPTIONAL variant (no 401): routes that work anonymously and merely
-#            personalize when a token is present. Reuses the same 7.1.x steps, but
-#            a bad token yields None instead of an error.
-async def get_current_user_optional(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
-    session: AsyncSession = Depends(get_db),
-) -> Optional[AuthenticatedUser]:
-    """
-    Optional authentication dependency. Returns an :class:`AuthenticatedUser`
-    if a valid token is provided, or None if no token/invalid token.
-    """
-    if credentials is None:
-        return None
-
-    try:
-        token_data = verify_token(credentials.credentials)
-    except HTTPException:
-        return None
-
-    user = await UserRepository.get_by_id(token_data.user_id, session)
-    if user is None:
-        return None
-
-    # AUTH 7.3 — Success path: same projection as AUTH 7.1.3.
-    return to_authenticated_user(user)
-
-
-# ---------------------------------------------------------------------------
 # User Response Schemas
 # ---------------------------------------------------------------------------
 
@@ -495,14 +463,6 @@ class UserResponse(BaseModel):
     # schema stable until account suspension is actually introduced.
     is_active: bool = True
     created_at: Optional[datetime] = None
-    
-class UserMinimalResponse(BaseModel):
-    """Minimal user info (e.g., for project ownership references)."""
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    email: str
-    full_name: str
     
 # ---------------------------------------------------------------------------
 # Project Ownership Helpers

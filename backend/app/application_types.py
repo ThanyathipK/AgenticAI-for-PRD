@@ -6,9 +6,6 @@ payloads, or public API response shapes.
 
 from typing import Any, Dict, List, Literal, Optional, TypeAlias, TypedDict
 
-WorkflowStatus: TypeAlias = Literal[
-    "completed", "audit_pending", "general_chat", "cancelled", "no_change"
-]
 MergeAction: TypeAlias = Literal["updated", "unchanged", "created", "archived", "conflict"]
 JobStatus: TypeAlias = Literal[
     "queued", "running", "cancelling", "completed", "failed", "cancelled"
@@ -93,20 +90,6 @@ class WorkflowNodeOutcome(PRDGenerationResult, total=False):
     workflow_routing: Dict[str, Any]
     requirement_match: Dict[str, Any]
     lock_blocked: bool
-
-
-class WorkflowOutcome(TypedDict, total=False):
-    status: WorkflowStatus
-    detected_intent: Optional[str]
-    workflow_routing: Dict[str, Any]
-    structured_requirements: Dict[str, Any]
-    audit_result: AuditResultPayload
-    prd_markdown: str
-    mermaid_diagram: str
-    message: str
-    pending_merge: bool
-    pending_action_id: str
-    no_changes: bool
 
 
 class BackgroundJobState(TypedDict, total=False):

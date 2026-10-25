@@ -32,12 +32,6 @@ export interface ProjectSummary {
   match_snippet?: string | null;
 }
 
-/** Request body for setting a project's user-editable workflow status (dashboard table). */
-export interface ProjectStatusRequest {
-  status: ProjectStatus;
-  comment?: string;
-}
-
 /** Workflow statuses editable from the dashboard projects table. */
 export type ProjectStatus =
   "draft" | "in_review_hpo" | "in_review_po" | "approved" | "revised";

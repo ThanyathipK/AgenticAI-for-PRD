@@ -15,7 +15,24 @@ import { handleError } from "./Toast";
 
 interface RequirementTraceabilityProps {
   projectId: string | null;
+  refreshToken?: string;
 }
+
+export interface TraceabilityRefreshState {
+  requirements: unknown;
+  clarificationAnswers: unknown;
+  auditResult: unknown;
+  prdMarkdown: string;
+  mermaidDiagram: string;
+}
+
+/**
+ * Changes whenever an operation can alter the derived traceability matrix.
+ * Keeping this pure makes the refresh contract independently testable.
+ */
+export const traceabilityRefreshToken = (
+  state: TraceabilityRefreshState,
+): string => JSON.stringify(state);
 
 const idChip = (id: string): React.ReactNode => (
   <span className="rounded border border-primary/25 bg-primary/[0.08] px-2 py-0.5 font-mono text-[10.5px] font-bold text-primary">
@@ -30,7 +47,9 @@ const lockChip = (isLocked: boolean): React.ReactNode =>
     </span>
   ) : null;
 
-const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({ row }) => (
+export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
+  row,
+}) => (
   <article className="rounded-xl border border-outline bg-white p-3">
     <div className="flex items-start gap-2">
       <GitBranch className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
@@ -50,6 +69,29 @@ const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({ row }) => (
       </div>
     </div>
     <div className="ml-2 mt-3 border-l border-outline pl-4">
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {row.prd_sections.map((section) => (
+          <span
+            key={section}
+            className="rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[9px] font-semibold text-violet-800"
+          >
+            PRD: {section}
+          </span>
+        ))}
+        {row.diagrams.map((diagram) => (
+          <span
+            key={diagram}
+            className="rounded border border-cyan-200 bg-cyan-50 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-800"
+          >
+            Diagram: {diagram}
+          </span>
+        ))}
+        {!row.traced && (
+          <span className="rounded border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-rose-800">
+            Coverage gap
+          </span>
+        )}
+      </div>
       {row.user_stories.length === 0 ? (
         <p className="py-1 text-xs text-on-surface-variant">
           No user story yet.
@@ -124,7 +166,7 @@ const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({ row }) => (
 
 export const RequirementTraceability: React.FC<
   RequirementTraceabilityProps
-> = ({ projectId }) => {
+> = ({ projectId, refreshToken }) => {
   const [matrix, setMatrix] = useState<TraceabilityPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -154,7 +196,7 @@ export const RequirementTraceability: React.FC<
 
   useEffect(() => {
     if (projectId) void loadHierarchy(projectId);
-  }, [projectId, loadHierarchy]);
+  }, [projectId, refreshToken, loadHierarchy]);
 
   if (!projectId)
     return (

@@ -17,13 +17,13 @@ resolve for a user who types ``System@Banking.com``.
 """
 import logging
 import uuid
-from typing import Any, Dict, Optional, Union
+from typing import Optional, Union
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ProjectModel, UserModel
-from app.repositories.base import as_uuid, dt_iso_or_none
+from app.repositories.base import as_uuid
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 #   AUTH 6.3.4   — register route    → email_exists   (uniqueness read)
 #   AUTH 6.3.5   — register route    → create_user    (INSERT)
 #   AUTH 7.1.2   — get_current_user  → get_by_id      (token → row, reused by
-#                                                       AUTH 7.2.1 / 7.3)
+#                                                       AUTH 7.2.1)
 def normalize_email(email: Optional[str]) -> str:
     """Return the canonical form of an email address.
 
@@ -47,23 +47,6 @@ def normalize_email(email: Optional[str]) -> str:
     canonicalization has to happen in the application layer.
     """
     return (email or "").strip().lower()
-
-
-# NOTE (flow trace): serialize_user has no caller — the AUTH flows project rows
-# via app.auth.to_authenticated_user (AUTH 7.1.3) / routes.auth.UserResponse
-# (AUTH 1.7.4, 2.3, 6.3.6) instead. Left in place, not part of any AUTH flow.
-def serialize_user(user: UserModel) -> Dict[str, Any]:
-    """Serialize a :class:`UserModel` into its public dict representation."""
-    return {
-        "id": str(user.id),
-        "email": user.email,
-        "full_name": user.full_name,
-        "role": user.role,
-        # The users table has no ``is_active`` column yet; the flag stays for
-        # schema stability until account suspension is actually introduced.
-        "is_active": True,
-        "created_at": dt_iso_or_none(user.created_at),
-    }
 
 
 class UserRepository:
