@@ -65,6 +65,10 @@ _FR_AC_PREFIX_RE = re.compile(r"^\s*(?:FR|AC)\s+\d+(?:\.\d+)*\s*:\s*", re.I)
 def _plain_list_item(value: Any) -> str:
     """Remove presentation numbering before the template adds its own label."""
     text = str(value or "").strip()
+    # Normalize LaTeX-style escapes that legacy generated states persisted as
+    # literal product text before applying the one true export escaping pass.
+    text = re.sub(r"\\(?=[{}_\.])", "", text)
+    text = text.replace(r"\textbackslash{}", "\\")
     previous = None
     while text and text != previous:
         previous = text
@@ -83,6 +87,30 @@ def _numbered_text(value: Any) -> str:
     if len(items) == 1 and not re.match(r"^\s*(?:\d|FR\b|AC\b)", source, re.I):
         return items[0]
     return "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1))
+
+
+def _latex_multiline(value: Any, *, numbered: bool = True) -> str:
+    """Escape a cell value and turn logical lines into visible line breaks.
+
+    A literal newline inside a LaTeX table cell is only source whitespace. It
+    does not produce a new line in the preview, PDF, or DOCX, so all generated
+    multi-item fields use ``\\newline`` explicitly.
+    """
+    text = _numbered_text(value) if numbered else str(value or "")
+    return r"\newline ".join(
+        escape_latex(line.strip())
+        for line in text.replace("<br>", "\n").splitlines()
+        if line.strip()
+    )
+
+
+def _as_list(value: Any) -> List[Any]:
+    """Normalize scalar-or-list PRD fields without iterating strings by character."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
 
 
 # PENDING DOCUMENT-VERSION LABEL — written into the cover's VERSION field and
@@ -377,6 +405,39 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
                 items.append(item)
         return items
 
+    def launch_parts(value: str) -> Dict[str, str]:
+        """Split the combined rollout cell without carrying its labels forward.
+
+        Older exports re-imported the complete cell as ``launch_plan`` and then
+        prefixed it with ``Release plan:`` again on every generation.  Parsing
+        each labelled segment back to its canonical field makes regeneration
+        idempotent and removes duplicate dependencies.
+        """
+        source = clean_cell(value)
+        labels = list(re.finditer(
+            r"(?i)(?:^|\n|\s)(Release plan|Dependencies|Go-to-market)\s*:\s*",
+            source,
+        ))
+        if not labels:
+            return {"launch_plan": "\n".join(list_items(source)) or source}
+
+        key_for = {
+            "release plan": "launch_plan",
+            "dependencies": "dependencies",
+            "go-to-market": "go_to_market",
+        }
+        collected: Dict[str, List[str]] = {}
+        for index, match in enumerate(labels):
+            end = labels[index + 1].start() if index + 1 < len(labels) else len(source)
+            segment = source[match.end():end].strip()
+            items = list_items(segment)
+            key = key_for[match.group(1).lower()]
+            bucket = collected.setdefault(key, [])
+            for item in items:
+                if item not in bucket:
+                    bucket.append(item)
+        return {key: "\n".join(items) for key, items in collected.items() if items}
+
     glossary: List[tuple[str, str]] = []
     for raw_line in str(markdown or "").splitlines():
         heading = re.match(r"^#{2,4}\s+(.+?)\s*$", raw_line.strip())
@@ -456,6 +517,9 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
             row_label = label(cells[0])
             key = narrative_labels.get(row_label)
             if key:
+                if key == "launch_plan":
+                    result["narrative"].update(launch_parts(cells[1]))
+                    continue
                 value = "\n".join(list_items(cells[1])) or clean_cell(cells[1])
                 # Presence of the editable row is authoritative even when the
                 # user cleared it. Template examples are also empty values,
@@ -554,7 +618,7 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
                             business_topics: Optional[Dict[str, str]] = None) -> str:
     business_topics = business_topics or {}
     goals = [g.get("description", g) if isinstance(g, dict) else g
-             for g in (data.get("business_goals") or [])]
+             for g in _as_list(data.get("business_goals"))]
     if business_topics.get("Business Objectives"):
         goals = [business_topics["Business Objectives"]]
     elif narrative and narrative.get("business_objectives"):
@@ -591,7 +655,7 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
         if business_topics.get("Problem Statement")
         else [narrative["problem_statement"]]
         if narrative and narrative.get("problem_statement")
-        else (data.get("problem_statement") or [])
+        else _as_list(data.get("problem_statement"))
     )
     def _num(items: List[str]) -> str:
         # No caps: the longtable rows wrap and grow with the content.
@@ -722,7 +786,12 @@ def _fr_rows_for(stories: List[Dict[str, Any]]) -> str:
         fr_block = f"FR {idx}.1: {functional_requirement}" if functional_requirement else ""
         acs = [escape_latex(_plain_list_item(a)) for a in (story.get("acceptance_criteria") or [])]
         acs = [ac for ac in acs if ac]
-        ac_block = "\\\\".join(f"AC {idx}.{j}: {ac}" for j, ac in enumerate(acs, start=1))
+        # ``\\newline`` is an in-cell break. Bare ``\\\\`` is ambiguous to
+        # the Markdown/PDF conversion pipeline and previously collapsed
+        # separate criteria into colon-separated prose.
+        ac_block = r"\newline ".join(
+            f"AC {idx}.{j}: {ac}" for j, ac in enumerate(acs, start=1)
+        )
         rows.append(f"    & {story_block} & \\rule{{0pt}}{{2.1cm}}{fr_block} & {ac_block} \\\\")
     # Each row already ends with a complete ``\\`` terminator; rows are
     # separated by a plain newline.  Joining with ``'\<newline>'`` used to
@@ -802,7 +871,7 @@ Wireframes}
             r"""  \shortstack[l]{User Flow \&\\
 Wireframes}
     & \multicolumn{3}{L{12.55cm}|}{\rule{0pt}{1.15cm}\prdfield{"""
-            + escape_latex(user_flow)
+            + _latex_multiline(user_flow, numbered=False)
             + r"""}} \\"""
         )
         body = body.replace(flow_anchor, flow_filled, 1)
@@ -882,7 +951,7 @@ Wireframes}
 def _fill_tech_appendix(body: str, narrative: Optional[Dict[str, str]]) -> str:
     def _cell(key: str, _legacy_fallback: str = "") -> str:
         if narrative and narrative.get(key):
-            return r"\prdfield{" + escape_latex(_numbered_text(narrative[key])) + "}"
+            return r"\prdfield{" + _latex_multiline(narrative[key]) + "}"
         guidance = _TECHNICAL_COMPLETION_GUIDANCE[key]
         return r"\prdfield{" + escape_latex(guidance) + "}"
 
@@ -895,7 +964,9 @@ def _fill_tech_appendix(body: str, narrative: Optional[Dict[str, str]]) -> str:
         ):
             value = _numbered_text((narrative or {}).get(key))
             if value:
-                parts.append(escape_latex(f"{label}: {value}"))
+                parts.append(
+                    escape_latex(f"{label}:") + " " + _latex_multiline(value, numbered=False)
+                )
         if not parts:
             guidance = _TECHNICAL_COMPLETION_GUIDANCE["launch_plan"]
             return r"\prdfield{" + escape_latex(guidance) + "}"

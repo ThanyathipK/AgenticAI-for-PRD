@@ -51,6 +51,30 @@ def test_low_confidence_or_unsupported_findings_do_not_invent_prd_content():
     assert _prd_narrative_from_validated_audit(state) == {}
 
 
+def test_moderate_confidence_content_populates_parts_eight_and_nine():
+    state = {
+        "audit_findings": [{
+            "category": "Operational security",
+            "confidence": 0.55,
+            "evidence_status": "supported",
+            "impact": "warning",
+            "description": "Record failed authorization attempts for review.",
+        }],
+        "prd_narrative": {
+            "assumptions": {
+                "value": "The identity provider remains available.",
+                "confidence": 0.50,
+            },
+        },
+    }
+
+    audit = _prd_narrative_from_validated_audit(state)
+    explicit = _prd_narrative_from_explicit_input(state)
+    assert audit["non_functional"] == "1. Record failed authorization attempts for review."
+    assert audit["open_questions"] == "1. Record failed authorization attempts for review."
+    assert explicit["assumptions"] == "The identity provider remains available."
+
+
 def test_explicit_scenario_populates_sections_08_and_09():
     state = {
         "prd_narrative": {
@@ -141,6 +165,39 @@ def test_inline_problem_statement_is_extracted_without_model_cooperation():
         "1. Customers must visit a branch to request refunds."
     )
     assert gathered["problem_statement"]["confidence"] == 1.0
+
+
+def test_outline_prefixes_are_canonicalized_instead_of_nested():
+    gathered = _extract_explicit_prd_narrative(
+        "Problem Statement:\n1.2. Customers cannot track refund status."
+    )
+    assert gathered["problem_statement"]["value"] == (
+        "1. Customers cannot track refund status."
+    )
+
+
+def test_technical_alias_populates_part_three():
+    narrative = _prd_narrative_from_explicit_input({
+        "prd_narrative": {
+            "technical": {
+                "value": "API latency must remain below 500 ms.",
+                "confidence": 0.95,
+            },
+        },
+    })
+    assert narrative["non_functional"] == "API latency must remain below 500 ms."
+
+
+def test_editing_directives_do_not_leak_into_scope():
+    narrative = _prd_narrative_from_explicit_input({
+        "prd_narrative": {
+            "scope_out": {
+                "value": "1. No changes to REQ-001, REQ-002, or REQ-003.\n2. Real-time extraction.",
+                "confidence": 1.0,
+            },
+        },
+    })
+    assert narrative["scope_out"] == "1. Real-time extraction."
 
 
 def test_attached_template_sections_are_extracted_and_rendered_in_their_rows():

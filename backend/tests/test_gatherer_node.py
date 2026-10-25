@@ -226,6 +226,28 @@ async def test_delete_matcher_supports_explicit_multiple_stories_and_remove_all(
 
 
 @pytest.mark.asyncio
+async def test_update_matcher_resolves_explicit_story_without_llm(monkeypatch):
+    _patch(monkeypatch, REQ_STATE, llm_result={})
+
+    async def story_matcher_must_not_run(*_args, **_kwargs):
+        raise AssertionError("explicit US IDs must bypass story-level inference")
+
+    monkeypatch.setattr(agents, "match_requirement", story_matcher_must_not_run)
+    result = await agents.requirement_matcher_node({
+        "project_id": "p1",
+        "raw_input": "Update US-002 and replace all acceptance criteria",
+        "detected_intent": "UPDATE_REQUIREMENT",
+        "intent_confidence": 0.99,
+        "current_version": 5,
+    })
+
+    match = result["requirement_match"]
+    assert match["matched_requirement_id"] == "US-002"
+    assert match["action"] == "UPDATE"
+    assert match["confidence"] == 1.0
+
+
+@pytest.mark.asyncio
 async def test_delete_matcher_does_not_guess_ambiguous_bare_number(monkeypatch):
     _patch(monkeypatch, REQ_STATE, llm_result={})
 

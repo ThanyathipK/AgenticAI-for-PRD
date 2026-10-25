@@ -18,7 +18,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
-  ArrowUpDown,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -491,13 +490,13 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
                       <Star className="w-3.5 h-3.5" aria-label="Flagged" />
                     </th>
                     <th className="px-5 py-3 text-[12px] font-semibold text-on-surface-variant border-b border-outline">
-                      <span className="inline-flex items-center gap-1">Project <ArrowUpDown className="w-3 h-3" /></span>
+                      Project
                     </th>
                     <th className="px-5 py-3 text-[12px] font-semibold text-on-surface-variant border-b border-outline">
-                      <span className="inline-flex items-center gap-1">Status <ArrowUpDown className="w-3 h-3" /></span>
+                      Status
                     </th>
                     <th className="px-5 py-3 text-[12px] font-semibold text-on-surface-variant border-b border-outline">
-                      <span className="inline-flex items-center gap-1">Updated <ArrowUpDown className="w-3 h-3" /></span>
+                      Updated
                     </th>
                     <th className="px-5 py-3 border-b border-outline" aria-label="Actions" />
                   </tr>

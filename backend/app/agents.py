@@ -490,6 +490,16 @@ async def requirement_matcher_node(state: AgentState) -> WorkflowNodeOutcome:
             "status": "MATCHED",
             "candidates": explicit_story_codes,
         }
+    elif detected_intent == "UPDATE_REQUIREMENT" and explicit_story_codes:
+        match_result = {
+            "matched_requirement_id": explicit_story_codes[0],
+            "matched_requirement_ids": explicit_story_codes,
+            "confidence": 1.0,
+            "reason": "The user explicitly targeted the listed user story code(s).",
+            "action": "UPDATE",
+            "status": "MATCHED",
+            "candidates": explicit_story_codes,
+        }
     elif detected_intent == "DELETE_REQUIREMENT" and explicit_parent_codes:
         match_result = {
             "matched_requirement_id": None,
@@ -800,7 +810,18 @@ def _extract_explicit_prd_narrative(raw_input: str) -> Dict[str, Dict[str, Any]]
         if current is None:
             continue
         item = re.sub(r"^[-*+]\s+", "", line).strip()
-        item = re.sub(r"^\d+[.)]\s+", "", item).strip()
+        # Strip the complete outline prefix before we add our own canonical
+        # numbering below.  Inputs copied from documents often use ``1.2`` or
+        # ``3.4.1``; removing only the first integer produced values such as
+        # ``1. 1.2 Problem ...`` in the generated PRD.
+        # A plain leading number can be real content ("80 percent", "50 GB").
+        # Strip only unmistakable outline markers such as ``1.``, ``2)`` or
+        # multi-level ``3.4.1``.
+        item = re.sub(
+            r"^(?:(?:\d+(?:\.\d+)+(?:[.):])?|\d+[.):])\s+)+",
+            "",
+            item,
+        ).strip()
         if not item:
             continue
         key = current
@@ -1621,6 +1642,7 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
     # requirement group the LLM assigned it to.
     used_req_codes = set(existing_req_by_code.keys())
     incoming_entries: List[Dict[str, Any]] = []
+    unsupported_claims: List[Dict[str, str]] = []
     target_by_key: Dict[str, str] = {}
     llm_group_meta: Dict[str, Dict[str, Any]] = {}
 
@@ -1674,6 +1696,31 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
             clean = _sanitize_incoming_story(s)
             if not clean:
                 continue
+            core_text = " ".join(
+                str(clean.get(field) or "")
+                for field in ("story_title", "as_a", "i_want_to", "so_that")
+            )
+            source_evidence = f"{raw_input}\n{current_context}"
+            unsupported_core = _unsupported_material_literals(core_text, source_evidence)
+            if unsupported_core:
+                unsupported_claims.append({
+                    "target": clean.get("ticket_code") or clean.get("story_title") or "new story",
+                    "literals": ", ".join(unsupported_core),
+                })
+                continue
+            supported_ac = []
+            for criterion in clean.get("acceptance_criteria") or []:
+                if _criterion_explicitly_removed(criterion, raw_input):
+                    continue
+                unsupported = _unsupported_material_literals(criterion, source_evidence)
+                if unsupported:
+                    unsupported_claims.append({
+                        "target": clean.get("ticket_code") or clean.get("story_title") or "new story",
+                        "literals": ", ".join(unsupported),
+                    })
+                else:
+                    supported_ac.append(criterion)
+            clean["acceptance_criteria"] = supported_ac
             entry = dict(clean)
             entry["_target_req_code"] = target_code
             incoming_entries.append(entry)
@@ -1718,6 +1765,19 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
         new_incoming_stories=incoming_entries,
         semantic_recs=semantic_recs,
         protected_ids=locked_protected_ids,
+        # Parent updates return complete, revalidated AC sets for affected
+        # children. Story wording may be unchanged, so a normal field-diff
+        # would otherwise union obsolete criteria back into the result.
+        replace_acceptance_criteria_for=(
+            [
+                normalize_ticket_code(story.get("ticket_code"))
+                for story in (parent_requirement or {}).get("user_stories", [])
+                if isinstance(story, dict)
+                and normalize_ticket_code(story.get("ticket_code"))
+            ]
+            if parent_requirement and detected_intent == "UPDATE_REQUIREMENT"
+            else None
+        ),
     )
 
     # ===============================================
@@ -1817,6 +1877,14 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
             logger.info(
                 f"[GATHERER] Requirement group {code} has no remaining stories after the merge; dropping it."
             )
+    # Display and export order follows stable canonical identity, never the
+    # order in which an LLM happened to echo groups during an update.
+    def _requirement_order(item: Dict[str, Any]) -> tuple[int, str]:
+        code = str(item.get("requirement_code") or "")
+        match = re.search(r"(\d+)$", code)
+        return (int(match.group(1)) if match else 999999, code)
+
+    final_requirements.sort(key=_requirement_order)
 
     req_state["requirements"] = final_requirements
     req_state["user_stories"] = all_active_stories
@@ -1849,6 +1917,25 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
     req_state["current_workflow_state"] = "gatherer_node"
     req_state["semantic_recommendations"] = semantic_recs
     req_state["detected_intent"] = detected_intent
+    if unsupported_claims:
+        existing_questions = list(req_state.get("clarification_questions") or [])
+        known = {str(item.get("question_text") or "") for item in existing_questions if isinstance(item, dict)}
+        for claim in unsupported_claims:
+            question = (
+                f"Confirm the source for {claim['literals']} in {claim['target']}; "
+                "the generated draft introduced these technical values without explicit input evidence."
+            )
+            if question not in known:
+                existing_questions.append({
+                    "checklist_category": "Source evidence",
+                    "target_user_story_id": claim["target"],
+                    "question_text": question,
+                    "user_answer": None,
+                    "is_resolved": False,
+                })
+                known.add(question)
+        req_state["clarification_questions"] = existing_questions
+        req_state["validation_status"] = "invalid"
 
     # A change-summary chat message (added/updated/archived ticket codes)
     # persisted as a regular assistant message - the old static message told
@@ -1886,6 +1973,58 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
         "detected_intent": detected_intent,
         "current_version": req_state.get("version_number", 1)
     }
+
+
+_MATERIAL_LITERAL_RE = re.compile(
+    r"(?i)(?:\b\d+(?:\.\d+)?\s*(?:%|gb|mb|kb|ms|seconds?|minutes?|hours?|tps)(?=\s|[.,;:]|$)"
+    r"|\b\d{1,2}:\d{2}\b|\.[a-z0-9]{2,5}\b|\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\b"
+    r"|\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+\b)"
+)
+_MATERIAL_BEHAVIOR_RE = re.compile(
+    r"(?i)\b(?:retry|retries|wait for (?:the )?next|deny access|grant access|"
+    r"display an error message|audit log|log (?:the )?(?:successful|failed) transfer|"
+    r"manual(?:ly)? deliver|manual delivery)\b"
+)
+
+
+def _unsupported_material_literals(text: str, evidence: str) -> List[str]:
+    """Return measurable/technical literals absent from authoritative input."""
+    evidence_folded = str(evidence or "").casefold()
+    found: List[str] = []
+    for match in _MATERIAL_LITERAL_RE.finditer(str(text or "")):
+        literal = match.group(0).strip()
+        if literal.casefold() not in evidence_folded and literal.casefold() not in {
+            ".json",  # structured-output mechanics, never a product fact
+        }:
+            found.append(literal)
+    for match in _MATERIAL_BEHAVIOR_RE.finditer(str(text or "")):
+        behavior = match.group(0).strip()
+        if behavior.casefold() not in evidence_folded:
+            found.append(behavior)
+    return list(dict.fromkeys(found))
+
+
+def _criterion_explicitly_removed(criterion: str, raw_input: str) -> bool:
+    """Honor concrete negative corrections even when the model repeats stale ACs."""
+    request = str(raw_input or "").casefold()
+    text = str(criterion or "").casefold()
+    if not re.search(r"\b(?:remove|delete|drop|must not|no longer)\b", request):
+        return False
+    if (
+        ".dat" in request
+        and "control field" in request
+        and ".dat" in text
+        and any(token in text for token in ("control field", "data_file_name", "control_date"))
+    ):
+        return True
+    if (
+        ".dat" in request and ".ctl" in request
+        and any(token in request for token in ("identical", "exactly identical", "match exactly"))
+        and ".dat" in text and ".ctl" in text
+        and any(token in text for token in ("identical", "match", "exactly"))
+    ):
+        return True
+    return False
 
 async def delete_requirement_node(state: AgentState) -> WorkflowNodeOutcome:
     """
@@ -2398,6 +2537,7 @@ def _deterministic_audit_fallback(
                 "rationale": "Acceptance-criteria presence is a deterministic structural check.",
                 "recommendation": None,
             })
+    findings.extend(_deterministic_quality_findings(structured_payload))
     return {
         "is_valid": False,
         "verdict": "incomplete",
@@ -2411,6 +2551,112 @@ def _deterministic_audit_fallback(
         "checklist_id": ACTIVE_AUDIT_CHECKLIST.checklist_id,
         "checklist_version": ACTIVE_AUDIT_CHECKLIST.version,
     }
+
+
+def _quality_texts(payload: Dict[str, Any]) -> List[tuple[str, str]]:
+    """Flatten requirement evidence into ``(target, text)`` pairs."""
+    rows: List[tuple[str, str]] = []
+    for requirement in payload.get("requirements") or []:
+        if not isinstance(requirement, dict):
+            continue
+        req_code = str(requirement.get("requirement_code") or "").strip()
+        for field in ("title", "functional_requirement", "description"):
+            if requirement.get(field):
+                rows.append((req_code, str(requirement[field])))
+        for story in requirement.get("user_stories") or []:
+            if not isinstance(story, dict):
+                continue
+            code = str(story.get("ticket_code") or req_code).strip()
+            for field in ("story_title", "i_want_to", "so_that"):
+                if story.get(field):
+                    rows.append((code, str(story[field])))
+            rows.extend((code, str(ac)) for ac in story.get("acceptance_criteria") or [])
+    narrative = payload.get("prd_narrative") or {}
+    if isinstance(narrative, dict):
+        for value in narrative.values():
+            if isinstance(value, dict):
+                value = value.get("value")
+            if value:
+                rows.append(("Project", str(value)))
+    return rows
+
+
+def _deterministic_quality_findings(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Detect high-confidence contradictions, overlaps and invalid sequencing."""
+    texts = _quality_texts(payload)
+    lowered = [(target, text, text.casefold()) for target, text in texts]
+    findings: List[Dict[str, Any]] = []
+
+    ctl_only = any(
+        ".ctl" in text and "only" in text and any(field in text for field in (
+            "data_file_name", "data record count", "control field",
+        ))
+        for _target, _raw, text in lowered
+    )
+    for target, raw, text in lowered:
+        if (
+            ctl_only
+            and ".dat" in text
+            and any(field in text for field in ("data_file_name", "data record count", "control field"))
+            and any(term in text for term in ("contain", "column", "field"))
+        ):
+            findings.append({
+                "rule_id": "ADHOC", "finding_type": "conflicting", "severity": "high",
+                "category": "Cross-section consistency", "target_requirement_id": target or None,
+                "description": "The PRD assigns control-file fields to the .dat file while another statement restricts them to .ctl files.",
+                "source_references": [], "evidence_status": "supported",
+                "applicability": "applicable_required", "impact": "blocking", "confidence": 1.0,
+                "rationale": "The two file-format obligations cannot both be implemented as written.",
+                "recommendation": None,
+            })
+            break
+
+    stories = [
+        story for requirement in payload.get("requirements") or [] if isinstance(requirement, dict)
+        for story in requirement.get("user_stories") or [] if isinstance(story, dict)
+    ]
+    stop = {"the", "a", "an", "to", "from", "for", "so", "that", "within", "defined", "system"}
+    for index, left in enumerate(stories):
+        left_tokens = set(re.findall(r"[a-z0-9]+", " ".join(
+            str(left.get(field) or "") for field in ("story_title", "i_want_to")
+        ).casefold())) - stop
+        for right in stories[index + 1:]:
+            right_tokens = set(re.findall(r"[a-z0-9]+", " ".join(
+                str(right.get(field) or "") for field in ("story_title", "i_want_to")
+            ).casefold())) - stop
+            union = left_tokens | right_tokens
+            similarity = len(left_tokens & right_tokens) / len(union) if union else 0.0
+            if similarity >= 0.50 and len(left_tokens & right_tokens) >= 3:
+                left_code = str(left.get("ticket_code") or "unknown")
+                right_code = str(right.get("ticket_code") or "unknown")
+                findings.append({
+                    "rule_id": "ADHOC", "finding_type": "duplicated", "severity": "medium",
+                    "category": "Requirement overlap", "target_requirement_id": right_code,
+                    "description": f"{left_code} and {right_code} describe substantially overlapping behavior.",
+                    "source_references": [], "evidence_status": "supported",
+                    "applicability": "applicable_required", "impact": "warning", "confidence": round(similarity, 2),
+                    "rationale": "Overlapping stories can create duplicated implementation and inconsistent acceptance criteria.",
+                    "recommendation": None,
+                })
+
+    stages = {"extract": 0, "generat": 1, "creat": 1, "transfer": 2, "send": 2, "confirm": 3, "reconcil": 3}
+    for target, raw, text in lowered:
+        if " before " not in text:
+            continue
+        before, after = text.split(" before ", 1)
+        left_stage = next((value for key, value in stages.items() if key in before), None)
+        right_stage = next((value for key, value in stages.items() if key in after), None)
+        if left_stage is not None and right_stage is not None and left_stage > right_stage:
+            findings.append({
+                "rule_id": "ADHOC", "finding_type": "conflicting", "severity": "high",
+                "category": "Dependency sequencing", "target_requirement_id": target or None,
+                "description": f"The dependency sequence is impossible as written: {raw.strip()}",
+                "source_references": [], "evidence_status": "supported",
+                "applicability": "applicable_required", "impact": "blocking", "confidence": 1.0,
+                "rationale": "A downstream processing stage cannot be a prerequisite of its upstream input stage.",
+                "recommendation": None,
+            })
+    return _dedupe_dicts(findings, ("finding_type", "target_requirement_id", "description"))
 
 
 def _build_auditor_contexts(
@@ -2804,6 +3050,17 @@ async def auditor_node(state: AgentState) -> WorkflowNodeOutcome:
         # Either the primary pass succeeded or every smaller recovery category
         # succeeded, so normal verdict persistence can continue.
         result = _merge_audit_passes(partial_results, current_version)
+        deterministic_findings = _deterministic_quality_findings(structured_reqs_for_prompt)
+        if deterministic_findings:
+            result["findings"] = _dedupe_dicts(
+                list(result.get("findings") or []) + deterministic_findings,
+                ("finding_type", "target_requirement_id", "description"),
+            )
+            if any(item.get("impact") == "blocking" for item in deterministic_findings):
+                result["is_valid"] = False
+                result["verdict"] = "fail"
+            elif result.get("verdict") == "pass":
+                result["verdict"] = "pass_with_warnings"
         
         # Merge new questions with every existing unresolved question. An Auditor
         # run may add evidence, but it may not silently resolve or replace a human
@@ -3354,7 +3611,7 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
             # Offline node tests may use symbolic project IDs or session stubs.
             pass
     # Manual content has priority. Otherwise use only supported audit findings
-    # at >= 0.70 confidence; unknown operational facts stay TBD.
+    # at >= 0.50 confidence; unknown operational facts stay TBD.
     saved_narrative = extract_manual_export_fields(previous_prd).get("narrative", {})
     narrative = {
         key: value for key, value in saved_narrative.items()

@@ -4,9 +4,14 @@ import re
 from typing import Any
 
 
+# Supporting facts for the Technical and Appendix PRD parts are useful even
+# when the extractor is moderately confident.  Keep genuinely weak guesses
+# out, but do not require the stricter requirement-mutation threshold.
+PRD_NARRATIVE_CONFIDENCE_THRESHOLD = 0.50
+
+
 def narrative_from_validated_audit(requirement_state: dict[str, Any]) -> dict[str, Any]:
     """Extract only supported, high-confidence audit detail for the PRD tail."""
-    threshold = 0.70
     technical_terms = (
         "technical",
         "performance",
@@ -27,7 +32,10 @@ def narrative_from_validated_audit(requirement_state: dict[str, Any]) -> dict[st
             confidence = float(finding.get("confidence", 0.0))
         except (TypeError, ValueError):
             confidence = 0.0
-        if confidence < threshold or finding.get("evidence_status") != "supported":
+        if (
+            confidence < PRD_NARRATIVE_CONFIDENCE_THRESHOLD
+            or finding.get("evidence_status") != "supported"
+        ):
             continue
         recommendation = finding.get("recommendation") or {}
         summary = recommendation.get("summary") if isinstance(recommendation, dict) else ""
@@ -52,7 +60,7 @@ def narrative_from_validated_audit(requirement_state: dict[str, Any]) -> dict[st
 
 
 def narrative_from_explicit_input(requirement_state: dict[str, Any]) -> dict[str, Any]:
-    """Flatten explicitly gathered PRD facts, keeping only confidence >= 0.70."""
+    """Flatten explicitly gathered PRD facts at moderate confidence or above."""
     narrative: dict[str, Any] = {}
     allowed = {
         "exec_summary",
@@ -75,7 +83,9 @@ def narrative_from_explicit_input(requirement_state: dict[str, Any]) -> dict[str
         "glossary",
         "related_documents",
     }
-    for key, field in (requirement_state.get("prd_narrative") or {}).items():
+    aliases = {"technical": "non_functional"}
+    for raw_key, field in (requirement_state.get("prd_narrative") or {}).items():
+        key = aliases.get(raw_key, raw_key)
         if key not in allowed or not isinstance(field, dict):
             continue
         try:
@@ -87,7 +97,18 @@ def narrative_from_explicit_input(requirement_state: dict[str, Any]) -> dict[str
             value = "\n".join(
                 f"{index}. {item}" for index, item in enumerate(value, start=1) if item
             )
-        if confidence >= 0.70 and value:
+        if key in {"scope_in", "scope_out"} and isinstance(value, str):
+            kept = []
+            for line in value.splitlines():
+                plain = re.sub(r"^\s*\d+[.)]?\s*", "", line).strip()
+                if re.match(r"(?i)^no changes? to\s+(?:REQ|US)-\d+", plain):
+                    continue
+                if plain:
+                    kept.append(plain)
+            value = "\n".join(
+                f"{index}. {item}" for index, item in enumerate(dict.fromkeys(kept), start=1)
+            )
+        if confidence >= PRD_NARRATIVE_CONFIDENCE_THRESHOLD and value:
             narrative[key] = value
     return narrative
 

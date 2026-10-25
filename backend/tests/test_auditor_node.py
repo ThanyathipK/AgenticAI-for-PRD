@@ -704,3 +704,62 @@ async def test_total_model_failure_returns_deterministic_structural_audit(monkey
     assert result["audit_result"]["verdict"] == "incomplete"
     assert set(result["audit_result"]["failed_checks"]) == {"AUDIT_INCOMPLETE", "AUDIT_PARSE_ERROR"}
     assert any("no acceptance criteria" in item["description"] for item in result["audit_result"]["findings"])
+
+def test_deterministic_quality_checks_find_conflicts_overlap_and_bad_sequence():
+    payload = {
+        "requirements": [{
+            "requirement_code": "REQ-001",
+            "title": "Archive files",
+            "description": "Transfer must complete before file generation.",
+            "user_stories": [
+                {
+                    "ticket_code": "US-001",
+                    "story_title": "Daily KSA log extraction",
+                    "i_want_to": "extract KSA log data every day",
+                    "acceptance_criteria": [
+                        "Given a table, When a .dat file is created, Then it contains data_file_name control fields."
+                    ],
+                },
+                {
+                    "ticket_code": "US-002",
+                    "story_title": "Scheduled KSA log extraction",
+                    "i_want_to": "extract KSA log data in the daily window",
+                    "acceptance_criteria": [],
+                },
+            ],
+        }],
+        "prd_narrative": {
+            "scope_in": {"value": "Only the .ctl file contains data_file_name control fields."},
+        },
+    }
+
+    findings = agents._deterministic_quality_findings(payload)
+    kinds = {(item["category"], item["finding_type"]) for item in findings}
+    assert ("Cross-section consistency", "conflicting") in kinds
+    assert ("Requirement overlap", "duplicated") in kinds
+    assert ("Dependency sequencing", "conflicting") in kinds
+
+
+def test_material_literal_guard_rejects_only_values_missing_from_evidence():
+    evidence = "Run at 03:30, limit files to 10 GB, and write .ctl files."
+    assert agents._unsupported_material_literals("Complete at 03:30 with 10 GB .ctl files", evidence) == []
+    assert agents._unsupported_material_literals("Guarantee 99.9% availability", evidence) == ["99.9%"]
+    assert agents._unsupported_material_literals("Wait for the next scheduled attempt", evidence) == [
+        "Wait for the next"
+    ]
+
+
+def test_explicit_negative_correction_removes_repeated_stale_criteria():
+    request = (
+        "Remove criteria saying the .dat file contains control fields or that "
+        "the .dat and .ctl filenames are exactly identical."
+    )
+    assert agents._criterion_explicitly_removed(
+        "The .dat file contains data_file_name and control_date control fields.", request
+    )
+    assert agents._criterion_explicitly_removed(
+        "The .ctl filename must match the .dat filename exactly.", request
+    )
+    assert not agents._criterion_explicitly_removed(
+        "The .ctl file contains data_file_name and control_date.", request
+    )

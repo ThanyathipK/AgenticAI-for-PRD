@@ -312,6 +312,7 @@ def merge_user_stories_with_report(
     new_incoming_stories: List[Dict[str, Any]],
     semantic_recs: Optional[List[SemanticChangePayload]] = None,
     protected_ids: Optional[List[str]] = None,
+    replace_acceptance_criteria_for: Optional[List[str]] = None,
 ) -> Tuple[List[Dict[str, Any]], RequirementMergeReport]:
     """
     Performs an INCREMENTAL reconciliation of newly generated user stories
@@ -320,7 +321,8 @@ def merge_user_stories_with_report(
     - Keep unchanged stories   -> ``change_type="unchanged"``, ``status="active"``
     - Update modified stories  -> ``change_type="updated"``,   ``status="active"``
       (field-level: empty incoming values keep persisted data; acceptance
-      criteria are union-merged, never wholesale-replaced)
+      criteria are replaced for explicit/behaviour-changing updates and
+      union-merged for additive re-gathers)
     - Insert brand-new stories -> ``change_type="created"``,   ``status="active"``
     - Archive deleted stories  -> ``change_type="archived"``,  ``status="archived"``
     - Protected stories (``protected_ids``: story UUIDs / ticket codes of
@@ -346,6 +348,11 @@ def merge_user_stories_with_report(
     """
     semantic_recs = semantic_recs or []
     protected_set = build_protected_set(protected_ids)
+    replace_ac_set = {
+        normalize_ticket_code(code)
+        for code in (replace_acceptance_criteria_for or [])
+        if normalize_ticket_code(code)
+    }
 
     rec_by_code = {}
     rec_by_title = {}
@@ -448,7 +455,12 @@ def merge_user_stories_with_report(
             updated_story, changed_fields, ac_report = merge_story_fields(
                 matched,
                 inc,
-                replace_acceptance_criteria=(rec_act == "UPDATE" or core_behavior_changed),
+                replace_acceptance_criteria=(
+                    rec_act == "UPDATE"
+                    or core_behavior_changed
+                    or m_code in replace_ac_set
+                    or inc_code in replace_ac_set
+                ),
             )
 
             # Ticket-code policy: keep the matched story's code unless the
@@ -567,6 +579,7 @@ def merge_user_stories(
     new_incoming_stories: List[Dict[str, Any]],
     semantic_recs: Optional[List[SemanticChangePayload]] = None,
     protected_ids: Optional[List[str]] = None,
+    replace_acceptance_criteria_for: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Backward-compatible wrapper around :func:`merge_user_stories_with_report`
@@ -577,6 +590,7 @@ def merge_user_stories(
         new_incoming_stories=new_incoming_stories,
         semantic_recs=semantic_recs,
         protected_ids=protected_ids,
+        replace_acceptance_criteria_for=replace_acceptance_criteria_for,
     )
     return merged_stories
 

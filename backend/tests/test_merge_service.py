@@ -221,6 +221,24 @@ class TestMergeUserStories:
             "Session is audited",
         ]
 
+    def test_explicit_parent_update_replaces_criteria_without_story_text_change(self, existing_stories):
+        incoming = [make_incoming(
+            acceptance_criteria=[
+                "Given biometrics are enrolled, When I authenticate, Then access is granted",
+            ],
+        )]
+
+        merged, report = merge_user_stories_with_report(
+            existing_stories,
+            incoming,
+            replace_acceptance_criteria_for=["US-001"],
+        )
+
+        updated = next(story for story in merged if story["id"] == "s1")
+        assert updated["acceptance_criteria"] == incoming[0]["acceptance_criteria"]
+        assert report["US-001"]["action"] == "updated"
+        assert report["US-001"]["acceptance_criteria"]["removed"] == 2
+
     def test_identical_incoming_keeps_change_type_unchanged(self, existing_stories):
         incoming = [make_incoming()]
         merged = merge_user_stories(existing_stories, incoming)

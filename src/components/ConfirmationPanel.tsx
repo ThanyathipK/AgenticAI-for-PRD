@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, GitCompare, Lock, X } from 'lucide-react';
 import { api } from '../api/client';
 import type {
@@ -231,6 +231,7 @@ function ImpactAnalysisSection({
 export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, onConfirm, onCancel }) => {
   const [isWorking, setIsWorking] = useState<boolean>(false);
   const isArchive = action.action_type === 'ARCHIVE';
+  const autoDismissedAction = useRef<string | null>(null);
 
   // Compact shape of the staged draft — parsed once per action and used as the
   // fallback summary when the impact analysis endpoint is unavailable, so Save
@@ -298,6 +299,21 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
         if (!cancelled) {
           setImpact(result);
           setImpactState('ready');
+          // A zero-diff draft has nothing a reviewer can approve. This can
+          // occur for legacy pending actions created before the backend's
+          // no-op staging guard existed. Discard it automatically so it cannot
+          // block the next real requirement update.
+          if (!result.has_changes && autoDismissedAction.current !== action.id) {
+            autoDismissedAction.current = action.id;
+            void api.cancelAction(action.id, action.project_id)
+              .then(() => {
+                if (!cancelled) onCancel();
+              })
+              .catch(err => {
+                autoDismissedAction.current = null;
+                console.warn('Unable to discard a no-op pending action.', err);
+              });
+          }
         }
       })
       .catch(err => {
@@ -307,7 +323,7 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
     return () => {
       cancelled = true;
     };
-  }, [action.id, action.project_id]);
+  }, [action.id, action.project_id, onCancel]);
 
   // True when the draft actually changes something (the impact result when
   // known, otherwise the draft's own counts).
@@ -341,10 +357,15 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
       <div className="flex items-center gap-2 px-4 py-3">
         <button
           onClick={handleConfirm}
-          disabled={isWorking}
+          disabled={isWorking || (impactState === 'ready' && !hasChanges)}
           className="flex h-9 w-[132px] shrink-0 items-center justify-center gap-1 bg-orange-500 hover:bg-orange-600 text-white px-3 rounded-[8px] text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <Check size={16} /> {isArchive ? 'Confirm archive' : 'Save'}
+          <Check size={16} />
+          {impactState === 'ready' && !hasChanges
+            ? 'No changes'
+            : isArchive
+              ? 'Confirm archive'
+              : 'Save'}
         </button>
         <button
           onClick={handleCancel}

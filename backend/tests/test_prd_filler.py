@@ -193,6 +193,16 @@ def test_first_generation_preserves_multiline_business_overview_layout():
     assert "1. Merchants<br> 2. Customers" in preview
 
 
+def test_scalar_problem_statement_is_one_complete_item_not_split_into_characters():
+    body = fill_template_body(
+        project_name="Scalar input",
+        data={"problem_statement": "Customers cannot track refund status."},
+    )
+    preview = prd_to_markdown(body)
+    assert "1. Customers cannot track refund status." in preview
+    assert "1. C<br> 2. u" not in preview
+
+
 def test_manual_scope_and_operational_edits_feed_the_official_document():
     saved = """### 2. Product Scope & Functional Requirements
 
@@ -242,6 +252,60 @@ def test_manual_scope_and_operational_edits_feed_the_official_document():
     assert "Manual excluded feature" in body
     assert "Manually edited latency target" in body
     assert "Manually edited risk" in body
+
+
+def test_generated_multiline_fields_use_visible_table_cell_breaks():
+    body = fill_template_body(
+        data={
+            "scope_in": ["Create a request", "Track its status"],
+            "scope_out": ["Branch processing", "Cross-bank settlement"],
+            "user_flow": "1. Customer submits a request\n2. Officer reviews it",
+        },
+        narrative={
+            "non_functional": "1. p95 below 500 ms\n2. Availability at least 99.9%",
+            "launch_plan": "1. Internal pilot\n2. Staged rollout",
+        },
+    )
+
+    assert r"1. Create a request\\" in body
+    assert r"1. Branch processing\\" in body
+    assert r"1. p95 below 500 ms\newline 2. Availability at least 99.9\%" in body
+    assert r"Release plan: 1. Internal pilot\newline 2. Staged rollout" in body
+    assert r"1. Customer submits a request\newline 2. Officer reviews it" in body
+
+
+def test_reimported_launch_cell_is_split_and_deduplicated():
+    saved = """### 3. Technical & Operational Considerations
+| Launch & Rollout Plan | Release plan:1. Release plan:1. Dependencies:1. KSA availability<br>2. KSA availability<br>3. CDA availability |
+"""
+
+    extracted = extract_manual_export_fields(saved)["narrative"]
+
+    assert "launch_plan" not in extracted
+    assert extracted["dependencies"] == "KSA availability\nCDA availability"
+
+    rebuilt = fill_template_body(data={}, narrative=extracted)
+    assert "Release plan:1." not in rebuilt
+    assert rebuilt.count("KSA availability") == 1
+
+
+def test_acceptance_criteria_render_as_distinct_in_cell_lines():
+    body = fill_template_body(data={
+        "requirements": [{
+            "requirement_code": "REQ-001",
+            "title": "Transfer",
+            "user_stories": [{
+                "ticket_code": "US-001",
+                "story_title": "Transfer files",
+                "i_want_to": "transfer files",
+                "acceptance_criteria": ["First criterion", "Second criterion"],
+            }],
+        }],
+    })
+    assert r"AC 1.1: First criterion\newline AC 1.2: Second criterion" in body
+    markdown = prd_to_markdown(body)
+    assert "AC 1.1: First criterion AC 1.2: Second criterion" in markdown
+    assert "First criterion.: Given" not in markdown
 
 
 def test_document_load_ignores_collapsed_section_headings_as_executive_summary():
@@ -600,6 +664,33 @@ def test_filled_pdf_does_not_overflow_into_footer():
                 continue
             assert w[1] < 780, (w[4], w[1])
     doc.close()
+
+
+def test_pdf_preserves_percent_pipe_and_filename_template_exactly():
+    try:
+        import pymupdf
+    except Exception:
+        return
+    filename = "{app_id}_{table}_{yyyyMMdd}_{sequence_number}.{file_type}"
+    body = fill_template_body(
+        data={"scope_in": [f"Use {filename}", "Separate columns with |"]},
+        narrative={"non_functional": "Availability is at least 99.9%"},
+    )
+    pdf = compile_latex_to_pdf(body)
+    doc = pymupdf.open(stream=pdf, filetype="pdf")
+    text = "\n".join(page.get_text() for page in doc)
+    doc.close()
+    assert "99.9%" in text
+    assert filename in text
+    assert "Separate columns with |" in text
+
+
+def test_legacy_latex_escapes_are_normalized_before_export():
+    body = fill_template_body(data={
+        "scope_in": [r"Use \{app\_id\}\_\{table\}.\{file\_type\}"],
+    })
+    assert r"Use \{app\_id\}\_\{table\}.\{file\_type\}" in body
+    assert r"\textbackslash{}\{" not in body
 
 
 def test_product_scope_table_grows_with_stories():
