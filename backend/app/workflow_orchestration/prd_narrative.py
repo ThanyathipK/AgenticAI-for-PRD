@@ -72,14 +72,19 @@ def extract_headed_narrative(raw_input: str) -> dict[str, dict[str, Any]]:
             continue
         item = re.sub(r"^[-*+]\s+", "", line).strip()
         item = re.sub(
-            r"^(?:(?:\d+(?:\.\d+)+(?:[.):])?|\d+[.):])\s+)+", "", item,
+            r"^(?:(?:\d+(?:\.\d+)+(?:[.):])?|\d+[.):])\s+)+",
+            "",
+            item,
         ).strip()
         if not item:
             continue
         key = current
         if current == "technical":
             lowered = item.lower()
-            if re.search(r"\b(?:tps|transactions? per second|requests? per (?:month|day|hour)|customer volume)\b", lowered):
+            if re.search(
+                r"\b(?:tps|transactions? per second|requests? per (?:month|day|hour)|customer volume)\b",
+                lowered,
+            ):
                 key = "tps_volume"
             elif re.search(r"\b(?:growth|yoy|year[- ]over[- ]year)\b", lowered):
                 key = "growth"
@@ -89,13 +94,12 @@ def extract_headed_narrative(raw_input: str) -> dict[str, dict[str, Any]]:
 
     return {
         key: {
-            "value": "\n".join(
-                f"{index}. {item}" for index, item in enumerate(items, start=1)
-            ),
+            "value": "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1)),
             "confidence": 1.0,
             "source": "explicit_user_input",
         }
-        for key, items in buckets.items() if items
+        for key, items in buckets.items()
+        if items
     }
 
 
