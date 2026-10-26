@@ -442,9 +442,16 @@ export const api = {
   getDocumentMarkdown: (projectId: string, documentId: string) =>
     get<DocumentMarkdownPayload>(`/api/project/${projectId}/documents/${documentId}`),
   // FLOW 15 — explicit extraction (DRAFT only); no knowledge-base write happens here.
-  processDocument: (projectId: string, documentId: string) =>
+  processDocument: (projectId: string, documentId: string, signal?: AbortSignal) =>
     post<ProcessDocumentResponse>(
       `/api/project/${projectId}/documents/${documentId}/process`,
+      undefined,
+      undefined,
+      signal,
+    ),
+  cancelDocumentExtraction: (projectId: string, documentId: string) =>
+    post<{ project_id: string; document_id: string; cancelled: boolean }>(
+      `/api/project/${projectId}/documents/${documentId}/process/cancel`,
     ),
   // DOC-UPLOAD 1.6 — permanent removal (DOC-UPLOAD 2.4), which also discards that
   //               document's staged DRAFT server-side (2.4.2).

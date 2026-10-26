@@ -321,6 +321,23 @@ def test_document_load_ignores_collapsed_section_headings_as_executive_summary()
     assert intake["business_topics"]["Problem Statement"] == "A real project problem"
 
 
+def test_empty_numbered_problem_cell_does_not_override_extracted_narrative():
+    saved = """### 1. Business & Strategic Overview
+|Topic|Details|
+|---|---|
+|Introduction & Executive Summary|Existing summary|
+|Problem Statement|1.<br> 2.|
+"""
+    intake = extract_intake_fields(saved)
+
+    assert "Problem Statement" not in intake["business_topics"]
+    body = fill_template_body(
+        business_topics=intake["business_topics"],
+        narrative={"problem_statement": "Customers cannot complete checkout safely."},
+    )
+    assert "Customers cannot complete checkout safely." in body
+
+
 def test_document_load_ignores_template_nfr_example_but_keeps_real_nfr_details():
     template_only = """### 3. Technical & Operational Considerations
 | Consideration | Details |

@@ -152,6 +152,44 @@ async def test_architect_endpoint_stages_without_replacing_saved_prd(
 
 
 @pytest.mark.asyncio
+async def test_architect_rejects_generation_while_requirement_draft_is_pending(
+    client, db_session, seeded_project, monkeypatch,
+):
+    import app.semantic_service as semantic_service
+
+    async def must_not_detect(*_args, **_kwargs):
+        raise AssertionError("intent/model processing must not start")
+
+    monkeypatch.setattr(semantic_service, "detect_requirement_intent", must_not_detect)
+    pending = PendingActionModel(
+        project_id=seeded_project,
+        action_type="INSERT_CHUNKED_REQUIREMENTS",
+        original_user_message="Extract requirements from document",
+        proposed_changes={"requirements_revision": 2},
+        affected_user_story_ids=[],
+        affected_acceptance_criteria_ids=[],
+        workflow_stage="gatherer_node",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    db_session.add(pending)
+    await db_session.commit()
+
+    response = await client.post(
+        "/api/process-requirements",
+        json={
+            "project_id": seeded_project,
+            "raw_input": "",
+            "target_agent": "architect",
+            "force_prd_rebuild": True,
+            "client_persists_timeline": True,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "Save or discard" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_approve_materializes_preview_and_creates_one_version(preview_project):
     session, project_id, actor = preview_project
     action = await _stage(session, project_id)
@@ -180,6 +218,45 @@ async def test_stale_requirements_reject_approval_without_writes(preview_project
     assert await session.scalar(select(func.count()).select_from(PRDVersionModel)) == 0
     state = await RequirementStateRepository.get_by_project_id(project_id, session)
     assert state["generated_prd"] == _doc_v1()
+
+
+@pytest.mark.asyncio
+async def test_confirmed_requirement_change_discards_stale_prd_preview(preview_project):
+    session, project_id, actor = preview_project
+    stale_preview = await _stage(session, project_id)
+    current = await RequirementStateRepository.get_by_project_id(project_id, session)
+    merge = PendingActionModel(
+        project_id=project_id,
+        action_type="INSERT_CHUNKED_REQUIREMENTS",
+        original_user_message="Extract requirements from document",
+        proposed_changes={
+            **current,
+            "prd_narrative": {
+                "problem_statement": {
+                    "value": "The legacy runtime creates security risks.",
+                    "confidence": 0.5,
+                    "source": "explicit_user_input",
+                },
+            },
+            "requirements_revision": 4,
+            "_base_requirements_revision": 3,
+        },
+        affected_user_story_ids=[],
+        affected_acceptance_criteria_ids=[],
+        workflow_stage="REVIEWING",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    session.add(merge)
+    await session.commit()
+
+    result = await confirm_action(str(merge.id), project_id, actor, session)
+
+    assert result["status"] == "confirmed"
+    assert await session.get(PendingActionModel, stale_preview.id) is None
+    persisted = await RequirementStateRepository.get_by_project_id(project_id, session)
+    assert persisted["prd_narrative"]["problem_statement"]["value"].startswith(
+        "The legacy runtime"
+    )
 
 
 @pytest.mark.asyncio

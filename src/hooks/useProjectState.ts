@@ -242,6 +242,16 @@ export function useProjectState(
     ? `agenticdia:active-cascade:${projectsApi.projectId}`
     : null;
 
+  // Authentication owns the visibility boundary for every project-backed
+  // state slice. `useProjects` clears the list and selected id on logout; also
+  // clear the composed workspace store so the last project's chat, PRD,
+  // requirements and pending confirmations cannot remain on screen.
+  useEffect(() => {
+    if (isAuthenticated) return;
+    store.resetProjectState();
+    projectsApi.setPendingActions([]);
+  }, [isAuthenticated]); // reset only when the authentication boundary changes
+
   useEffect(() => {
     setActiveCascadeJobId(
       cascadeStorageKey ? window.localStorage.getItem(cascadeStorageKey) : null,
@@ -574,6 +584,10 @@ export function useProjectState(
     agentActionsBlockedReason,
     isCascadeGenerating: Boolean(activeCascadeJobId),
     handleStopGeneration: () => {
+      if (documents.processingDocId) {
+        void documents.handleStopDocumentExtraction();
+        return;
+      }
       if (activeCascadeJobId && projectsApi.projectId) {
         store.setSyncStatus("Stopping PRD generation…");
         void api

@@ -42,6 +42,7 @@ from app.document_processor import (
     decide_document_mode,
     document_budget,
     extract_requirements_from_text,
+    prepare_document_for_extraction,
     split_markdown_into_chunks,
 )
 from app.event_manager import event_manager
@@ -63,10 +64,15 @@ from app.services.document_ingestion_service import (
     NEEDS_OCR_MESSAGE,
     DocumentIngestionService,
 )
+from app.workflow_cancellation import document_extraction_cancellations
 
 logger = logging.getLogger("app.routes.documents")
 
 router = APIRouter()
+
+
+def _extraction_cancellation_key(project_id: str, document_id: str) -> str:
+    return f"{project_id}:{document_id}"
 
 
 async def _persist_conversion_message(
@@ -740,7 +746,8 @@ async def process_document(
         )
 
     content_markdown = doc.get("content_markdown") or ""
-    token_count = count_tokens(content_markdown)
+    extraction_markdown = prepare_document_for_extraction(content_markdown)
+    token_count = count_tokens(extraction_markdown)
     filename = doc.get("original_filename") or document_id
 
     await _persist_extraction_message(
@@ -766,10 +773,46 @@ async def process_document(
         },
     )
 
+    cancellation_key = _extraction_cancellation_key(project_id, document_id)
+    current_task = asyncio.current_task()
+    if current_task is not None:
+        document_extraction_cancellations.register(cancellation_key, current_task)
+
     try:
         run = await _run_extraction_by_chunks(
-            project_id, document_id, content_markdown, token_count
+            project_id, document_id, extraction_markdown, token_count
         )
+    except asyncio.CancelledError:
+        logger.info(
+            "Document %s extraction stopped by user; discarding partial results.",
+            document_id,
+        )
+        await session.rollback()
+        await DocumentRepository.update_extraction_status(
+            document_id, project_id, "not_extracted", session
+        )
+        await _persist_extraction_message(
+            project_id,
+            "assistant",
+            f'Document requirement extraction stopped for "{filename}". No changes were written.',
+            intent="DOCUMENT_REQUIREMENTS_CANCELLED",
+            session=session,
+        )
+        await event_manager.publish(
+            project_id,
+            "document_extraction_cancelled",
+            {"project_id": project_id, "document_id": document_id},
+        )
+        return {
+            "status": "cancelled",
+            "mode": "cancelled",
+            "chunk_count": 0,
+            "processed_tokens": 0,
+            "pending_action_id": None,
+            "excluded_anything": False,
+            "message": "Extraction stopped. No changes were written.",
+            "document_id": document_id,
+        }
     except Exception:
         # A failed/oversized LLM run must not leave the row looking as though a
         # reviewable draft exists. No pending action has been created yet, so
@@ -792,6 +835,9 @@ async def process_document(
             {"project_id": project_id, "document_id": document_id},
         )
         raise
+    finally:
+        if current_task is not None:
+            document_extraction_cancellations.unregister(cancellation_key, current_task)
 
     doc_draft = accumulate_document_draft(run["chunks"])
     current_state = await RequirementStateRepository.get_by_project_id(project_id, session)
@@ -870,4 +916,30 @@ async def process_document(
             f"chunk(s), {run['processed_tokens']} tokens processed). Nothing has "
             "been written. Review the merge preview and confirm to apply."
         ),
+    }
+
+
+@router.post(
+    "/api/project/{project_id}/documents/{document_id}/process/cancel",
+    status_code=status.HTTP_200_OK,
+)
+async def cancel_document_extraction(
+    project_id: str,
+    document_id: str,
+    current_user: AuthenticatedUser = Depends(require_project_owner),
+) -> Dict[str, Any]:
+    """Stop extraction on the event loop, aborting the LM Studio HTTP await."""
+    try:
+        UUID(project_id)
+        UUID(document_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid project_id or document_id format")
+
+    cancelled = document_extraction_cancellations.cancel(
+        _extraction_cancellation_key(project_id, document_id)
+    )
+    return {
+        "project_id": project_id,
+        "document_id": document_id,
+        "cancelled": cancelled,
     }

@@ -7,7 +7,7 @@ import {
   traceabilityRefreshToken,
 } from "./RequirementTraceability";
 import { VersionHistory } from "./VersionHistory";
-import { ChevronDown, LoaderCircle } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 
 const ArchitectureFlows = lazy(() =>
   import("./ArchitectureFlows").then(({ ArchitectureFlows }) => ({
@@ -53,7 +53,6 @@ export function MainArtifactPanel({ state }: MainArtifactPanelProps) {
           <details className="mt-3 rounded-[10px] border border-outline bg-white">
             <summary className="cursor-pointer list-none px-4 py-3 text-xs font-semibold text-on-surface flex items-center justify-between">
               Requirement hierarchy
-              <ChevronDown className="w-4 h-4 text-on-surface-variant" />
             </summary>
             <div className="border-t border-outline p-3">
               <RequirementTraceability
@@ -64,12 +63,7 @@ export function MainArtifactPanel({ state }: MainArtifactPanelProps) {
           </details>
         </>
       )}
-      {activeTab === "history" && (
-        <>
-          <VersionHistory state={state} />
-          <DocumentLibrary projectId={projectId} docs={documents} />
-        </>
-      )}
+      {activeTab === "history" && <VersionHistory state={state} />}
     </div>
   );
 }

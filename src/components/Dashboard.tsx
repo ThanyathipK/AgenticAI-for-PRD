@@ -204,6 +204,9 @@ export default function Dashboard() {
     lockableRequirements.length > 0
       ? lockableRequirements
       : structuredRequirements.requirements ?? [];
+  const hasPrdGenerationPreview =
+    activeTab === 'prd' &&
+    pendingActions.some(action => action.action_type === 'GENERATE_PRD');
 
   useEffect(() => {
     if (isSearchOpen) {
@@ -846,12 +849,13 @@ export default function Dashboard() {
               </div>
             )}
 
-            {activeTab === 'prd' && pendingActions.some(action => action.action_type === 'GENERATE_PRD') && (
-              <div className="max-w-4xl mx-auto mb-2 px-1 text-[10px] font-bold uppercase tracking-[0.08em] text-on-surface-variant">
-                Current saved PRD (unchanged until preview approval)
-              </div>
-            )}
-            <MainArtifactPanel state={state} />
+            {/* A generated PRD is a complete replacement candidate. Showing the
+                older saved document immediately below it made users inspect the
+                stale blank fields and reasonably conclude that generation had
+                failed. Keep one authoritative document visible: the candidate
+                while review is open, then the saved artifact after approval or
+                discard removes the pending action. */}
+            {!hasPrdGenerationPreview && <MainArtifactPanel state={state} />}
 
           </div>
         </section>

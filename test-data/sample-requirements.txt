@@ -1,0 +1,24 @@
+Project: QuickCart Checkout
+
+Goal
+Allow signed-in customers to complete a purchase quickly and safely.
+
+!!! Customers must be able to add products to a cart, change item quantities, and remove items. The cart total must update immediately after every change.
+
+!!! At checkout, the system must collect a shipping address, billing address, and payment method. If the customer selects "same as shipping," the billing address should be copied automatically.
+
+!!! The system must reject checkout when an item is out of stock, the payment is declined, or a required address field is missing. No order may be created after a failed payment.
+
+!! Customers should be able to apply one valid promotional code per order. Expired, unknown, and minimum-spend-ineligible codes must display a clear error without clearing the cart.
+
+!! After successful payment, the system must create a unique order number and show a confirmation page within 3 seconds. It must also send a confirmation email containing the order number, purchased items, totals, and delivery address.
+
+The checkout service must support 500 concurrent checkout attempts while keeping the 95th-percentile API response time below 2 seconds, excluding third-party payment processing time.
+
+Customer payment card numbers must never be stored in application logs or the product database. All checkout traffic must use TLS 1.2 or later.
+
+! A returning customer may save multiple delivery addresses and choose a default address.
+
+Open question: Should guest checkout be supported in the first release?
+
+Out of scope: split shipments, multiple currencies, subscriptions, gift cards, and partial refunds.

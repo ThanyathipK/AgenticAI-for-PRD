@@ -277,3 +277,29 @@ def test_existing_tbd_prd_is_rebuilt_when_confirmed_narrative_arrives():
         narrative=_prd_narrative_from_explicit_input(state),
     )
     assert not _prd_needs_narrative_refresh(state, updated_prd)
+
+
+def test_document_problem_statement_at_minimum_confidence_is_rendered():
+    """Document extraction uses 0.50 for explicit PRD narrative facts."""
+    state = {
+        "prd_narrative": {
+            "problem_statement": {
+                "value": (
+                    "The services run on an older .NET version with security "
+                    "and compatibility risks."
+                ),
+                "confidence": 0.50,
+                "source": "explicit_user_input",
+            },
+        },
+    }
+
+    narrative = _prd_narrative_from_explicit_input(state)
+    markdown = fill_template_body(
+        project_id="document-project",
+        project_name="Runtime Upgrade",
+        narrative=narrative,
+    )
+
+    assert narrative["problem_statement"].startswith("The services run")
+    assert "The services run on an older .NET version" in markdown

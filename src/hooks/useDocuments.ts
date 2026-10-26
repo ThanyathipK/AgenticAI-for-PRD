@@ -49,6 +49,7 @@ export interface UseDocumentsResult {
   extractionProgress: DocumentExtractionProgress | null;
   handleUploadDocument: (file: File) => Promise<void>;
   handleProcessDocument: (doc: UploadedDocumentPayload) => Promise<void>;
+  handleStopDocumentExtraction: () => Promise<void>;
   /** Permanently removes a document; resolves to true on success. */
   handleDeleteDocument: (doc: UploadedDocumentPayload) => Promise<boolean>;
   refreshDocuments: () => Promise<void>;
@@ -65,6 +66,7 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
   const [extractionProgress, setExtractionProgress] = useState<DocumentExtractionProgress | null>(null);
   const prevPendingCount = useRef<number>(0);
   const uploadInFlightRef = useRef(false);
+  const extractionAbortRef = useRef<AbortController | null>(null);
 
   // DOC-UPLOAD 1.3 — Knowledge-base list load (DOC-UPLOAD 2.2). Runs on project switch and
   //             is the reconciliation point after upload / extraction / delete.
@@ -161,16 +163,14 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
 
   const handleProcessDocument = useCallback(async (doc: UploadedDocumentPayload) => {
     if (!deps.projectId || processingDocId) return;
-    const extractionRequest = `Extract requirements from attached document "${doc.original_filename}".`;
-    deps.setMessages(prev => [...prev, {
-      id: `document-extract-user-${Date.now()}`,
-      role: 'user',
-      content: extractionRequest,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    }]);
+    // The backend persists DOCUMENT_REQUIREMENTS_REQUEST before starting the
+    // long-running model call and SSE refreshes that canonical transcript row.
+    // Do not add an optimistic local copy here or the same request appears twice.
     deps.setSyncStatus(`Gathering requirements from ${doc.original_filename}…`);
     deps.setCurrentAgentNode('gatherer_node');
     setProcessingDocId(doc.id);
+    const controller = new AbortController();
+    extractionAbortRef.current = controller;
     // Optimistic progress placeholder until the first chunk event lands.
     setExtractionProgress({
       documentId: doc.id,
@@ -179,7 +179,15 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
       chunkCount: 0,
     });
     try {
-      const res: ProcessDocumentResponse = await api.processDocument(deps.projectId, doc.id);
+      const res: ProcessDocumentResponse = await api.processDocument(
+        deps.projectId,
+        doc.id,
+        controller.signal,
+      );
+      if (res.status === 'cancelled') {
+        deps.setSyncStatus('Document extraction stopped. No changes were written.');
+        return;
+      }
       if (res.pending_action_id) {
         // Surface the DRAFT through the existing confirmation flow. Nothing is
         // written until the user confirms this single merged preview.
@@ -199,18 +207,36 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
         deps.setSyncStatus('Document requirements gathered. Review the merge preview.');
       }
     } catch (err) {
+      if (controller.signal.aborted) {
+        deps.setSyncStatus('Document extraction stopped. No changes were written.');
+        return;
+      }
       handleError('Document extraction failed. No changes were written.', err);
       // Extraction failures are also persisted and delivered through the SSE
       // transcript refresh. The toast above still covers pre-extraction HTTP
       // validation failures for which no durable chat entry is appropriate.
       deps.setSyncStatus('Document extraction failed. No changes were written.');
     } finally {
+      if (extractionAbortRef.current === controller) extractionAbortRef.current = null;
       deps.setCurrentAgentNode(null);
       setProcessingDocId(null);
       setExtractionProgress(null);
       await refreshDocuments();
     }
   }, [deps, processingDocId, refreshDocuments]);
+
+  const handleStopDocumentExtraction = useCallback(async () => {
+    if (!deps.projectId || !processingDocId) return;
+    deps.setSyncStatus('Stopping document extraction…');
+    try {
+      await api.cancelDocumentExtraction(deps.projectId, processingDocId);
+      extractionAbortRef.current?.abort();
+      deps.setSyncStatus('Document extraction stopped. No changes were written.');
+    } catch (err) {
+      handleError('Could not stop document extraction.', err);
+      deps.setSyncStatus('Document extraction is still running.');
+    }
+  }, [deps, processingDocId]);
 
   // DOC-UPLOAD 1.6 — Remove handler (DOC-UPLOAD 2.4). The deleted document's DRAFT
   //             pending_action was already discarded server-side (2.4.2); the pending
@@ -243,6 +269,7 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
     extractionProgress,
     handleUploadDocument,
     handleProcessDocument,
+    handleStopDocumentExtraction,
     handleDeleteDocument,
     refreshDocuments,
   };

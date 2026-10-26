@@ -1,13 +1,8 @@
 // A concise, read-only hierarchy for finding the item a user wants to change.
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  ChevronRight,
-  GitBranch,
-  ListChecks,
   Loader2,
-  LockKeyhole,
   RefreshCw,
-  UserCircle2,
 } from "lucide-react";
 import { api, detailFromJsonError } from "../api/client";
 import type { TraceabilityPayload, TraceabilityRow } from "../api/types";
@@ -35,45 +30,42 @@ export const traceabilityRefreshToken = (
 ): string => JSON.stringify(state);
 
 const idChip = (id: string): React.ReactNode => (
-  <span className="rounded border border-primary/25 bg-primary/[0.08] px-2 py-0.5 font-mono text-[10.5px] font-bold text-primary">
+  <span className="rounded-md border border-outline bg-slate-50 px-2 py-1 font-mono text-[10.5px] font-semibold text-on-surface-variant">
     {id}
   </span>
 );
 
 const lockChip = (isLocked: boolean): React.ReactNode =>
   isLocked ? (
-    <span className="inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-800">
-      <LockKeyhole className="h-2.5 w-2.5" /> Locked
+    <span className="rounded-md bg-amber-50 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-amber-800">
+      Locked
     </span>
   ) : null;
 
 export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
   row,
 }) => (
-  <article className="rounded-xl border border-outline bg-white p-3">
-    <div className="flex items-start gap-2">
-      <GitBranch className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-1.5">
+  <article className="overflow-hidden rounded-[10px] border border-outline bg-white">
+    <header className="border-b border-outline bg-slate-50/60 px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
           {idChip(row.requirement.requirement_code)}
           <span className="text-sm font-bold text-on-surface">
             {row.requirement.title}
           </span>
           {lockChip(row.requirement.is_locked)}
         </div>
-        {row.requirement.epic_name && (
-          <p className="mt-1 text-xs text-on-surface-variant">
-            {row.requirement.epic_name}
-          </p>
-        )}
-      </div>
-    </div>
-    <div className="ml-2 mt-3 border-l border-outline pl-4">
-      <div className="mb-3 flex flex-wrap gap-1.5">
+      {row.requirement.epic_name && (
+        <p className="mt-1.5 text-xs text-on-surface-variant">
+          {row.requirement.epic_name}
+        </p>
+      )}
+    </header>
+    <div className="p-4">
+      <div className="mb-4 flex flex-wrap gap-1.5">
         {row.prd_sections.map((section) => (
           <span
             key={section}
-            className="rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[9px] font-semibold text-violet-800"
+            className="rounded-md bg-violet-50 px-2 py-1 text-[9px] font-semibold text-violet-800"
           >
             PRD: {section}
           </span>
@@ -81,13 +73,13 @@ export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
         {row.diagrams.map((diagram) => (
           <span
             key={diagram}
-            className="rounded border border-cyan-200 bg-cyan-50 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-800"
+            className="rounded-md bg-cyan-50 px-2 py-1 text-[9px] font-semibold text-cyan-800"
           >
             Diagram: {diagram}
           </span>
         ))}
         {!row.traced && (
-          <span className="rounded border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-rose-800">
+          <span className="rounded-md bg-rose-50 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-rose-800">
             Coverage gap
           </span>
         )}
@@ -97,15 +89,12 @@ export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
           No user story yet.
         </p>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {row.user_stories.map((story) => {
             const storyId = story.ticket_code || "Unassigned story";
             return (
-              <section key={story.id || storyId} className="relative">
-                <ChevronRight className="absolute -left-[21px] top-1 h-3.5 w-3.5 text-on-surface-variant" />
-                <div className="flex items-start gap-2">
-                  <UserCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" />
-                  <div className="min-w-0 flex-1">
+              <section key={story.id || storyId} className="rounded-lg border border-outline bg-white px-3 py-3">
+                  <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
                       {idChip(storyId)}
                       <span className="text-xs font-semibold text-on-surface">
@@ -113,13 +102,13 @@ export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
                       </span>
                       {lockChip(story.is_locked)}
                     </div>
-                    <div className="mt-2 border-l border-outline pl-4">
+                    <div className="mt-3">
                       {story.acceptance_criteria.length === 0 ? (
                         <p className="py-1 text-xs text-on-surface-variant">
                           No acceptance criteria yet.
                         </p>
                       ) : (
-                        <div className="space-y-1.5">
+                        <div className="divide-y divide-outline">
                           {story.acceptance_criteria.map((criterion, index) => {
                             const criterionId =
                               storyId +
@@ -128,12 +117,9 @@ export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
                             return (
                               <div
                                 key={criterionId + "-" + criterion}
-                                className="relative flex items-start gap-2 py-0.5"
+                                className="grid gap-1.5 py-2.5 sm:grid-cols-[auto_1fr] sm:gap-3"
                               >
-                                <ChevronRight className="absolute -left-[21px] top-1 h-3.5 w-3.5 text-on-surface-variant" />
-                                <ListChecks className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-700" />
-                                <div className="min-w-0">
-                                  <div className="flex flex-wrap items-center gap-1.5">
+                                <div className="flex flex-wrap items-start gap-1.5">
                                     {idChip(criterionId)}
                                     {story.criteria_needing_review?.includes(
                                       criterion,
@@ -142,18 +128,16 @@ export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
                                         Review
                                       </span>
                                     )}
-                                  </div>
-                                  <p className="mt-0.5 text-xs leading-relaxed text-on-surface-variant">
+                                </div>
+                                  <p className="text-xs leading-relaxed text-on-surface-variant sm:pt-1">
                                     {criterion}
                                   </p>
-                                </div>
                               </div>
                             );
                           })}
                         </div>
                       )}
                     </div>
-                  </div>
                 </div>
               </section>
             );

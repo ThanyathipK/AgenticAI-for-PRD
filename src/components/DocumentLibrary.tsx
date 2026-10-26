@@ -126,15 +126,21 @@ export const DocumentLibrary: React.FC<DocumentLibraryProps> = ({ projectId, doc
                 <span className={`text-[10px] px-2 py-1 rounded-full border font-bold ${chip.className}`}>
                   {chip.label}
                 </span>
-                <button
-                  onClick={() => void docs.handleProcessDocument(doc)}
-                  disabled={isProcessing || doc.status !== 'processed'}
-                  className="px-3 py-1.5 rounded-xl bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                  title="Extract requirements as a DRAFT merge preview (nothing is written until you confirm)"
-                >
-                  {isProcessing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>{isProcessing ? 'Extracting…' : 'Extract Requirements'}</span>
-                </button>
+                {isProcessing ? (
+                  <span className="px-3 py-1.5 rounded-xl bg-primary/5 text-primary border border-primary/20 text-[11px] font-bold flex items-center gap-1.5 whitespace-nowrap">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Extracting…</span>
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => void docs.handleProcessDocument(doc)}
+                    disabled={doc.status !== 'processed'}
+                    className="px-3 py-1.5 rounded-xl bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                    title="Extract requirements as a DRAFT merge preview (nothing is written until you confirm)"
+                  >
+                    <span>Extract Requirements</span>
+                  </button>
+                )}
                 <button
                   onClick={() => setDeleteTarget(doc)}
                   className="px-3 py-1.5 rounded-xl bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"

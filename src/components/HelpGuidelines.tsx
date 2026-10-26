@@ -1,4 +1,6 @@
-import { AlertTriangle, CheckCircle2, CircleHelp, FileText, Lock, MessageSquare, RefreshCw } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { AlertTriangle, CheckCircle2, CircleHelp, FileText, Lock, MessageSquare, RefreshCw, Search, X } from 'lucide-react';
+import { highlightMatch } from '../utils/highlight';
 
 const STEPS = ['Create a project', 'Add requirements or source files', 'Review and save changes', 'Validate requirements', 'Resolve clarifications', 'Generate and approve the PRD'] as const;
 
@@ -52,6 +54,21 @@ const SECTIONS = [
 ] as const;
 
 export function HelpGuidelines() {
+  const [query, setQuery] = useState('');
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const filteredSections = useMemo(() => {
+    if (!normalizedQuery) return SECTIONS;
+    return SECTIONS.flatMap((section) => {
+      const sectionMatches = section.title.toLocaleLowerCase().includes(normalizedQuery);
+      const items = sectionMatches
+        ? section.items
+        : section.items.filter(([title, description]) =>
+            `${title} ${description}`.toLocaleLowerCase().includes(normalizedQuery),
+          );
+      return items.length > 0 ? [{ ...section, items }] : [];
+    });
+  }, [normalizedQuery]);
+
   return (
     <main className="flex-1 min-w-0 min-h-0 overflow-y-auto bg-[#faf8f4] custom-scrollbar">
       <header className="sticky top-0 z-10 flex h-[50px] items-center gap-2 border-b border-outline bg-white px-5">
@@ -62,7 +79,29 @@ export function HelpGuidelines() {
         <h1 className="text-2xl font-bold text-on-surface">Help &amp; Guidelines</h1>
         <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-on-surface-variant">Learn how this workspace gathers and validates requirements, prepares governed updates, generates PRDs, and protects versioned content.</p>
 
-        <section className="mt-6 rounded-xl border border-outline bg-white p-4 shadow-sm">
+        <div className="relative mt-5 max-w-2xl">
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-on-surface-variant" />
+          <input
+            type="text"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search help and guidelines..."
+            aria-label="Search help and guidelines"
+            className="h-11 w-full rounded-[10px] border border-outline bg-white pl-10 pr-10 text-sm text-on-surface outline-none transition-colors placeholder:text-on-surface-variant/70 focus:border-primary focus:ring-2 focus:ring-primary/10"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery('')}
+              aria-label="Clear help search"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-on-surface-variant hover:bg-slate-100 hover:text-on-surface"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
+        {!normalizedQuery && <section className="mt-6 rounded-xl border border-outline bg-white p-4 shadow-sm">
           <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-on-surface-variant">Getting started</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {STEPS.map((step, index) => <div key={step} className="flex items-center gap-2">
@@ -71,25 +110,31 @@ export function HelpGuidelines() {
             </div>)}
           </div>
           <p className="mt-3 text-xs leading-relaxed text-on-surface-variant">AI output is staged for review before it changes governed requirements or the PRD. Requirement proposals and generated PRD previews each have an explicit save or approval step.</p>
-        </section>
+        </section>}
 
         <div className="mt-4 space-y-3">
-          {SECTIONS.map((section, index) => <details key={section.number} open={index === 0} className="group rounded-xl border border-outline bg-white shadow-sm">
+          {filteredSections.map((section, index) => <details key={`${section.number}-${normalizedQuery}`} open={Boolean(normalizedQuery) || index === 0} className="group rounded-xl border border-outline bg-white shadow-sm">
             <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3.5">
               <span className="flex h-6 w-6 items-center justify-center rounded-md bg-primary/10 text-[11px] font-bold text-primary">{section.number}</span>
-              <span className="flex-1 text-sm font-bold text-on-surface">{section.title}</span>
+              <span className="flex-1 text-sm font-bold text-on-surface">{highlightMatch(section.title, query)}</span>
               <span className="text-xs text-on-surface-variant transition-transform group-open:rotate-180">⌄</span>
             </summary>
             <div className="border-t border-outline px-4 py-2">
               {section.items.map(([title, description]) => <div key={title} className="border-b border-outline/70 py-3 last:border-b-0">
-                <h3 className="text-xs font-bold text-on-surface">{title}</h3>
-                <p className="mt-1 text-xs leading-relaxed text-on-surface-variant">{description}</p>
+                <h3 className="text-xs font-bold text-on-surface">{highlightMatch(title, query)}</h3>
+                <p className="mt-1 text-xs leading-relaxed text-on-surface-variant">{highlightMatch(description, query)}</p>
               </div>)}
             </div>
           </details>)}
+          {normalizedQuery && filteredSections.length === 0 && (
+            <div className="rounded-xl border border-outline bg-white px-5 py-10 text-center">
+              <p className="text-sm font-semibold text-on-surface">No help topics found</p>
+              <p className="mt-1 text-xs text-on-surface-variant">Try a different keyword or clear the search.</p>
+            </div>
+          )}
         </div>
 
-        <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+        {!normalizedQuery && <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
           <div className="flex items-center gap-2 text-amber-800"><AlertTriangle className="h-4 w-4" /><h2 className="text-xs font-bold">Important safeguards</h2></div>
           <ul className="mt-2 space-y-2 text-xs leading-relaxed text-on-surface-variant">
             <li className="flex gap-2"><CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-700" />Review and save staged requirement changes before generating from them.</li>
@@ -99,7 +144,7 @@ export function HelpGuidelines() {
             <li className="flex gap-2"><MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />Use chat to refine saved requirements; use section editing for deliberate manual PRD changes.</li>
             <li className="flex gap-2"><RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />Bounded chat and version loading change only what is fetched first; saved history remains persistent and can be loaded when needed.</li>
           </ul>
-        </section>
+        </section>}
       </div>
     </main>
   );

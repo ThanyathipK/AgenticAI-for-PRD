@@ -659,6 +659,15 @@ async def confirm_action(
             )
             await mark_dependents_for_review(project_id, changed_artifacts, session)
 
+        # Every confirmed requirement merge advances requirements_revision,
+        # including narrative-only document extraction. Therefore every older
+        # PRD preview is obsolete even when dependency detection finds no story
+        # or criterion change. Remove it now so the UI cannot keep displaying
+        # stale blank narrative rows.
+        for pending in await PendingActionRepository.get_by_project(project_id, session):
+            if pending.get("action_type") == "GENERATE_PRD":
+                await PendingActionRepository.delete(pending["id"], project_id, session)
+
     # Architect output is staged without touching the section/version stores.
     # Materialize its sections only at this confirmation boundary so Cancel
     # truly leaves all governed PRD artifacts unchanged.

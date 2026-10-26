@@ -20,6 +20,7 @@ that ``agents.gatherer_node`` uses, so document extraction stays consistent with
 interactive requirement gathering.
 """
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -28,7 +29,7 @@ from langchain_core.prompts import PromptTemplate
 
 from app.config import settings
 from app.input_validation import _get_encoder, count_tokens
-from app.llm_factory import llm
+from app.llm_factory import build_llm
 from app.llm_utils import invoke_llm_structured
 from app.merge_service import (
     collect_acceptance_criteria,
@@ -40,8 +41,26 @@ from app.merge_service import (
 from app.prompt_loader import load_prompt
 from app.requirement_codes import next_requirement_code
 from app.schemas import GatheredRequirements
+from app.workflow_orchestration.prd_narrative import extract_headed_narrative
 
 logger = logging.getLogger("app.document_processor")
+
+# Complete PRD chunks can legitimately need more than the shared 3,000-token
+# completion budget. Chunk sizing above reserves room for this dedicated cap.
+document_llm = build_llm(max_tokens=settings.DOCUMENT_EXTRACTION_OUTPUT_TOKENS)
+
+_MARKDOWN_DATA_IMAGE_RE = re.compile(
+    r"!\[([^\]]*)\]\(\s*data:image/[^;,\s)]+;base64,[A-Za-z0-9+/=\s]+\)",
+    re.IGNORECASE,
+)
+_HTML_DATA_IMAGE_RE = re.compile(
+    r"<img\b[^>]*\bsrc\s*=\s*(['\"])data:image/[^;]+;base64,.*?\1[^>]*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_RAW_DATA_IMAGE_RE = re.compile(
+    r"data:image/[^;,\s)]+;base64,[A-Za-z0-9+/=]+",
+    re.IGNORECASE,
+)
 
 # Gatherer prompt input variables mirrored from agents.gatherer_node.
 _GATHERER_INPUT_VARIABLES = [
@@ -70,6 +89,30 @@ class DocumentRouting:
     document_budget: int
     chunk_size: int
     overlap: int
+
+
+def prepare_document_for_extraction(markdown: str) -> str:
+    """Remove embedded image bytes from the text sent to the LLM.
+
+    Mammoth intentionally preserves DOCX images as base64 data URIs in the
+    canonical markdown.  That is useful for preview/storage but meaningless to
+    a text model: a small logo can consume ten thousand tokens and crowd the
+    actual PRD out of the context window.  Keep a compact marker/alt text while
+    leaving the persisted markdown untouched.
+    """
+    if not markdown:
+        return markdown
+
+    def replace_markdown_image(match: re.Match[str]) -> str:
+        # Alt text such as "company logo" is presentation metadata, not a
+        # product requirement.  Removing the complete image construct prevents
+        # a local model from inventing logo/display stories from that label.
+        return ""
+
+    cleaned = _MARKDOWN_DATA_IMAGE_RE.sub(replace_markdown_image, markdown)
+    cleaned = _HTML_DATA_IMAGE_RE.sub("", cleaned)
+    cleaned = _RAW_DATA_IMAGE_RE.sub("", cleaned)
+    return cleaned
 
 
 def document_budget() -> int:
@@ -152,6 +195,42 @@ def _split_long_line(line: str, chunk_size: int) -> List[str]:
     space_bytes = len(" ".encode("utf-8"))
     current_bytes = 0  # utf-8 byte length of ``" ".join(current)``
     for word in line.split(" "):
+        # DOCX conversion can yield a whole table/XML-like payload as one
+        # whitespace-free "word".  The word-bucket logic below cannot split
+        # that shape, so slice it directly on tokenizer boundaries.  Without
+        # this guard a nominal 1,800-token chunk can contain a 10k-token line
+        # and LM Studio rejects the prompt before inference starts.
+        if count_tokens(word) > chunk_size:
+            if current:
+                pieces.append(" ".join(current))
+                current = []
+                current_bytes = 0
+
+            encoder = _get_encoder()
+            if encoder is not None:
+                word_tokens = encoder.encode(word)
+                pieces.extend(
+                    encoder.decode(word_tokens[start:start + chunk_size])
+                    for start in range(0, len(word_tokens), chunk_size)
+                )
+            else:
+                # Conservative fallback: grow character slices until adding
+                # another character would exceed the measured token budget.
+                start = 0
+                while start < len(word):
+                    low, high = start + 1, len(word)
+                    best = start + 1
+                    while low <= high:
+                        mid = (low + high) // 2
+                        if count_tokens(word[start:mid]) <= chunk_size:
+                            best = mid
+                            low = mid + 1
+                        else:
+                            high = mid - 1
+                    pieces.append(word[start:best])
+                    start = best
+            continue
+
         word_bytes = len(word.encode("utf-8"))
         candidate_bytes = current_bytes + word_bytes + (space_bytes if current else 0)
         if current and candidate_bytes > chunk_size:
@@ -265,6 +344,7 @@ def accumulate_document_draft(chunk_results: List[Dict[str, Any]]) -> Dict[str, 
     seen_titles: set = set()
     req_map: Dict[str, Dict[str, Any]] = {}
     epic_name = ""
+    prd_narrative: Dict[str, Dict[str, Any]] = {}
 
     for chunk in chunk_results:
         if not chunk:
@@ -272,6 +352,23 @@ def accumulate_document_draft(chunk_results: List[Dict[str, Any]]) -> Dict[str, 
         chunk_epic = (chunk.get("epic_name") or "").strip()
         if chunk_epic:
             epic_name = chunk_epic
+        for field, payload in (chunk.get("prd_narrative") or {}).items():
+            if not isinstance(payload, dict):
+                continue
+            value = str(payload.get("value") or "").strip()
+            if not value:
+                continue
+            existing = prd_narrative.get(field)
+            if existing and value not in str(existing.get("value") or ""):
+                value = f"{existing.get('value', '').rstrip()}\n{value}".strip()
+            prd_narrative[field] = {
+                "value": value,
+                "confidence": max(
+                    float((existing or {}).get("confidence") or 0),
+                    float(payload.get("confidence") or 0),
+                ),
+                "source": payload.get("source") or (existing or {}).get("source") or "explicit_user_input",
+            }
         for req in chunk.get("requirements") or []:
             # A chunk that omits the code gets the next code of the sequence
             # being accumulated (REQ-001 for the first group) instead of a
@@ -281,6 +378,7 @@ def accumulate_document_draft(chunk_results: List[Dict[str, Any]]) -> Dict[str, 
                 req_map[code] = {
                     "requirement_code": code,
                     "title": (req.get("title") or f"Requirement {code}").strip(),
+                    "functional_requirement": req.get("functional_requirement") or "",
                     "description": req.get("description") or "",
                     "user_stories": [],
                 }
@@ -306,7 +404,11 @@ def accumulate_document_draft(chunk_results: List[Dict[str, Any]]) -> Dict[str, 
                     }
                 )
 
-    return {"epic_name": epic_name, "requirements": list(req_map.values())}
+    return {
+        "epic_name": epic_name,
+        "requirements": list(req_map.values()),
+        "prd_narrative": prd_narrative,
+    }
 
 
 def build_merge_preview(
@@ -356,13 +458,32 @@ def build_merge_preview(
             existing_by_code[code].get("user_stories") or []
         )
 
-    for doc_req in doc_draft.get("requirements", []):
-        code = (doc_req.get("requirement_code") or "").strip() or next_requirement_code(existing_by_code)
+    incoming_requirements = list(doc_draft.get("requirements", []))
+    # A standalone document starts numbering at REQ-001, independently of the
+    # project's existing state.  If those codes collide with unrelated saved
+    # requirements, rebasing the whole incoming set preserves the document's
+    # grouping instead of attaching (for example) a .NET upgrade story beneath
+    # an old "Display Logo" requirement.
+    rebase_incoming = any(
+        (code := (req.get("requirement_code") or "").strip()) in existing_by_code
+        and normalize_title(existing_by_code[code].get("title"))
+        != normalize_title(req.get("title"))
+        for req in incoming_requirements
+    )
+
+    for doc_req in incoming_requirements:
+        code = (
+            next_requirement_code(existing_by_code)
+            if rebase_incoming
+            else (doc_req.get("requirement_code") or "").strip()
+            or next_requirement_code(existing_by_code)
+        )
         target = existing_by_code.get(code)
         if target is None:
             target = {
                 "requirement_code": code,
                 "title": doc_req.get("title") or f"Requirement {code}",
+                "functional_requirement": doc_req.get("functional_requirement") or "",
                 "description": doc_req.get("description") or "",
                 "user_stories": [],
             }
@@ -377,6 +498,10 @@ def build_merge_preview(
         "requirements": list(existing_by_code.values()),
         "user_stories": active_stories,
         "acceptance_criteria": collect_acceptance_criteria(active_stories),
+        "prd_narrative": {
+            **(current_state.get("prd_narrative") or {}),
+            **(doc_draft.get("prd_narrative") or {}),
+        },
         "business_goals": current_state.get("business_goals") or [],
         "actors": current_state.get("actors") or [],
         "clarification_questions": current_state.get("clarification_questions") or [],
@@ -422,16 +547,25 @@ async def extract_requirements_from_text(
         len(chunk_text),
     )
     result = await invoke_llm_structured(
-        llm,
+        document_llm,
         prompt_template,
         GatheredRequirements,
         variables={
             "raw_input": chunk_text,
             "detected_intent": "REQUIREMENT_REQUEST",
             "intent_guidance": (
-                "Document upload mode: extract ALL requirements present in the "
-                "document text as fresh user stories; there are no existing "
-                "stories to preserve."
+                "FULL PRD EXTRACTION OVERRIDE: Treat only the text inside "
+                "raw_user_input as source evidence. The extraction request, file "
+                "upload/conversion mechanism, document title page, logos, table of "
+                "contents, authors, reviewers, and other document metadata are NOT "
+                "product requirements. Ignore the generic five-story limit and "
+                "extract EVERY explicitly stated functional requirement and user "
+                "story in this source chunk. Preserve explicit actors, goals, "
+                "service/agent scope lists, rules, and acceptance criteria. Put "
+                "explicit performance, security, scope, success metrics, risks, "
+                "and glossary facts into prd_narrative. Do not invent requirements "
+                "about uploading, parsing, displaying, or processing this document. "
+                "There are no existing stories to preserve."
             ),
             # Document processing starts from the document alone; the current
             # requirement snapshot is merged afterwards, not fed into the LLM.
@@ -446,4 +580,15 @@ async def extract_requirements_from_text(
         # empty response or a copy of the schema during JSON repair.
         native_json_schema=True,
     )
+    # Headed PRD fields are copied deterministically from source text. This is
+    # deliberately model-independent: the LLM still extracts requirements and
+    # free-form facts, while familiar PRD headings cannot be silently omitted
+    # or paraphrased into the wrong preview row. Explicit source text wins when
+    # both paths populate the same field.
+    explicit_narrative = extract_headed_narrative(chunk_text)
+    if explicit_narrative:
+        result["prd_narrative"] = {
+            **(result.get("prd_narrative") or {}),
+            **explicit_narrative,
+        }
     return result

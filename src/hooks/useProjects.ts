@@ -159,7 +159,14 @@ export function useProjects(isAuthenticated: boolean, authUserId: string | null)
 
     // Per-user boundary: searching (and the unfiltered restore) only run for a
     // signed-in user; the server scopes results to the JWT subject anyway.
-    if (!isAuthenticated) return;
+    if (!isAuthenticated) {
+      // Invalidate an already-started search/restore request. Its promise can
+      // resolve after logout, and without advancing the sequence it would put
+      // the previous user's projects back into the now-signed-out sidebar.
+      searchStateRef.current.searching = false;
+      searchStateRef.current.seq += 1;
+      return;
+    }
 
     // Query emptied -> restore the unfiltered list, but only after a search
     // actually replaced it (keeps the mount-time load untouched).

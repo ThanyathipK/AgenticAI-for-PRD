@@ -657,8 +657,14 @@ export function useRequirementStore(
     setVersionHistory([]);
     setSyncStatus("Switched project. Loading...");
     setSections([]);
+    setEditingSectionId(null);
+    setEditBuffer("");
+    setLockedArtifacts({});
+    setLockedRequirements({});
     setSectionLocks({});
     setClarificationAnswers({});
+    setIsProcessing(false);
+    setIsLoading(false);
   };
 
   return {

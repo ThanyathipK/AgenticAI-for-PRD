@@ -17,7 +17,6 @@ import {
   ArrowDown,
 } from 'lucide-react';
 import { ProjectState } from '../hooks/useProjectState';
-import { ChatEmptyState } from './ChatEmptyState';
 import { Tooltip } from './Tooltip';
 import { highlightMatch } from '../utils/highlight';
 import { displayUserName } from '../utils/actorName';
@@ -398,6 +397,7 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
     lmStudioOnline,
     lmStudioModelLoaded,
     documents,
+    pendingActions,
     canRunAgentActions,
     agentActionsBlockedReason,
     isCascadeGenerating,
@@ -436,7 +436,13 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
   // Architect agents to work with, so Validate Requirements / Generate PRD
   // stay disabled until real content exists.
   const llmUnavailable = lmStudioOnline === false || !lmStudioModelLoaded;
-  const agentActionsDisabled = isLoading || isProcessing || !canRunAgentActions || llmUnavailable;
+  const isDocumentExtracting = Boolean(documents.processingDocId);
+  const isActiveProcessing = isProcessing || isCascadeGenerating || isDocumentExtracting;
+  const hasPendingRequirementChanges = pendingActions.some(
+    action => action.action_type !== 'GENERATE_PRD',
+  );
+  const agentActionsDisabled = isLoading || isActiveProcessing || !canRunAgentActions || llmUnavailable;
+  const generatePrdDisabled = agentActionsDisabled || hasPendingRequirementChanges;
   const agentActionHint = !projectId
     ? 'Create or select a project first'
     : agentActionsBlockedReason
@@ -597,16 +603,6 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading earlier messages…
           </div>
         )}
-        {messages.length === 0 && (
-          // CHAT 1.1 — Empty-state suggestion chips: `onPick` feeds the same
-          // handler as the composer (CHAT 1.2), so a suggested prompt is just a
-          // prefilled user turn.
-          <ChatEmptyState
-            disabled={!projectId || isLoading || isProcessing}
-            disabledReason={agentActionHint}
-            onPick={(prompt) => void handleSendMessage(prompt)}
-          />
-        )}
         <AnimatePresence initial={false}>
           {messages.map((msg, msgIndex) => {
             const isUser = msg.role === 'user';
@@ -686,7 +682,7 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
           })}
         </AnimatePresence>
 
-        {(isProcessing || isCascadeGenerating) && (
+        {isActiveProcessing && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -696,7 +692,9 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
           >
             <RefreshCw className="w-3.5 h-3.5 shrink-0 animate-spin text-primary" />
             <span>
-              {isCascadeGenerating
+              {isDocumentExtracting
+                ? 'Extracting requirements from the document with LM Studio…'
+                : isCascadeGenerating
                 ? 'Updating the PRD with your saved requirements…'
                 : currentAgentNode === 'gatherer_node'
                   ? 'Structuring your requirements with LM Studio…'
@@ -755,8 +753,12 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
           <button
             type="button"
             onClick={handleGeneratePRD}
-            disabled={agentActionsDisabled}
-            title={agentActionsDisabled ? agentActionHint : 'Compile the formal PRD and architecture diagram'}
+            disabled={generatePrdDisabled}
+            title={hasPendingRequirementChanges
+              ? 'Save or discard the pending requirement changes before generating the PRD'
+              : agentActionsDisabled
+                ? agentActionHint
+                : 'Compile the formal PRD and architecture diagram'}
             className="min-w-0 w-full h-[42px] px-3 rounded-[10px] bg-primary text-on-primary hover:brightness-110 font-label-md text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FileText className="w-3.5 h-3.5" />
@@ -774,7 +776,7 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
               type="button"
               aria-label="Attach file"
               onClick={handleClipClick}
-              disabled={!projectId || isLoading || isProcessing || documents.isUploading}
+              disabled={!projectId || isLoading || isActiveProcessing || documents.isUploading}
               className="w-8 h-8 rounded-full bg-[#f4ece4] flex items-center justify-center text-primary hover:bg-[#eadfd5] transition-colors shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {documents.isUploading ? (
@@ -801,7 +803,7 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
             value={rawInput}
             maxLength={CHAT_INPUT_MAX_LENGTH}
             aria-describedby={rawInput.length >= CHAT_INPUT_MAX_LENGTH ? 'chat-input-character-warning' : undefined}
-            disabled={isLoading || isProcessing || isCascadeGenerating}
+            disabled={isLoading || isActiveProcessing}
             onChange={(e) => setRawInput(e.target.value)}
             onKeyDown={(e) => {
               // Enter sends; Shift+Enter inserts a newline. The isComposing
@@ -814,14 +816,14 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
                 handleSendMessage();
               }
             }}
-            placeholder={isProcessing || isCascadeGenerating ? 'Processing...' : isLoading ? 'Loading...' : 'Add !!!, !!, or ! before a request to set priority…'}
+            placeholder={isActiveProcessing ? 'Processing...' : isLoading ? 'Loading...' : 'Add !!!, !!, or ! before a request to set priority…'}
             className="flex-1 min-w-0 bg-transparent border-none focus:ring-0 font-body-sm text-sm placeholder:text-on-surface-variant/55 text-on-surface outline-none resize-none max-h-40 leading-relaxed py-1 custom-scrollbar"
           />
-          {isProcessing || isCascadeGenerating ? (
-            <Tooltip label="Stop generating" side="top">
+          {isActiveProcessing ? (
+            <Tooltip label={isDocumentExtracting ? 'Stop document extraction' : 'Stop generating'} side="top">
               <button
                 type="button"
-                aria-label="Stop generating"
+                aria-label={isDocumentExtracting ? 'Stop document extraction' : 'Stop generating'}
                 onClick={handleStopGeneration}
                 className="w-8.5 h-8.5 rounded-full flex items-center justify-center transition-transform shrink-0 shadow-sm bg-red-600 text-white hover:bg-red-700 hover:scale-105 cursor-pointer"
               >

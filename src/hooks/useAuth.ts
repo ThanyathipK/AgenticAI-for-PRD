@@ -241,15 +241,20 @@ export function useAuth(): UseAuthResult {
   //            → local clear AUTH 4.3 → AUTH 1.6 reverts to the signed-out UI.
   const logout = useCallback(async () => {
     setIsAuthenticating(true);
+    // Clear the browser session before the best-effort audit request. Besides
+    // making logout feel immediate, this prevents any project UI from staying
+    // visible while a slow/unreachable backend handles POST /auth/logout.
+    const tokenToLogout = token;
+    clearSession();
     try {
       // AUTH 4.2 — Best-effort server-side call. The JWT is stateless (AUTH 1.7.3),
       //            so a failure here is not fatal — AUTH 4.3 is what actually signs
       //            out — and the error is swallowed rather than shown.
       // Best-effort: the server writes an audit-log line, but the JWT is
       // stateless, so the client-side clear below is what actually signs out.
-      if (token) {
+      if (tokenToLogout) {
         try {
-          await api.authLogout(token);
+          await api.authLogout(tokenToLogout);
         } catch (err: unknown) {
           console.warn('Server-side logout call failed; clearing session locally', err);
         }
@@ -257,7 +262,6 @@ export function useAuth(): UseAuthResult {
     } finally {
       // AUTH 4.3 — clearSession runs even when the server call threw, so the UI
       //            can never stay stuck in a half-signed-out state.
-      clearSession();
       setIsAuthenticating(false);
       notify('Signed out', 'info');
     }

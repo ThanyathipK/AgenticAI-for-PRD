@@ -191,17 +191,17 @@ class Settings(BaseSettings):
     # prompt + gatherer instructions + tool schema + output slack still fit when
     # the chunk is joined to the prompt (Option 2 math — never set the chunk near
     # the full context window).
-    DOCUMENT_BUDGET_FRACTION: float = 0.6
+    DOCUMENT_BUDGET_FRACTION: float = 0.1
     # Target token size of a single document chunk (overlap keeps headings and
     # context from being clipped at chunk boundaries).
     #
-    # Sizing math (MAX_CONTEXT_TOKENS=8192, gatherer max_tokens=3000, ~700
-    # prompt/system/format tokens): chunk 3500 + overlap 250 = 3750 input tokens
-    # leaves 3750 tokens of headroom for the prompt and the extracted JSON, so a
-    # single pass stays comfortably inside the window. Bigger chunks => fewer
-    # gatherer passes => faster extraction for otherwise-equal document content.
-    DOCUMENT_CHUNK_SIZE: int = 3500
-    DOCUMENT_CHUNK_OVERLAP: int = 250
+    # The document prompt + JSON schema costs roughly 2,800 tokens. Reserve up
+    # to 4,000 completion tokens because complete PRDs frequently exceed the
+    # shared client's 3,000-token output cap. A 900-token source chunk plus 100
+    # overlap remains safely below an 8,192-token context window.
+    DOCUMENT_CHUNK_SIZE: int = 900
+    DOCUMENT_CHUNK_OVERLAP: int = 100
+    DOCUMENT_EXTRACTION_OUTPUT_TOKENS: int = 4000
     # Bounded parallelism across chunked gatherer passes. 1 = fully sequential
     # (safe default for a single-slot local LM Studio model on a 16 GB laptop).
     # Raise to 2-4 when the inference gateway can serve concurrent requests

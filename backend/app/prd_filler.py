@@ -293,6 +293,13 @@ def is_template_only_detail(value: Any, field: str = "") -> bool:
     and neither should be restored when a saved document is loaded.
     """
     normalized = re.sub(r"\s+", " ", str(value or "")).strip().lower()
+    # Empty generated list cells round-trip through LaTeX/Markdown as artifacts
+    # such as ``1. 2.``. They are not manual user content and must not override
+    # newly extracted narrative fields merely because the string is non-empty.
+    without_empty_markers = re.sub(r"(?:^|\s)\d+[.)](?=\s|$)", " ", normalized)
+    without_empty_markers = re.sub(r"[\s,;:.-]+", "", without_empty_markers)
+    if not without_empty_markers:
+        return True
     normalized = re.sub(r"^\d+[.)]?\s*", "", normalized)
     if not normalized or normalized == "tbd" or normalized in _EVIDENCE_GAP_TEXT:
         return True

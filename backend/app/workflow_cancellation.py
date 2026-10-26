@@ -79,3 +79,7 @@ class WorkflowCancellationRegistry:
 
 # Process-wide singleton consumed by the requirements route module.
 workflow_cancellations = WorkflowCancellationRegistry()
+
+# Document extraction is a separate long-running request from the LangGraph
+# workflow, so it needs its own namespace. Keys include project + document IDs.
+document_extraction_cancellations = WorkflowCancellationRegistry()

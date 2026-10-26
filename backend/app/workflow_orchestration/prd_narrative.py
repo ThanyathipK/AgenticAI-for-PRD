@@ -9,6 +9,96 @@ from typing import Any
 PRD_NARRATIVE_CONFIDENCE_THRESHOLD = 0.50
 
 
+def extract_headed_narrative(raw_input: str) -> dict[str, dict[str, Any]]:
+    """Extract explicitly headed PRD facts without model inference."""
+    heading_keys = {
+        "introduction and executive summary": "exec_summary",
+        "introduction & executive summary": "exec_summary",
+        "executive summary": "exec_summary",
+        "problem statement": "problem_statement",
+        "goals and business objectives": "business_objectives",
+        "goals & business objectives": "business_objectives",
+        "business objectives": "business_objectives",
+        "expected benefit": "expected_benefit",
+        "expected benefits": "expected_benefit",
+        "success metrics": "success_metrics",
+        "target audience and user personas": "target_audience",
+        "target audience & user personas": "target_audience",
+        "target audience": "target_audience",
+        "user flow and wireframes": "user_flow",
+        "user flow & wireframes": "user_flow",
+        "user flow": "user_flow",
+        "scope in": "scope_in",
+        "in scope": "scope_in",
+        "scope out": "scope_out",
+        "out of scope": "scope_out",
+        "technical requirements": "technical",
+        "non-functional requirements": "technical",
+        "non functional requirements": "technical",
+        "release phasing": "launch_plan",
+        "rollout plan": "launch_plan",
+        "launch plan": "launch_plan",
+        "launch and rollout plan": "launch_plan",
+        "launch & rollout plan": "launch_plan",
+        "dependencies": "dependencies",
+        "go-to-market checklist": "go_to_market",
+        "go to market checklist": "go_to_market",
+        "assumptions": "assumptions",
+        "open questions and risks": "open_questions",
+        "open questions & risks": "open_questions",
+        "open questions": "open_questions",
+        "risks": "open_questions",
+        "related documents": "related_documents",
+        "glossary": "glossary",
+    }
+    buckets: dict[str, list[str]] = {}
+    current: str | None = None
+    for raw_line in str(raw_input or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        inline = re.match(r"^(?:#{1,6}\s*)?([^:]+):\s*(.+)$", line)
+        if inline and inline.group(1).strip().lower() in heading_keys:
+            current = heading_keys[inline.group(1).strip().lower()]
+            line = inline.group(2).strip()
+        possible_heading = re.sub(r"^#{1,6}\s*", "", line).rstrip(":").strip().lower()
+        if possible_heading in heading_keys:
+            current = heading_keys[possible_heading]
+            continue
+        if line.endswith(":") and not re.match(r"^[-*+]\s+", line):
+            current = None
+            continue
+        if current is None:
+            continue
+        item = re.sub(r"^[-*+]\s+", "", line).strip()
+        item = re.sub(
+            r"^(?:(?:\d+(?:\.\d+)+(?:[.):])?|\d+[.):])\s+)+", "", item,
+        ).strip()
+        if not item:
+            continue
+        key = current
+        if current == "technical":
+            lowered = item.lower()
+            if re.search(r"\b(?:tps|transactions? per second|requests? per (?:month|day|hour)|customer volume)\b", lowered):
+                key = "tps_volume"
+            elif re.search(r"\b(?:growth|yoy|year[- ]over[- ]year)\b", lowered):
+                key = "growth"
+            else:
+                key = "non_functional"
+        buckets.setdefault(key, []).append(item)
+
+    return {
+        key: {
+            "value": "\n".join(
+                f"{index}. {item}" for index, item in enumerate(items, start=1)
+            ),
+            "confidence": 1.0,
+            "source": "explicit_user_input",
+        }
+        for key, items in buckets.items() if items
+    }
+
+
 def narrative_from_validated_audit(requirement_state: dict[str, Any]) -> dict[str, Any]:
     """Extract only supported, high-confidence audit detail for the PRD tail."""
     technical_terms = (

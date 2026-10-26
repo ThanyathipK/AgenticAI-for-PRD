@@ -13,6 +13,7 @@ Run from the ``backend`` directory::
 """
 import io
 import json
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -27,8 +28,11 @@ from app.database import get_db as app_get_db
 from app.document_processor import (
     DRAFT_ACTION_TYPE,
     accumulate_document_draft,
+    build_merge_preview,
     decide_document_mode,
     document_budget,
+    extract_requirements_from_text,
+    prepare_document_for_extraction,
     route_document_tokens,
     split_markdown_into_chunks,
     _split_long_line,
@@ -181,6 +185,20 @@ class TestTokenRouting:
 # Chunker correctness: counts, overlap, no content loss across boundaries
 # =====================================================================
 class TestChunker:
+    def test_embedded_data_image_is_removed_from_extraction_input(self):
+        payload = "A" * 20_000
+        markdown = (
+            "# Product requirements\n"
+            "![Company logo\nAI-generated content](data:image/png;base64,"
+            f"{payload})\n"
+            "REQ-001: Upgrade the service to .NET 8."
+        )
+        cleaned = prepare_document_for_extraction(markdown)
+        assert payload not in cleaned
+        assert "Company logo AI-generated content" not in cleaned
+        assert "REQ-001: Upgrade the service to .NET 8." in cleaned
+        assert count_tokens_local(cleaned) < 100
+
     def test_empty_text_returns_no_chunks(self):
         assert split_markdown_into_chunks("") == []
 
@@ -252,6 +270,14 @@ class TestChunker:
         # No content was lost between the pieces.
         assert " ".join(pieces) == blob
 
+    def test_single_unbroken_blob_is_split_within_budget(self):
+        """A whitespace-free DOCX artifact must not bypass the chunk limit."""
+        blob = "x" * 20_000
+        pieces = _split_long_line(blob, chunk_size=100)
+        assert len(pieces) > 1
+        assert all(count_tokens_local(piece) <= 100 for piece in pieces)
+        assert "".join(pieces) == blob
+
     def test_split_long_line_matches_exact_reference(self):
         """The fast path output must be identical to the original per-word exact
         algorithm (reference reimplemented inline for proof of equivalence)."""
@@ -281,6 +307,102 @@ def count_tokens_local(text: str) -> int:
     from app.input_validation import count_tokens
 
     return count_tokens(text)
+
+
+def test_accumulator_preserves_functional_requirements_and_chunk_narrative():
+    chunks = [
+        {
+            "epic_name": "Runtime Upgrade",
+            "requirements": [{
+                "requirement_code": "REQ-001",
+                "title": "Upgrade Runtime",
+                "functional_requirement": "The system must run all active services on .NET 8.",
+                "description": "Upgrade active services.",
+                "user_stories": [make_story("US-001", "Upgrade Services")],
+            }],
+            "prd_narrative": {
+                "non_functional": {
+                    "value": "1. API response time must not exceed two seconds.",
+                    "confidence": 0.95,
+                    "source": "explicit_user_input",
+                }
+            },
+        },
+        {
+            "epic_name": "Runtime Upgrade",
+            "requirements": [],
+            "prd_narrative": {
+                "non_functional": {
+                    "value": "2. VA scan must report zero old-runtime findings.",
+                    "confidence": 0.9,
+                    "source": "explicit_user_input",
+                },
+                "scope_out": {
+                    "value": "1. No mobile UI changes.",
+                    "confidence": 0.99,
+                    "source": "explicit_user_input",
+                },
+            },
+        },
+    ]
+
+    draft = accumulate_document_draft(chunks)
+
+    assert draft["requirements"][0]["functional_requirement"].startswith("The system must")
+    assert "two seconds" in draft["prd_narrative"]["non_functional"]["value"]
+    assert "zero old-runtime findings" in draft["prd_narrative"]["non_functional"]["value"]
+    assert draft["prd_narrative"]["scope_out"]["value"] == "1. No mobile UI changes."
+
+
+@pytest.mark.asyncio
+async def test_document_extraction_preserves_all_explicit_prd_headings(monkeypatch):
+    import app.document_processor as processor
+
+    async def model_result(*_args, **_kwargs):
+        return {
+            "epic_name": "Runtime Upgrade",
+            "requirements": [],
+            # Simulate a model that omitted or misplaced every narrative field.
+            "prd_narrative": {},
+        }
+
+    monkeypatch.setattr(processor, "invoke_llm_structured", model_result)
+    source = """Executive Summary: Upgrade the runtime safely.
+Problem Statement: Unsupported runtimes create security exposure.
+Business Objectives: Close all end-of-support findings.
+Expected Benefits: Reduce operational risk.
+Success Metrics: Zero old-runtime VA findings.
+Target Audience: Platform administrators.
+User Flow: Inventory, upgrade, validate, and release.
+Scope In: Active services and agents.
+Scope Out: New business features.
+Technical Requirements:
+- Maintain 99.9% availability.
+- Support 100 transactions per second.
+Rollout Plan: Pilot before production rollout.
+Dependencies: .NET 8 hosting bundle.
+Go-to-Market Checklist: Notify operations before release.
+Assumptions: Existing APIs remain compatible.
+Open Questions and Risks: Confirm the rollback window.
+Glossary: VA means Vulnerability Assessment.
+Related Documents: Runtime impact list.
+"""
+
+    result = await extract_requirements_from_text(source)
+
+    expected = {
+        "exec_summary", "problem_statement", "business_objectives",
+        "expected_benefit", "success_metrics", "target_audience", "user_flow",
+        "scope_in", "scope_out", "non_functional", "tps_volume", "launch_plan",
+        "dependencies", "go_to_market", "assumptions", "open_questions",
+        "glossary", "related_documents",
+    }
+    assert expected <= set(result["prd_narrative"])
+    assert "Unsupported runtimes" in result["prd_narrative"]["problem_statement"]["value"]
+    assert all(
+        item["source"] == "explicit_user_input"
+        for item in result["prd_narrative"].values()
+    )
 
 
 # =====================================================================
@@ -465,7 +587,93 @@ def fake_gatherer(monkeypatch):
     return calls
 
 
+def test_document_requirements_rebase_when_codes_collide_with_unrelated_groups():
+    current = {
+        "project_name": "Existing project",
+        "requirements_revision": 2,
+        "prd_narrative": {"exec_summary": {"value": "Existing summary"}},
+        "requirements": [
+            {"requirement_code": "REQ-001", "title": "Display Logo", "user_stories": []},
+            {"requirement_code": "REQ-002", "title": "Handle Document Upload", "user_stories": []},
+        ],
+        "user_stories": [],
+    }
+    document = {
+        "prd_narrative": {
+            "non_functional": {"value": "Latency must remain below two seconds."}
+        },
+        "requirements": [
+            {
+                "requirement_code": "REQ-001",
+                "title": "Upgrade Services to .NET 8",
+                "user_stories": [make_story("US-001", "Upgrade Services")],
+            },
+            {
+                "requirement_code": "REQ-002",
+                "title": "Remove Obsolete Runtimes",
+                "user_stories": [make_story("US-002", "Remove Old Runtimes")],
+            },
+        ]
+    }
+
+    preview = build_merge_preview("project-id", current, document, "doc-id", "prd.docx")
+
+    assert [(r["requirement_code"], r["title"]) for r in preview["requirements"]] == [
+        ("REQ-001", "Display Logo"),
+        ("REQ-002", "Handle Document Upload"),
+        ("REQ-003", "Upgrade Services to .NET 8"),
+        ("REQ-004", "Remove Obsolete Runtimes"),
+    ]
+    assert preview["prd_narrative"]["exec_summary"]["value"] == "Existing summary"
+    assert "two seconds" in preview["prd_narrative"]["non_functional"]["value"]
+
+
 class TestDraftOnlyExtraction:
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_active_extraction_and_writes_no_draft(
+        self, seeded_project, client, db_session, monkeypatch
+    ):
+        started = asyncio.Event()
+        model_request_cancelled = asyncio.Event()
+
+        async def slow_extract(*_args, **_kwargs):
+            started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                # This represents the awaited LM Studio HTTP request. The stop
+                # endpoint must cancel that await, not only detach the browser.
+                model_request_cancelled.set()
+                raise
+
+        import app.routes.documents as documents_module
+        monkeypatch.setattr(documents_module, "extract_requirements_from_text", slow_extract)
+
+        doc = await _upload_doc(client, seeded_project)
+        processing = asyncio.create_task(client.post(
+            f"/api/project/{seeded_project}/documents/{doc['id']}/process"
+        ))
+        await started.wait()
+
+        stopped = await client.post(
+            f"/api/project/{seeded_project}/documents/{doc['id']}/process/cancel"
+        )
+        response = await processing
+
+        assert stopped.status_code == 200
+        assert stopped.json()["cancelled"] is True
+        assert model_request_cancelled.is_set()
+        assert response.status_code == 200
+        assert response.json()["status"] == "cancelled"
+        assert await _count(db_session, PendingActionModel) == 0
+        doc_row = (
+            await db_session.execute(
+                select(DocumentModel).where(DocumentModel.id == doc["id"])
+            )
+        ).scalar_one()
+        await db_session.refresh(doc_row)
+        assert doc_row.extraction_status == "not_extracted"
 
     @pytest.mark.asyncio
     async def test_failed_extraction_restores_knowledge_only_status(

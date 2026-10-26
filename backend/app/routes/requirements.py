@@ -957,6 +957,29 @@ async def _process_requirements_pipeline(
         req_state.get("version_number") if req_state else "none",
     )
 
+    # Architect output must be built only from confirmed canonical state. A
+    # document/gatherer draft is intentionally absent from req_state until the
+    # user saves it; allowing Generate PRD here produced a plausible document
+    # containing older fields while newly extracted fields (notably Problem
+    # Statement) were missing. Enforce this on the server as well as the UI so
+    # direct/API callers cannot generate from an incomplete revision.
+    if request.target_agent == "architect":
+        pending_requirement_actions = [
+            action
+            for action in await PendingActionRepository.get_by_project(
+                request.project_id, session
+            )
+            if action.get("action_type") != "GENERATE_PRD"
+        ]
+        if pending_requirement_actions:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Save or discard the pending requirement changes before "
+                    "generating a PRD. PRD generation uses confirmed project state only."
+                ),
+            )
+
     # Detect intent on the raw input
     # INTENT 1.3 — Detector invocation: raw user text + the project's current user
     #              stories (context disambiguates "add X" from "explain X").
