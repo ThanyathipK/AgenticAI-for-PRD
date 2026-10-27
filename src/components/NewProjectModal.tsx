@@ -69,7 +69,7 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
   const handleSubmit = async (skipIntake = false) => {
     const trimmed = name.trim();
     if (!trimmed || isCreating) return;
-    if (!skipIntake && (!pmoNo.trim() || !author.trim())) {
+    if (!pmoNo.trim() || !author.trim()) {
       setError('PMO No. and Author are required.');
       return;
     }
@@ -173,7 +173,7 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
           </button>
           <button
             onClick={() => handleSubmit(true)}
-            disabled={!name.trim() || isCreating}
+            disabled={!name.trim() || !pmoNo.trim() || !author.trim() || isCreating}
             className="px-4 py-2 rounded-[10px] bg-white border border-primary text-primary hover:bg-primary/5 transition-colors text-xs font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isCreating ? 'Creating...' : 'Skip & Create Empty'}
