@@ -1,10 +1,10 @@
 import logging
 import re
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 from urllib.parse import parse_qsl, urlsplit
 
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
 from app.config import settings
@@ -35,7 +35,7 @@ try:
     is_sqlite = db_url.startswith("sqlite")
     
     if is_sqlite:
-        engine_kwargs = {
+        engine_kwargs: dict[str, Any] = {
             "echo": settings.DEBUG
         }
     else:

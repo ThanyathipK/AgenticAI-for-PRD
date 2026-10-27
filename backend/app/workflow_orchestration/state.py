@@ -1,32 +1,13 @@
 """LangGraph state contracts shared by all workflow nodes."""
 
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypeAlias, TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application_types import AuditResultPayload
 
-
-class RequirementState(TypedDict):
-    """Persisted, project-scoped requirements and generated artifacts."""
-
-    project_id: str
-    project_name: str
-    requirements: dict
-    business_goals: list
-    actors: list
-    user_stories: list
-    acceptance_criteria: list
-    prd_narrative: dict
-    clarification_questions: list
-    validation_status: str
-    generated_prd: str
-    generated_diagrams: str
-    proposed_prd_semver: Optional[str]
-    current_workflow_state: str
-    version_number: int
-    updated_at: Optional[str]
-    detected_intent: Optional[str]
+# Versioned JSON whose fields vary by workflow stage and migration.
+RequirementState: TypeAlias = Dict[str, Any]
 
 
 class AgentState(TypedDict, total=False):

@@ -6,19 +6,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import AuthenticatedUser, get_current_user, verify_project_access
 from app.config import settings
 from app.database import get_db
-from app.repositories import ConversationMessageRepository
-from app.schemas import ChatSessionRequest, ChatResponse, HealthResponse
-from app.semantic_memory import build_memory_block, extract_and_remember, recall
+from app.event_manager import event_manager
+from app.input_validation import validate_messages_budget
 from app.llm_client import (
-    call_lm_studio,
-    check_lm_studio_health,
     LMStudioGatewayError,
     LMStudioOutputParsingError,
     LMStudioUnavailableError,
+    call_lm_studio,
+    check_lm_studio_health,
 )
-from app.event_manager import event_manager
 from app.rate_limit import rate_limit_dependency
-from app.input_validation import validate_messages_budget
+from app.repositories import ConversationMessageRepository
+from app.schemas import ChatResponse, ChatSessionRequest, HealthResponse
+from app.semantic_memory import build_memory_block, extract_and_remember, recall
 
 logger = logging.getLogger("app.routes.chat")
 
@@ -178,7 +178,7 @@ async def post_chat_query(
         #            gateway down 503, other gateway errors 502.
         response = await call_lm_studio(formatted_messages)
     except LMStudioOutputParsingError as err:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(err))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(err))
     except LMStudioUnavailableError as err:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err))
     except LMStudioGatewayError as err:

@@ -159,6 +159,8 @@ export function useChat(
       persistingMessageIdsRef.current.delete(message.id);
       console.warn("Could not persist conversation timeline message.", error);
     });
+    // The individual store members are stable; the composed object is not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deps.projectId, store.messages, store.setMessages]);
 
   const cancellation = useAgentCancellation(
@@ -777,11 +779,28 @@ export function useChat(
   //             Guarded by canRunAgentActions so an empty project cannot be compiled.
   const handleGeneratePRD = async () => {
     if (!deps.projectId) return;
-    if (!deps.canRunAgentActions) {
-      if (deps.agentActionsBlockedReason) {
-        store.setSyncStatus(deps.agentActionsBlockedReason);
-        return;
-      }
+    const hasActiveRequirements =
+      (store.structuredRequirements.requirements?.length ?? 0) > 0 ||
+      (store.structuredRequirements.user_stories?.length ?? 0) > 0;
+    const hasExistingPrd = Boolean(store.prdMarkdown.trim());
+    if (!hasActiveRequirements && !hasExistingPrd) {
+      store.setMessages((prev) => [
+        ...prev,
+        {
+          id: `prd-empty-${Date.now()}`,
+          role: "assistant",
+          content: "There are no requirements to generate.",
+          timestamp: nowTime(),
+        },
+      ]);
+      store.setSyncStatus("There are no requirements to generate.");
+      return;
+    }
+    if (deps.agentActionsBlockedReason) {
+      store.setSyncStatus(deps.agentActionsBlockedReason);
+      return;
+    }
+    if (!deps.canRunAgentActions && !hasExistingPrd) {
       // Nothing to compile yet — mirror the disabled button instead of asking
       // the architect agent to build a PRD from an empty project.
       store.setSyncStatus(
@@ -940,6 +959,20 @@ export function useChat(
         store.setSyncStatus(
           "Sign-in expired. The PRD job can be resumed after signing in.",
         );
+        return;
+      }
+      const detail = extractErrorDetail(err) ?? (err as Error)?.message;
+      if (detail?.includes("There are no requirements to generate.")) {
+        store.setMessages((prev) => [
+          ...prev,
+          {
+            id: `prd-empty-${Date.now()}`,
+            role: "assistant",
+            content: "There are no requirements to generate.",
+            timestamp: nowTime(),
+          },
+        ]);
+        store.setSyncStatus("There are no requirements to generate.");
         return;
       }
       handleError("PRD generation did not complete.", err);

@@ -325,7 +325,7 @@ class RequirementStateRepository:
         # Touched-ID tracking lives outside the guard so the post-block
         # propagation section can safely iterate an empty set when the caller
         # sent no requirement payload (version-only / audit-only saves).
-        touched_req_ids = set()
+        touched_req_ids: set[str] = set()
         if has_requirement_payload:
             req_items = []
             if "requirements" in updates and updates["requirements"] is not None:
@@ -836,7 +836,7 @@ class RequirementStateRepository:
                     "checklist_version": checklist_version,
                 }, session, requirement_id=first_active_req_id)
             else:
-                current_audit = await AuditResultRepository.update(ar_list[0]["id"], str(project_id), {
+                updated_audit = await AuditResultRepository.update(ar_list[0]["id"], str(project_id), {
                     "is_valid": is_valid,
                     "audit_version_reviewed": version_num,
                     "passed_checks": updates.get("passed_checks", ar_list[0]["passed_checks"]),
@@ -848,6 +848,8 @@ class RequirementStateRepository:
                     "checklist_id": checklist_id,
                     "checklist_version": checklist_version,
                 }, session)
+                if updated_audit is not None:
+                    current_audit = updated_audit
 
             if updates.get("_record_audit_run") and current_audit:
                 from app.audit_history_service import record_audit_run
@@ -856,4 +858,7 @@ class RequirementStateRepository:
         await session.flush()
         await session.refresh(model)
 
-        return await RequirementStateRepository._get_by_project_id_impl(project_id, session)
+        refreshed = await RequirementStateRepository._get_by_project_id_impl(project_id, session)
+        if refreshed is None:
+            raise RuntimeError(f"Requirement state disappeared after save for project {project_id}")
+        return refreshed

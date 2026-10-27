@@ -288,7 +288,7 @@ async def upload_document(
         # explicit, non-silent 'needs-OCR' message. All other conversion errors
         # abort with the raised status code (nothing is persisted).
         if (
-            exc.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+            exc.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
             and exc.detail == NEEDS_OCR_MESSAGE
         ):
             status_value = "failed"

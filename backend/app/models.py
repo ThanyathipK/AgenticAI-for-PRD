@@ -1,8 +1,24 @@
-from sqlalchemy import Column, String, Integer, DateTime, JSON, Text, func, ForeignKey, Boolean, UniqueConstraint, Index, text
-from sqlalchemy.types import TypeDecorator, CHAR
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 import uuid
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.types import CHAR, TypeDecorator
+
 from app.database import Base
+
 
 class GUID(TypeDecorator):
     """Platform-independent GUID type.

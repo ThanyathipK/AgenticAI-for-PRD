@@ -32,6 +32,7 @@ class PRDMetadata(BaseModel):
     version_author: Optional[str] = None
     stakeholders: Dict[str, str] = Field(default_factory=dict)
     business_topics: Dict[str, str] = Field(default_factory=dict)
+    reviews: Optional[List[Dict[str, str]]] = None
 
 
 class PRDContent(BaseModel):
@@ -84,6 +85,11 @@ class CanonicalPRD(BaseModel):
             "pmo_no": metadata.pmo_no,
             "stakeholders": dict(metadata.stakeholders),
             "business_topics": dict(metadata.business_topics),
+            "reviews": (
+                [dict(review) for review in metadata.reviews]
+                if metadata.reviews is not None
+                else None
+            ),
             "today": metadata.today,
             "data": self.content.model_dump(),
             "narrative": self.narrative.copy(),

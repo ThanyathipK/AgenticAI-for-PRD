@@ -118,6 +118,7 @@ async def test_user_cancel_is_terminal_but_shutdown_is_recoverable(job_db, monke
         (RuntimeError("Could not connect to LM Studio"), "llm_unavailable:"),
         (RuntimeError("Input is above the configured safe limit"), "context_limit:"),
         (RuntimeError("Structured response parse failed"), "invalid_model_output:"),
+        (RuntimeError("There are no requirements to generate."), "There are no requirements to generate."),
         (RuntimeError("internal database detail"), "workflow_error:"),
     ],
 )

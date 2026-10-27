@@ -30,6 +30,7 @@ from app.models import (
     ProjectModel,
     UserModel,
 )
+from app.impact_service import build_change_preview
 
 
 # =====================================================================
@@ -161,6 +162,22 @@ async def _get_impact(client, project_id: str, action_id: str):
 # Tests
 # =====================================================================
 class TestImpactAnalysis:
+    def test_fast_change_preview_includes_removed_requirement_and_story(self):
+        current = {
+            "requirements": [{
+                "requirement_code": "REQ-001",
+                "title": "Legacy transfer",
+                "user_stories": [_story("US-001", "Legacy transfer")],
+            }],
+        }
+
+        preview = build_change_preview(current, {"requirements": []})
+
+        assert preview["requirements"][0]["requirement_code"] == "REQ-001"
+        assert preview["requirements"][0]["change_kind"] == "removed"
+        assert preview["user_stories"][0]["ticket_code"] == "US-001"
+        assert preview["user_stories"][0]["change_kind"] == "removed"
+
     @pytest.mark.asyncio
     async def test_reports_changes_and_downstream_impact(
         self, seeded_project, client, db_session

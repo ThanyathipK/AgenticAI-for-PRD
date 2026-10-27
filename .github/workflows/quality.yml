@@ -68,17 +68,14 @@ jobs:
         run: pandoc --version && tectonic --version
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements-dev.txt
-      - name: Lint refactored Python modules
-        run: >-
-          ruff check app/prd app/services app/workflow_orchestration
-          app/application_types.py app/errors.py app/observability.py
+      - name: Lint backend application
+        run: ruff check app
       - name: Check formatting of refactored Python modules
         run: >-
           ruff format --check app/prd app/services app/workflow_orchestration
           app/application_types.py app/errors.py app/observability.py
-      - name: Type-check application boundaries
-        run: >-
-          mypy app/prd app/application_types.py app/errors.py app/observability.py
+      - name: Type-check backend application
+        run: mypy app
       - name: Check database schema drift
         run: python check_schema_drift.py
       - name: Run tests with branch coverage

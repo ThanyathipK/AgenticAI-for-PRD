@@ -40,13 +40,13 @@ from app.latex_service import (
     ensure_full_document,
     is_markdown_prd,
     pandoc_friendly_document,
-    preprocess_latex_for_pandoc,
     prd_to_markdown,
+    preprocess_latex_for_pandoc,
     soffice_available,
 )
-from app.prompt_loader import load_prd_latex_template, load_prd_template
-from app.prd_filler import fill_template_body
 from app.main import app as fastapi_app
+from app.prd_filler import fill_template_body
+from app.prompt_loader import load_prd_latex_template, load_prd_template
 
 
 def test_export_timestamp_includes_unambiguous_meridiem():
@@ -65,8 +65,8 @@ async def db_session(tmp_path):
     """Fresh SQLite database per test with all app tables created."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/test_export.db")
     async with engine.begin() as conn:
-        from app.database import Base
         from app import models  # noqa: F401 - register all models
+        from app.database import Base
 
         await conn.run_sync(Base.metadata.create_all)
 
@@ -840,6 +840,235 @@ class TestConvertEndpoint:
 
 class TestExportEndpoints:
     @pytest.mark.asyncio
+    async def test_docx_and_pdf_export_every_saved_preview_field(
+        self, client, seeded_project, monkeypatch
+    ):
+        """Every editable preview row reaches both official export paths."""
+        import app.routes.projects as projects_route
+
+        preview = """# PRD: Complete parity
+
+| **PMO No:** | PARITY-PMO-77 |
+| **PMO Name:** | Export Test Project |
+| **Author:** | PARITY_AUTHOR |
+
+### Stakeholders
+|Role|Name|
+|---|---|
+|Product Owner|PARITY_STAKEHOLDER|
+
+### Reviews
+|Role|Name|Signature|Date|
+|---|---|---|---|
+|Product Owner|PARITY_REVIEWER|PARITY_SIGNATURE|2026-10-27|
+|Head of Product<br>Management|PARITY_HEAD|PARITY_HEAD_SIGNATURE|2026-10-28|
+
+### Contents
+1. Business & Strategic Overview
+2. Product Scope & Functional Requirements
+3. Technical & Operational Considerations
+4. Appendix
+
+### 1. Business & Strategic Overview
+|Topic|Details|
+|---|---|
+|Introduction &<br>Executive Summary|PARITY_SUMMARY|
+|Problem Statement|PARITY_PROBLEM|
+|Business Objectives|PARITY_OBJECTIVE|
+|Expected Benefit|PARITY_BENEFIT|
+|Success Metrics|PARITY_METRIC|
+|Target Audience &<br>user Personas|PARITY_AUDIENCE|
+
+### 2. Product Scope & Functional Requirements
+| User Story Mapping & Functional Requirements | Epic Name: PARITY_EPIC | | |
+|---|---|---|---|
+| |User Story (System Focus)|Functional Requirement (FR)|Acceptance Criteria|
+| |As a PARITY_PERSONA<br><br>I want to PARITY_ACTION<br><br>So that PARITY_OUTCOME|FR 1.1: US-PARITY: PARITY_FUNCTION|AC 1.1: PARITY_ACCEPTANCE|
+|User Flow & Wireframes|PARITY_USER_FLOW|||
+
+#### Scope Definition (In vs. Out)
+|Scope In (Included)|Scope Out (Excluded)|
+|---|---|
+|PARITY_SCOPE_IN|PARITY_SCOPE_OUT|
+
+### 3. Technical & Operational Considerations
+|Consideration|Details|
+|---|---|
+|Non-Functional<br> Requirements|PARITY_NFR|
+|Expected<br> TPS Customer Volume|PARITY_VOLUME|
+|Growth<br> Prediction Y0Y%|PARITY_GROWTH|
+|Launch &<br> Rollout Plan|Release plan: PARITY_LAUNCH<br>Dependencies: PARITY_DEPENDENCY<br>Go-to-market: PARITY_MARKET|
+
+### 4. Appendix
+|Appendix Item|Details|Reference|
+|---|---|---|
+|Open<br> Questions &<br> Risks|PARITY_RISK||
+|Assumptions|PARITY_ASSUMPTION||
+|Glossary|Term|Definition|
+||PARITY_TERM|PARITY_DEFINITION|
+|Related<br> Documents|PARITY_DOCUMENT||
+"""
+        sentinels = [
+            "PARITY-PMO-77", "PARITY_AUTHOR", "PARITY_STAKEHOLDER",
+            "PARITY_REVIEWER", "PARITY_SIGNATURE", "PARITY_HEAD",
+            "PARITY_HEAD_SIGNATURE", "PARITY_SUMMARY", "PARITY_PROBLEM",
+            "PARITY_OBJECTIVE", "PARITY_BENEFIT", "PARITY_METRIC",
+            "PARITY_AUDIENCE", "PARITY_EPIC", "PARITY_PERSONA",
+            "PARITY_ACTION", "PARITY_OUTCOME", "PARITY_ACCEPTANCE",
+            "PARITY_USER_FLOW", "PARITY_SCOPE_IN", "PARITY_SCOPE_OUT",
+            "PARITY_NFR", "PARITY_VOLUME", "PARITY_GROWTH", "PARITY_LAUNCH",
+            "PARITY_DEPENDENCY", "PARITY_MARKET", "PARITY_RISK",
+            "PARITY_ASSUMPTION", "PARITY_TERM", "PARITY_DEFINITION",
+            "PARITY_DOCUMENT",
+        ]
+
+        docx = await client.post(
+            f"/api/project/{seeded_project}/export/docx",
+            json={"latex_source": preview, "project_name": "Export Test Project"},
+        )
+        assert docx.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(docx.content)) as archive:
+            xml = archive.read("word/document.xml").decode("utf-8")
+        for sentinel in sentinels:
+            assert sentinel in xml
+        for heading in ("Contents", "Business", "Product Scope", "Technical", "Appendix"):
+            assert heading in xml
+
+        captured = {}
+
+        def compile_pdf(source: str) -> bytes:
+            captured["source"] = source
+            return b"%PDF-complete-preview-parity"
+
+        monkeypatch.setattr(projects_route, "soffice_available", lambda: False)
+        monkeypatch.setattr(projects_route, "compile_latex_to_pdf", compile_pdf)
+        pdf = await client.post(
+            f"/api/project/{seeded_project}/export/pdf",
+            json={"latex_source": preview, "project_name": "Export Test Project"},
+        )
+        assert pdf.status_code == 200
+        pdf_text = captured["source"].replace(r"\_", "_")
+        for sentinel in sentinels:
+            assert sentinel in pdf_text
+
+    @pytest.mark.asyncio
+    async def test_cleared_functional_table_does_not_restore_database_rows(
+        self, client, seeded_project, db_session
+    ):
+        from uuid import UUID
+
+        from app.models import RequirementModel, RequirementStateModel, UserStoryModel
+
+        project_uuid = UUID(seeded_project)
+        db_session.add(RequirementStateModel(project_id=project_uuid))
+        requirement = RequirementModel(
+            project_id=project_uuid,
+            requirement_code="REQ-OLD",
+            title="Obsolete requirement",
+        )
+        db_session.add(requirement)
+        await db_session.flush()
+        db_session.add(UserStoryModel(
+            project_id=project_uuid,
+            requirement_id=requirement.id,
+            ticket_code="US-OLD",
+            story_title="OLD_DATABASE_STORY_MUST_NOT_EXPORT",
+            as_a="legacy user",
+            i_want_to="restore an obsolete function",
+            so_that="the regression is visible",
+        ))
+        await db_session.commit()
+        preview = """### 2. Product Scope & Functional Requirements
+|User Story Mapping & Functional Requirements|Epic Name: Empty current scope|||
+|---|---|---|---|
+||User Story (System Focus)|Functional Requirement (FR)|Acceptance Criteria|
+|User Flow & Wireframes||||
+
+#### Scope Definition (In vs. Out)
+|Scope In (Included)|Scope Out (Excluded)|
+|---|---|
+|||
+"""
+
+        response = await client.post(
+            f"/api/project/{seeded_project}/export/docx",
+            json={"latex_source": preview},
+        )
+        assert response.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            xml = archive.read("word/document.xml").decode("utf-8")
+        assert "OLD_DATABASE_STORY_MUST_NOT_EXPORT" not in xml
+
+    @pytest.mark.asyncio
+    async def test_docx_export_keeps_multiline_business_labels_from_preview(
+        self, client, seeded_project
+    ):
+        preview = """# PRD: Export parity
+
+### 1. Business & Strategic Overview
+
+|Topic|Details|
+|---|---|
+|Introduction &<br>Executive Summary|Preview summary must export|
+|Target Audience &<br>user Personas|Retail customers and operators|
+
+### 2. Product Scope & Functional Requirements
+
+| User Flow & Wireframes | Customer submits a request, then an officer reviews it | | |
+"""
+
+        response = await client.post(
+            f"/api/project/{seeded_project}/export/docx",
+            json={"latex_source": preview, "project_name": "Export parity"},
+        )
+
+        assert response.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            xml = archive.read("word/document.xml").decode("utf-8")
+        assert "Preview summary must export" in xml
+        assert "Retail customers and operators" in xml
+        assert "Customer submits a request, then an officer reviews it" in xml
+
+    @pytest.mark.asyncio
+    async def test_pdf_export_keeps_multiline_business_labels_from_preview(
+        self, client, seeded_project, monkeypatch
+    ):
+        import app.routes.projects as projects_route
+
+        preview = """# PRD: Export parity
+
+### 1. Business & Strategic Overview
+
+|Topic|Details|
+|---|---|
+|Introduction &<br>Executive Summary|Preview summary must export|
+|Target Audience &<br>user Personas|Retail customers and operators|
+
+### 2. Product Scope & Functional Requirements
+
+| User Flow & Wireframes | Customer submits a request, then an officer reviews it | | |
+"""
+        captured = {}
+
+        def compile_pdf(source: str) -> bytes:
+            captured["source"] = source
+            return b"%PDF-preview-parity"
+
+        monkeypatch.setattr(projects_route, "soffice_available", lambda: False)
+        monkeypatch.setattr(projects_route, "compile_latex_to_pdf", compile_pdf)
+
+        response = await client.post(
+            f"/api/project/{seeded_project}/export/pdf",
+            json={"latex_source": preview, "project_name": "Export parity"},
+        )
+
+        assert response.status_code == 200
+        assert response.content == b"%PDF-preview-parity"
+        assert "Preview summary must export" in captured["source"]
+        assert "Retail customers and operators" in captured["source"]
+        assert "Customer submits a request, then an officer reviews it" in captured["source"]
+
+    @pytest.mark.asyncio
     async def test_legacy_markdown_docx_export_succeeds(self, client, seeded_project):
         """Legacy Markdown is content input, never a generic layout path."""
         resp = await client.post(
@@ -886,8 +1115,8 @@ class TestExportEndpoints:
         self, client, seeded_project, db_session, monkeypatch
     ):
         """The download name identifies the PRD release, not its DB row number."""
-        from app.repositories.prd import PRDVersionRepository
         import app.routes.projects as projects_route
+        from app.repositories.prd import PRDVersionRepository
 
         await PRDVersionRepository.create(seeded_project, {
             "generated_prd": KRUNGSRI_BODY,
@@ -961,6 +1190,44 @@ class TestExportEndpoints:
         )
         assert resp.status_code == 200
         assert resp.content == b"%PDF-tectonic-fallback"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("fmt", "expected", "primary_name", "retry_name"),
+        [
+            ("pdf", b"%PDF-markdown-retry", "compile_latex_to_pdf", "convert_markdown_to_pdf"),
+            ("docx", b"PK-markdown-retry", "convert_latex_to_docx", "convert_markdown_to_docx"),
+        ],
+    )
+    async def test_mixed_legacy_export_retries_with_markdown_pipeline(
+        self, client, seeded_project, monkeypatch,
+        fmt, expected, primary_name, retry_name,
+    ):
+        """A mixed legacy document retries through the Markdown converter."""
+        import app.routes.projects as projects_route
+
+        source = "\\documentclass{article}\n# Legacy project\n\nMarkdown body"
+        calls: list[str] = []
+
+        def fail_primary(value: str) -> bytes:
+            calls.append(f"primary:{value}")
+            raise RuntimeError("synthetic LaTeX failure")
+
+        def succeed_retry(value: str) -> bytes:
+            calls.append(f"retry:{value}")
+            return expected
+
+        monkeypatch.setattr(projects_route, "soffice_available", lambda: False)
+        monkeypatch.setattr(projects_route, primary_name, fail_primary)
+        monkeypatch.setattr(projects_route, retry_name, succeed_retry)
+
+        response = await client.post(
+            f"/api/project/{seeded_project}/export/{fmt}",
+            json={"latex_source": source},
+        )
+        assert response.status_code == 200
+        assert response.content == expected
+        assert calls == [f"primary:{source}", f"retry:{source}"]
 
     @pytest.mark.asyncio
     async def test_pdf_export_compiles_the_latest_stored_version(

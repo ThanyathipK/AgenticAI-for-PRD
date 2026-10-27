@@ -7,19 +7,27 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.gzip import GZipMiddleware
 
 from app.config import settings
-from app.migrations import run_migrations, seed_default_user
 from app.event_manager import verify_single_worker_guarantee as verify_sse_single_worker_guarantee
-from app.rate_limit import verify_single_worker_guarantee
-from app.routes import auth, chat, projects, requirements, lock, events, documents
-from app.routes import prd_sections
-from app.routes import traceability
-from app.routes import operational
-from app.routes import generation_jobs
 from app.llm_client import check_lm_studio_health
+from app.migrations import run_migrations, seed_default_user
+from app.rate_limit import verify_single_worker_guarantee
+from app.routes import (
+    auth,
+    chat,
+    documents,
+    events,
+    generation_jobs,
+    lock,
+    operational,
+    prd_sections,
+    projects,
+    requirements,
+    traceability,
+)
 
 # Logger initialization
 logger = logging.getLogger("app.main")
@@ -331,7 +339,7 @@ def validation_exception_handler(request: Request, exc: RequestValidationError) 
         for error in errors
     ]
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         content={"detail": safe_errors},
     )
 

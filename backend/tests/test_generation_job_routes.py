@@ -49,8 +49,16 @@ async def test_background_agent_route_maps_active_job_conflict(monkeypatch, curr
     async def duplicate(*_args):
         raise ValueError("Project already has an active job.")
 
+    async def active_requirements(*_args):
+        return {"requirements": [{"requirement_code": "REQ-001"}]}
+
     monkeypatch.setattr(auth_module, "verify_project_access", allow_access)
     monkeypatch.setattr(routes, "create_job", duplicate)
+    monkeypatch.setattr(
+        routes.RequirementStateRepository,
+        "get_by_project_id",
+        active_requirements,
+    )
     payload = ProcessRequirementsRequest(
         project_id=str(uuid.uuid4()), target_agent="architect",
     )
@@ -62,6 +70,74 @@ async def test_background_agent_route_maps_active_job_conflict(monkeypatch, curr
 
     assert exc.value.status_code == 409
     assert exc.value.detail == "Project already has an active job."
+
+
+@pytest.mark.asyncio
+async def test_background_architect_rejects_project_with_only_archived_requirements(
+    monkeypatch, current_user
+):
+    async def allow_access(*_args):
+        return None
+
+    async def no_active_requirements(*_args):
+        return {"requirements": [], "user_stories": []}
+
+    monkeypatch.setattr(auth_module, "verify_project_access", allow_access)
+    monkeypatch.setattr(
+        routes.RequirementStateRepository,
+        "get_by_project_id",
+        no_active_requirements,
+    )
+    payload = ProcessRequirementsRequest(
+        project_id=str(uuid.uuid4()), target_agent="architect",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await routes.start_agent_job(
+            payload, current_user=current_user, db=object(), _rate_limit=None,
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "There are no requirements to generate."
+
+
+@pytest.mark.asyncio
+async def test_background_architect_allows_empty_board_when_prd_already_exists(
+    monkeypatch, current_user
+):
+    calls = []
+
+    class Session:
+        async def commit(self):
+            calls.append("commit")
+
+    async def allow_access(*_args):
+        return None
+
+    async def existing_prd(*_args):
+        return {"requirements": [], "generated_prd": "# Existing PRD"}
+
+    async def create_job(*_args):
+        return {"id": "job-empty-prd", "status": "queued"}
+
+    monkeypatch.setattr(auth_module, "verify_project_access", allow_access)
+    monkeypatch.setattr(
+        routes.RequirementStateRepository,
+        "get_by_project_id",
+        existing_prd,
+    )
+    monkeypatch.setattr(routes, "create_job", create_job)
+    monkeypatch.setattr(routes, "launch_job", lambda job_id: calls.append(f"launch:{job_id}"))
+    payload = ProcessRequirementsRequest(
+        project_id=str(uuid.uuid4()), target_agent="architect",
+    )
+
+    result = await routes.start_agent_job(
+        payload, current_user=current_user, db=Session(), _rate_limit=None,
+    )
+
+    assert result["id"] == "job-empty-prd"
+    assert calls == ["commit", "launch:job-empty-prd"]
 
 
 @pytest.mark.asyncio

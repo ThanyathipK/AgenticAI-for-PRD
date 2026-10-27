@@ -59,22 +59,24 @@ def compact_requirement_context(value: Any, target: Optional[str] = None) -> Opt
         for key in ("requirement_code", "title", "functional_requirement", "description")
         if parsed.get(key) is not None
     }
-    if isinstance(compact.get("description"), str):
-        compact["description"] = compact["description"][:1000]
+    description = compact.get("description")
+    if isinstance(description, str):
+        compact["description"] = description[:1000]
     stories = [story for story in (parsed.get("user_stories") or []) if isinstance(story, dict)]
     selected = next(
         (story for story in stories if str(story.get("ticket_code")) == str(target)),
         None,
     )
     if selected:
-        compact["target_story"] = {
+        target_story = {
             key: selected.get(key)
             for key in ("ticket_code", "story_title", "as_a", "i_want_to", "so_that")
             if selected.get(key) is not None
         }
-        compact["target_story"]["acceptance_criteria"] = [
+        target_story["acceptance_criteria"] = [
             str(item)[:500] for item in (selected.get("acceptance_criteria") or [])[:5]
         ]
+        compact["target_story"] = target_story
     elif stories:
         compact["story_index"] = [
             {

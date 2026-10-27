@@ -3,15 +3,13 @@ Generic Artifact Locking Service
 Provides lock/unlock functionality for all project artifacts.
 """
 import logging
-from typing import Optional, Dict, Any
 from datetime import datetime, timezone
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from typing import Any, ClassVar, Dict, Optional
 
-from app.models import (
-    RequirementModel,
-    PRDSectionModel
-)
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import PRDSectionModel, RequirementModel
 
 logger = logging.getLogger("app.lock_service")
 
@@ -33,7 +31,7 @@ class LockService:
     """
 
     # Mapping of artifact types to their models and lock column names
-    ARTIFACT_CONFIG = {
+    ARTIFACT_CONFIG: ClassVar[Dict[str, Dict[str, Any]]] = {
         "requirement": {
             "model": RequirementModel,
             "id_field": "id",

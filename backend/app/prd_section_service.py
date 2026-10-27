@@ -228,6 +228,62 @@ def stitch_markdown(sections: List[Dict[str, Any]]) -> str:
     return "\n\n".join((s.get("content") or "").strip() for s in ordered if s.get("content"))
 
 
+def merge_sections_for_preview(
+    prd_markdown: str,
+    stored_sections: List[Dict[str, Any]],
+    *,
+    selected_section_keys: Optional[Set[str]] = None,
+) -> Optional[str]:
+    """Compose a read-only PRD candidate while preserving governed parts.
+
+    Architect previews intentionally do not write ``prd_sections``.  They must
+    nevertheless follow the same ownership rules as the eventual save: locked,
+    human-owned, and out-of-scope parts come verbatim from storage, while only
+    eligible generated parts come from the new candidate.
+    """
+    source = (prd_markdown or "").strip()
+    if not source:
+        return None
+    try:
+        from app.latex_service import prd_to_markdown
+
+        markdown = prd_to_markdown(source)
+    except Exception as exc:
+        logger.warning("Could not normalize PRD preview for governed merge: %s", exc)
+        return None
+
+    generated_parts = split_markdown_sections(markdown)
+    if not generated_parts:
+        return None
+
+    merged = {str(section.get("section_key")): dict(section) for section in stored_sections}
+    selected = set(selected_section_keys) if selected_section_keys is not None else None
+    defaults_by_key = {item["section_key"]: item for item in CANONICAL_PRD_SECTIONS}
+    for order, part in enumerate(generated_parts, start=1):
+        key = part["section_key"]
+        existing = merged.get(key)
+        may_replace = (
+            existing is None
+            or (
+                not existing.get("is_locked")
+                and (existing.get("ai_generatable", True) or key == "title")
+                and (selected is None or key in selected)
+            )
+        )
+        if may_replace:
+            defaults = defaults_by_key.get(key, {})
+            merged[key] = {
+                **defaults,
+                **(existing or {}),
+                **part,
+                "section_order": (existing or {}).get("section_order")
+                or defaults.get("section_order")
+                or order,
+            }
+
+    return stitch_markdown(list(merged.values()))
+
+
 # PRD-SECTION 3.5 — THREE-WAY merge for a manual part edit (called by PRD-SECTION 2.2).
 #             Inputs: `base_content` (what the editor was seeded from), `current_content`
 #             (latest stored part — possibly advanced by an AI run during the edit) and

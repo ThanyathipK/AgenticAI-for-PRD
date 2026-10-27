@@ -11,13 +11,13 @@ from app.audit_checklist import load_active_audit_checklist
 from app.audit_history_service import create_waiver, list_audit_runs, list_waivers, revoke_waiver
 from app.auth import AuthenticatedUser, require_project_owner
 from app.database import get_db
-from app.project_health_service import build_project_health
-from app.workflow_cancellation import workflow_cancellations
 from app.dependency_graph_service import (
     build_regeneration_plan,
     execute_regeneration,
     rebuild_dependency_graph,
 )
+from app.project_health_service import build_project_health
+from app.workflow_cancellation import workflow_cancellations
 
 router = APIRouter()
 

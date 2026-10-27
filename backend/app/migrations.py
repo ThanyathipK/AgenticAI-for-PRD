@@ -11,8 +11,9 @@ import asyncio
 import logging
 from pathlib import Path
 
-from alembic import command
 from alembic.config import Config
+
+from alembic import command
 
 # NOTE: app.auth / app.repositories.user imports were removed together with
 # the retired bootstrap seeder — user rows are created exclusively through

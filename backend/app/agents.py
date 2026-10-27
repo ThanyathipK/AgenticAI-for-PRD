@@ -3,14 +3,20 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from functools import partial
+from typing import Any, Dict, List, Optional, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application_types import AuditFailure, RequirementMergeReport, WorkflowNodeOutcome
+from app.application_types import (
+    AuditFailure,
+    RequirementMergeReport,
+    SemanticChangePayload,
+    WorkflowNodeOutcome,
+)
 from app.audit_checklist import load_active_audit_checklist
 from app.config import settings
 from app.document_processor import split_markdown_into_chunks
@@ -25,6 +31,7 @@ from app.merge_service import (
     normalize_title,
 )
 from app.prd_section_service import (
+    merge_sections_for_preview,
     prd_has_renderable_operational_sections,
     prd_is_sectioned_markdown,
 )
@@ -1544,6 +1551,8 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
             f"The Gatherer agent failed to parse raw input into structured JSON requirements. "
             f"Details: {parsing_error}. Please revise your input description or schema constraints."
         )
+    if not isinstance(result, dict):
+        raise RuntimeError("The Gatherer returned no structured requirement result.")
 
     # Keep the persisted epic name unless the user explicitly asked to rename
     # it (regex detection now understands "rename the epic to X", "the epic
@@ -1697,7 +1706,8 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
         llm_group_meta = {renumber[old]: meta for old, meta in llm_group_meta.items()}
         target_by_key = {key: renumber.get(code, code) for key, code in target_by_key.items()}
         for entry in incoming_entries:
-            entry["_target_req_code"] = renumber.get(entry.get("_target_req_code"), entry.get("_target_req_code"))
+            current_target = str(entry.get("_target_req_code") or "")
+            entry["_target_req_code"] = renumber.get(current_target, current_target)
 
 
     # ===============================================
@@ -1712,7 +1722,7 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
     merged_stories, merge_report = merge_user_stories_with_report(
         existing_stories=existing_user_stories,
         new_incoming_stories=incoming_entries,
-        semantic_recs=semantic_recs,
+        semantic_recs=cast(List[SemanticChangePayload], semantic_recs),
         protected_ids=[],
         # Parent updates return complete, revalidated AC sets for affected
         # children. Story wording may be unchanged, so a normal field-diff
@@ -2098,15 +2108,15 @@ async def delete_requirement_node(state: AgentState) -> WorkflowNodeOutcome:
                 archive_acceptance_criteria_ids.add(db_criterion)
 
         for req_code in sorted(target_requirement_codes):
-            requirement = requirements_by_code.get(req_code)
-            if not requirement:
+            target_requirement = requirements_by_code.get(req_code)
+            if not target_requirement:
                 continue
             child_codes = {
                 normalize_ticket_code(story.get("ticket_code"))
-                for story in (requirement.get("user_stories") or [])
+                for story in (target_requirement.get("user_stories") or [])
                 if isinstance(story, dict) and normalize_ticket_code(story.get("ticket_code"))
             }
-            if requirement.get("is_locked"):
+            if target_requirement.get("is_locked"):
                 blocked.append(f"{req_code} (locked)")
                 continue
             archive_requirement_codes.add(req_code)
@@ -2631,7 +2641,7 @@ def _build_auditor_contexts(
     return contexts
 
 
-def _validate_audit_output(output, documents):
+def _validate_audit_output(output: Dict[str, Any], documents: List[Dict[str, Any]]) -> bool:
     """Validate schema and safely normalize unverifiable model claims.
 
     A bad citation must never become evidence, but it also should not discard an
@@ -2770,7 +2780,7 @@ async def auditor_node(state: AgentState) -> WorkflowNodeOutcome:
     #             `unchanged` stories are tracked separately so their existing
     #             unresolved questions can be carried over in AUDIT 2.2.
     to_audit_stories = [story for story in all_stories if story.get("status", "active") == "active"]
-    unchanged_stories = []  # Full-board reviews replace previous audit questions.
+    unchanged_stories: List[Dict[str, Any]] = []  # Full-board reviews replace previous questions.
     knowledge_documents = _prepare_audit_documents(state.get("knowledge_documents") or [])
     
     logger.info(f"Auditor Node: {len(to_audit_stories)} stories to audit, {len(unchanged_stories)} unchanged stories.")
@@ -2898,8 +2908,9 @@ async def auditor_node(state: AgentState) -> WorkflowNodeOutcome:
                             },
                             description=f"auditor pass {pass_number}/{total}",
                             format_instructions=pass_format_instructions,
-                            validate=lambda output, docs=context["knowledge_base_documents"]: (
-                                _validate_audit_output(output, docs)
+                            validate=partial(
+                                _validate_audit_output,
+                                documents=context["knowledge_base_documents"],
                             ),
                             native_json_schema=True,
                         )
@@ -3349,6 +3360,17 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
     existing_prd = req_state.get("generated_prd")
     existing_diagrams = req_state.get("generated_diagrams")
 
+    requirements = req_state.get("requirements", [])
+    nested = any(
+        isinstance(r, dict) and r.get("user_stories") for r in requirements
+    )
+    meaningful_requirements = [
+        requirement for requirement in requirements
+        if isinstance(requirement, dict)
+        and any(str(requirement.get(field) or "").strip() for field in ("title", "description"))
+    ]
+    empty_requirement_board = not all_stories and not nested and not meaningful_requirements
+
     # ARCHITECT 2.2 — Reuse guard (no LLM at all): when nothing changed AND a stored
     #             PRD exists with a stored diagram AND that PRD already follows the
     #             official template (2.2.1) or is sectioned markdown (2.2.2), the
@@ -3358,6 +3380,7 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
     if (
         not regeneration_scope
         and not force_prd_rebuild
+        and not empty_requirement_board
         and not to_build_stories
         and existing_prd
         and existing_diagrams
@@ -3381,29 +3404,18 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
             "mermaid_diagram": existing_diagrams
         }
 
-    requirements = req_state.get("requirements", [])
-    nested = any(
-        isinstance(r, dict) and r.get("user_stories") for r in requirements
-    )
-
     # ARCHITECT 2.3 — A requirement is already valid PRD source material even
     # when the Gatherer has not expanded it into user stories yet. Previously
     # this guard treated a requirement-only project as empty and returned a
     # misleading HTTP 500. Only reject a genuinely empty board.
-    meaningful_requirements = [
-        requirement for requirement in requirements
-        if isinstance(requirement, dict)
-        and any(str(requirement.get(field) or "").strip() for field in ("title", "description"))
-    ]
-    empty_requirement_board = not all_stories and not nested and not meaningful_requirements
-    if empty_requirement_board and regeneration_scope is None:
+    if empty_requirement_board and regeneration_scope is None and not existing_prd:
         raise ValueError(
             f"Cannot compile PRD for project {project_id}: no active requirements "
             "or user stories are available. Gather requirements before generating a PRD."
         )
     if empty_requirement_board:
         logger.info(
-            "Architect Node: refreshing the scoped PRD to an empty-requirements state "
+            "Architect Node: refreshing the PRD to an empty-requirements state "
             "after the final active requirement was archived."
         )
 
@@ -3639,6 +3651,22 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
             req_state["generated_prd"],
             semver_label or f"V{req_state.get('version_number', 1)}.0",
         )
+
+        if stage_artifacts_only and stored_prd_sections:
+            preview_markdown = merge_sections_for_preview(
+                req_state["generated_prd"],
+                stored_prd_sections,
+                selected_section_keys=(
+                    effective_scoped_section_keys
+                    if regeneration_scope is not None else None
+                ),
+            )
+            if preview_markdown:
+                req_state["generated_prd"] = preview_markdown
+            elif locked_prd_sections:
+                raise RuntimeError(
+                    f"Architect could not preserve locked PRD sections for project {project_id}."
+                )
 
         if write_session:
             try:

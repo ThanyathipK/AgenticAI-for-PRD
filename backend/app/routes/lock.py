@@ -9,23 +9,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthenticatedUser, require_project_owner
 from app.database import get_db
+from app.event_manager import event_manager
+from app.models import PendingActionModel
 from app.repositories import (
     DocumentRepository,
     PendingActionRepository,
     RequirementStateRepository,
 )
+from app.review_service import governed_state_changed, mark_revised_if_approved
 from app.schemas import (
+    ActionStatusResponse,
     ArtifactLockRequest,
     ArtifactLockResponse,
+    ConfirmActionResponse,
+    ImpactAnalysisResponse,
     LockStatusResponse,
     PendingActionResponse,
-    ConfirmActionResponse,
-    ActionStatusResponse,
-    ImpactAnalysisResponse,
 )
-from app.event_manager import event_manager
-from app.models import PendingActionModel
-from app.review_service import governed_state_changed, mark_revised_if_approved
 
 logger = logging.getLogger("app.routes.lock")
 
@@ -70,7 +70,7 @@ async def lock_artifact(
         HTTPException: 400 on invalid IDs or unsupported artifact type; 409 if
             the artifact is already locked; 404 if the artifact is not found.
     """
-    from app.lock_service import LockService, ArtifactLockError
+    from app.lock_service import ArtifactLockError, LockService
 
     try:
         UUID(project_id)
@@ -607,7 +607,10 @@ async def confirm_action(
         )
     persisted_state = await RequirementStateRepository.save_or_update(project_id, updates_to_persist, session)
     if requirement_merge and not clarification_review_merge:
-        from app.dependency_graph_service import detect_changed_artifacts, mark_dependents_for_review
+        from app.dependency_graph_service import (
+            detect_changed_artifacts,
+            mark_dependents_for_review,
+        )
 
         changed_artifacts = detect_changed_artifacts(previous_state, persisted_state)
         if changed_artifacts:

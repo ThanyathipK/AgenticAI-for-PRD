@@ -182,8 +182,8 @@ def _assemble(
         # via any of its stories' ticket codes.
         req_sections = set(section_links.get(code, set()))
         req_diagrams = set(diagram_links.get(code, set()))
-        for story in story_entries:
-            story_code = (story["ticket_code"] or "").upper()
+        for story_entry in story_entries:
+            story_code = (story_entry["ticket_code"] or "").upper()
             req_sections |= section_links.get(story_code, set())
             req_diagrams |= diagram_links.get(story_code, set())
 

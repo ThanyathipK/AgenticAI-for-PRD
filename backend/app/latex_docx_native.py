@@ -485,7 +485,7 @@ def _render_table(doc: "Document", spec: str, rows_src: str, centered: bool) -> 
 
     ncols = len(widths)
     nrows = len(rows)
-    grid: List[List[Optional[Dict]]] = [[None] * ncols for _ in range(nrows)]
+    grid: List[List[Optional[Dict] | str]] = [[None] * ncols for _ in range(nrows)]
     merges: List[Tuple[int, int, int, int]] = []
     header_rows = set()
 
@@ -536,14 +536,14 @@ def _render_table(doc: "Document", spec: str, rows_src: str, centered: bool) -> 
 
     for r in range(nrows):
         for c in range(ncols):
-            cell = grid[r][c]
-            if cell is None or cell is _CONT:
+            rendered_cell = grid[r][c]
+            if not isinstance(rendered_cell, dict):
                 continue
             docx_cell = table.cell(r, c)
-            docx_cell.width = Cm(sum(widths[c : c + cell["hspan"]]))
-            if cell["vspan"] > 1:
+            docx_cell.width = Cm(sum(widths[c : c + rendered_cell["hspan"]]))
+            if rendered_cell["vspan"] > 1:
                 docx_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-            _fill_cell(docx_cell, cell["paras"])
+            _fill_cell(docx_cell, rendered_cell["paras"])
 
     for r in header_rows:
         for c in range(ncols):
@@ -558,6 +558,7 @@ def _render_table(doc: "Document", spec: str, rows_src: str, centered: bool) -> 
 # ---------------------------------------------------------------------------
 _BODY_TOKEN_RE = re.compile(
     r"\\begin\{(?:longtable|tabular)\}\s*\{(?P<spec>(?:[^{}]|\{[^{}]*\})*)\}(?P<tbl>.*?)\\end\{(?:longtable|tabular)\}"
+    r"|(?P<contents>\\section\*\{\\makebox(?:\[[^\]]*\])*\{Contents\}\})"
     r"|\\section\*\{(?P<sec>[^{}]*)\}"
     r"|\\begin\{enumerate\}(?P<enum>.*?)\\end\{enumerate\}"
     r"|\\begin\{flushright\}(?P<flush>.*?)\\end\{flushright\}"
@@ -720,6 +721,8 @@ def _render_body(doc: "Document", body: str, centered: bool = False) -> None:
             _render_text(doc, body[pos : m.start()], centered)
         if m.group("tbl") is not None:
             _render_table(doc, m.group("spec"), m.group("tbl"), centered)
+        elif m.group("contents") is not None:
+            _add_heading(doc, "Contents")
         elif m.group("sec") is not None:
             _add_heading(doc, _tex_to_text(m.group("sec")))
         elif m.group("enum") is not None:

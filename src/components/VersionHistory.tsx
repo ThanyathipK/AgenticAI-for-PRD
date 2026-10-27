@@ -173,7 +173,7 @@ export function VersionHistory({ state }: { state: ProjectState }) {
       console.log('[Diff] Auto-selected latest version:', latest, '(history:', versionHistory.length, 'versions)');
       if (selectedHistVersion !== latest) setSelectedHistVersion(latest);
     }
-  }, [versionHistory, setSelectedHistVersion]);
+  }, [versionHistory, selectedHistVersion, setSelectedHistVersion]);
 
   // Auto-set base version to the immediate predecessor of the selected version.
   useEffect(() => {

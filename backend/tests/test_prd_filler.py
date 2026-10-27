@@ -204,12 +204,19 @@ def test_scalar_problem_statement_is_one_complete_item_not_split_into_characters
 
 
 def test_manual_scope_and_operational_edits_feed_the_official_document():
-    saved = """### 2. Product Scope & Functional Requirements
+    saved = """### Reviews
+|Role|Name|Signature|Date|
+|---|---|---|---|
+|Product Owner|Parity Owner|Approved PO|2026-10-27|
+|Head of Product<br>Management|Parity Head|Approved HPM|2026-10-28|
 
-|  |  |  |  |
+### 2. Product Scope & Functional Requirements
+
+| User Story Mapping & Functional Requirements | Epic Name: Manually edited epic |  |  |
 | --- | --- | --- | --- |
 |  | **User Story (System Focus)** | **Functional Requirement (FR)** | **Acceptance Criteria** |
 |  | As a Operations User<br><br>I want to run the manually edited function<br><br>So that operations finish safely | FR 1.1: US-MANUAL: Manually edited function | AC 1.1: Manually edited acceptance |
+| User Flow & Wireframes | Customer submits a request, then an officer reviews it | | |
 
 #### Scope Definition (In vs. Out)
 | Scope In (Included) | Scope Out (Excluded) |
@@ -232,6 +239,21 @@ def test_manual_scope_and_operational_edits_feed_the_official_document():
 | Related<br> Documents | Payments API specification | |
 """
     fields = extract_manual_export_fields(saved)
+    assert fields["epic_name"] == "Manually edited epic"
+    assert fields["reviews"] == [
+        {
+            "role": "Product Owner",
+            "name": "Parity Owner",
+            "signature": "Approved PO",
+            "date": "2026-10-27",
+        },
+        {
+            "role": "Head of Product Management",
+            "name": "Parity Head",
+            "signature": "Approved HPM",
+            "date": "2026-10-28",
+        },
+    ]
     assert fields["scope_in"] == ["Manual included feature", "Another included feature"]
     assert fields["scope_out"] == ["Manual excluded feature"]
     assert fields["functional_rows"] == [{
@@ -242,6 +264,9 @@ def test_manual_scope_and_operational_edits_feed_the_official_document():
         "so_that": "operations finish safely",
         "acceptance_criteria": ["Manually edited acceptance"],
     }]
+    assert fields["narrative"]["user_flow"] == (
+        "Customer submits a request, then an officer reviews it"
+    )
     assert fields["narrative"]["non_functional"] == "Manually edited latency target"
     assert fields["narrative"]["launch_plan"] == "Manually edited pilot plan"
     assert fields["narrative"]["open_questions"] == "Manually edited risk"
@@ -252,9 +277,16 @@ def test_manual_scope_and_operational_edits_feed_the_official_document():
     assert fields["narrative"]["related_documents"] == "Payments API specification"
 
     body = fill_template_body(
-        data={"scope_in": fields["scope_in"], "scope_out": fields["scope_out"]},
+        data={
+            "epic_name": fields["epic_name"],
+            "scope_in": fields["scope_in"],
+            "scope_out": fields["scope_out"],
+        },
         narrative=fields["narrative"],
+        reviews=fields["reviews"],
     )
+    assert "Manually edited epic" in body
+    assert "Parity Owner & Approved PO & 2026-10-27" in body
     assert "Manual included feature" in body
     assert "Manual excluded feature" in body
     assert "Manually edited latency target" in body
@@ -667,6 +699,25 @@ def test_business_overview_grows_with_content():
     assert pdf.startswith(b"%PDF")
 
 
+def test_intake_extraction_normalizes_preview_line_breaks_in_business_labels():
+    markdown = """### 1. Business & Strategic Overview
+
+|Topic|Details|
+|---|---|
+|Introduction &<br>Executive Summary|Preview summary must export|
+|Target Audience &<br>user Personas|Retail customers and operators|
+"""
+
+    intake = extract_intake_fields(markdown)
+
+    assert intake["business_topics"]["Introduction & Executive Summary"] == (
+        "Preview summary must export"
+    )
+    assert intake["business_topics"]["Target Audience & user Personas"] == (
+        "Retail customers and operators"
+    )
+
+
 def test_filled_pdf_does_not_overflow_into_footer():
     """The Business Overview / Product Scope info must never spill into the
     running footer. Uses pymupdf, skipped if unavailable."""
@@ -682,7 +733,6 @@ def test_filled_pdf_does_not_overflow_into_footer():
         data={**DATA, "business_goals": long_goals},
     )
     pdf = compile_latex_to_pdf(body)
-    import io as _io
     doc = pymupdf.open(stream=pdf, filetype="pdf")
     for page in doc:
         words = page.get_text("words")
@@ -771,11 +821,6 @@ def test_long_cell_text_wraps_instead_of_truncating():
     DOCX export must contain the same full text in its table cells."""
     long_summary = ("This initiative transforms the retail lending journey "
                     "end to end. " * 20).strip()
-    long_ac = ("Given an approved application with all documents uploaded, "
-               "when the officer submits the final decision, then the "
-               "customer receives the conditional approval letter within "
-               "one business day and the case is routed to disbursement "
-               "with a complete audit trail attached to every step.") * 3
     body = fill_template_body(
         project_id="p1", project_name="P", version=1,
         data=DATA,

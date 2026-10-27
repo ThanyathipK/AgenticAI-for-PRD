@@ -101,7 +101,9 @@ def _aptos_font_files() -> dict[str, Path]:
         weight: next((path for path in candidates if path.is_file()), None)
         for weight, candidates in _APTOS_FONT_CANDIDATES.items()
     }
-    return found if all(found.values()) else {}
+    if not all(found.values()):
+        return {}
+    return {weight: path for weight, path in found.items() if path is not None}
 
 
 def _enable_aptos_for_tectonic(document: str) -> str:
@@ -366,7 +368,8 @@ def _repair_missing_row_terminators(text: str) -> str:
                     row_terminated = False
                     continue
                 if not row_terminated:
-                    indent = re.match(r"^\s*", line).group(0)
+                    indent_match = re.match(r"^\s*", line)
+                    indent = indent_match.group(0) if indent_match else ""
                     out.append(indent + "\\\\")
                 out.append(line)
                 row_terminated = False

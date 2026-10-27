@@ -387,6 +387,7 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
     handleStopGeneration,
     clarificationAnswers,
     structuredRequirements,
+    prdMarkdown,
     lockableRequirements,
     handleUpdateAnswerValue,
     handleSubmitClarifications,
@@ -441,8 +442,17 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
   const hasPendingRequirementChanges = pendingActions.some(
     action => action.action_type !== 'GENERATE_PRD',
   );
+  const hasActiveRequirements =
+    (structuredRequirements.requirements?.length ?? 0) > 0 ||
+    (structuredRequirements.user_stories?.length ?? 0) > 0;
+  const hasExistingPrd = Boolean(prdMarkdown.trim());
   const agentActionsDisabled = isLoading || isActiveProcessing || !canRunAgentActions || llmUnavailable;
-  const generatePrdDisabled = agentActionsDisabled || hasPendingRequirementChanges;
+  const generatePrdDisabled =
+    isLoading ||
+    isActiveProcessing ||
+    llmUnavailable ||
+    hasPendingRequirementChanges ||
+    (!hasActiveRequirements && !hasExistingPrd);
   const agentActionHint = !projectId
     ? 'Create or select a project first'
     : agentActionsBlockedReason
@@ -756,8 +766,12 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
             disabled={generatePrdDisabled}
             title={hasPendingRequirementChanges
               ? 'Save or discard the pending requirement changes before generating the PRD'
-              : agentActionsDisabled
-                ? agentActionHint
+              : !hasActiveRequirements && !hasExistingPrd
+                ? 'There are no requirements to generate.'
+              : llmUnavailable
+                ? 'Start LM Studio and load the configured model before running AI actions'
+              : isLoading || isActiveProcessing
+                ? 'Please wait for the current operation to finish'
                 : 'Compile the formal PRD and architecture diagram'}
             className="min-w-0 w-full h-[42px] px-3 rounded-[10px] bg-primary text-on-primary hover:brightness-110 font-label-md text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >

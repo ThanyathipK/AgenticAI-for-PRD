@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-
 from app.models import (
     AcceptanceCriteriaModel,
     RequirementModel,

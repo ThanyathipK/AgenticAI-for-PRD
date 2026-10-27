@@ -12,14 +12,14 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.auth import AuthenticatedUser
 from app.application_types import BackgroundJobState
-from app.database import AsyncSessionLocal
-from app.models import GenerationJobModel, UserModel
-from app.schemas import ProcessRequirementsRequest
+from app.auth import AuthenticatedUser
 from app.config import settings
+from app.database import AsyncSessionLocal
 from app.errors import classify_exception
+from app.models import GenerationJobModel, UserModel
 from app.observability import LogContext, log_event
+from app.schemas import ProcessRequirementsRequest
 
 logger = logging.getLogger("app.generation_jobs")
 
@@ -34,6 +34,8 @@ _heavy_inference_semaphore = asyncio.Semaphore(
 def _public_failure(exc: Exception) -> str:
     """Return a useful category without leaking parser prompts or DB details."""
     message = str(exc).lower()
+    if "there are no requirements to generate" in message:
+        return "There are no requirements to generate."
     if isinstance(exc, asyncio.TimeoutError) or "timed out" in message or "timeout" in message:
         return "timeout: The local model did not finish within the job deadline."
     if "connect" in message or "lm studio" in message:

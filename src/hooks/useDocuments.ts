@@ -159,6 +159,8 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
       uploadInFlightRef.current = false;
       setIsUploading(false);
     }
+    // The dependency object is reconstructed; these members are stable inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deps.projectId, deps.setMessages, refreshDocuments]);
 
   const handleProcessDocument = useCallback(async (doc: UploadedDocumentPayload) => {

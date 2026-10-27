@@ -35,8 +35,8 @@ from app.merge_service import (
     collect_acceptance_criteria,
     filter_active_stories,
     merge_user_stories,
-    normalize_title,
     normalize_ticket_code,
+    normalize_title,
 )
 from app.prompt_loader import load_prompt
 from app.requirement_codes import next_requirement_code

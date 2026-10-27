@@ -98,7 +98,7 @@ class DocumentIngestionService:
             return raw.decode("utf-8", errors="replace")
         if original_format == "docx":
             try:
-                import mammoth  # type: ignore
+                import mammoth
             except ImportError as exc:  # pragma: no cover
                 raise HTTPException(
                     status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -109,11 +109,11 @@ class DocumentIngestionService:
             except Exception as exc:
                 logger.error("DOCX conversion failed: %s", exc)
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"Could not read this DOCX file: {exc}",
                 ) from exc
         try:
-            from pypdf import PdfReader  # type: ignore
+            from pypdf import PdfReader
         except ImportError as exc:  # pragma: no cover
             raise HTTPException(
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -126,13 +126,13 @@ class DocumentIngestionService:
         except Exception as exc:
             logger.error("PDF extraction failed: %s", exc)
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Could not read this PDF file: {exc}",
             ) from exc
         text = "\n\n".join(page for page in pages if page)
         if not text.strip():
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=NEEDS_OCR_MESSAGE,
             )
         return text

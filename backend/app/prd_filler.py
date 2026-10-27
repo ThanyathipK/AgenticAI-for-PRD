@@ -359,15 +359,24 @@ def extract_intake_fields(markdown: str) -> Dict[str, Any]:
                  for cell in raw_line.strip().strip("|").split("|")]
         if len(cells) < 2:
             continue
-        label = re.sub(r"\*\*", "", cells[0]).strip()
+        # Preview tables use ``<br>`` inside the two long business labels
+        # (Introduction & Executive Summary and Target Audience & user
+        # Personas). Collapse that visual line break before matching the
+        # canonical intake names, otherwise those two rows alone disappear
+        # when Markdown is rebuilt into the official PDF/DOCX template.
+        label = re.sub(r"\s+", " ", re.sub(r"\*\*", "", cells[0])).strip()
         value = cells[1].strip()
-        if not value:
-            continue
         choices = STAKEHOLDER_ROLES if current_section == "stakeholders" else BUSINESS_TOPICS
         canonical = next((choice for choice in choices if choice.lower() == label.lower()), None)
-        if canonical and not is_template_only_detail(value):
+        if canonical:
             target = "stakeholders" if current_section == "stakeholders" else "business_topics"
-            result[target][canonical] = value
+            # Presence of the saved row is authoritative, including a value
+            # the user intentionally cleared. Otherwise older normalized data
+            # can reappear only in the PDF/DOCX export.
+            if not value:
+                result[target][canonical] = ""
+            elif not is_template_only_detail(value):
+                result[target][canonical] = value
     return result
 
 
@@ -382,7 +391,8 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "scope_in": [], "scope_out": [], "scope_present": False,
         "functional_rows": [], "functional_table_present": False,
-        "narrative": {},
+        "narrative": {}, "reviews": [], "reviews_present": False,
+        "epic_name": "", "epic_name_present": False,
     }
     section = ""
     scope_headers = False
@@ -453,6 +463,8 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
             title = heading.group(1).lower()
             if "product scope" in title:
                 section = "scope"
+            elif title.strip() == "reviews":
+                section = "reviews"
             elif "scope definition" in title:
                 # Subheading inside Product Scope; keep the parent section.
                 section = "scope"
@@ -465,12 +477,49 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
             continue
         if not raw_line.strip().startswith("|"):
             continue
-        cells = [clean_cell(cell) for cell in raw_line.strip().strip("|").split("|")]
+        table_line = raw_line.strip()
+        # Remove one Markdown table boundary on each side, not every leading
+        # delimiter. Appendix glossary rows intentionally begin with an empty
+        # first cell (``| | Term | Definition |``); ``strip('|')`` shifted
+        # those cells left and silently discarded the glossary on export.
+        table_content = table_line[1:-1] if table_line.endswith("|") else table_line[1:]
+        cells = [clean_cell(cell) for cell in table_content.split("|")]
         if not cells or all(re.fullmatch(r"[-: ]*", cell) for cell in cells):
+            continue
+
+        if section == "reviews" and len(cells) >= 4:
+            if label(cells[0]) == "role":
+                result["reviews_present"] = True
+                continue
+            role = re.sub(r"\s+", " ", clean_cell(cells[0])).strip()
+            if role:
+                result["reviews_present"] = True
+                result["reviews"].append({
+                    "role": role,
+                    "name": clean_cell(cells[1]),
+                    "signature": clean_cell(cells[2]),
+                    "date": clean_cell(cells[3]),
+                })
             continue
 
         if section == "scope" and len(cells) >= 2:
             joined_labels = " ".join(label(cell) for cell in cells)
+            epic_cell = next(
+                (cell for cell in cells if re.match(r"^\s*Epic\s+Name\s*:", cell, re.I)),
+                None,
+            )
+            if epic_cell is not None:
+                result["epic_name_present"] = True
+                result["epic_name"] = re.sub(
+                    r"^\s*Epic\s+Name\s*:\s*", "", clean_cell(epic_cell), flags=re.I
+                ).strip()
+                continue
+            if label(cells[0]) == "user flow & wireframes":
+                value = "\n".join(list_items(cells[1])) or clean_cell(cells[1])
+                result["narrative"]["user_flow"] = (
+                    value if not is_template_only_detail(value) else "TBD"
+                )
+                continue
             if "functional requirement (fr)" in joined_labels and "acceptance criteria" in joined_labels:
                 result["functional_table_present"] = True
                 continue
@@ -583,7 +632,11 @@ def _fill_stakeholders(body: str, actors: List[Any], stakeholders: Optional[Dict
         return ""
 
     for role in STAKEHOLDER_ROLES:
-        name = (stakeholders or {}).get(role) or _match(role)
+        name = (
+            (stakeholders or {})[role]
+            if stakeholders is not None and role in stakeholders
+            else _match(role)
+        )
         body = body.replace(f"{role} & \\\\", f"{role} & {escape_latex(name)} \\\\", 1)
     return body
 
@@ -608,14 +661,33 @@ def _fill_version_history(body: str, version_label: str, author: str, today: str
     return body.replace(placeholder, rendered + "\n  \\hline", 1)
 
 
-def _fill_reviews(body: str, actors: List[Any]) -> str:
+def _fill_reviews(
+    body: str,
+    actors: List[Any],
+    reviews: Optional[List[Dict[str, str]]] = None,
+) -> str:
     names = [str(a.get("name", a)) if isinstance(a, dict) else str(a)
              for a in (actors or [])]
     for role in ("Product Owner", "Head of Product Management"):
-        name = next((n for n in names if role.lower() in n.lower()), "")
+        saved = next(
+            (
+                review for review in (reviews or [])
+                if re.sub(r"\s+", " ", str(review.get("role") or "")).strip().lower()
+                == role.lower()
+            ),
+            None,
+        )
+        name = (
+            str(saved.get("name") or "")
+            if saved is not None
+            else next((n for n in names if role.lower() in n.lower()), "")
+        )
+        signature = str(saved.get("signature") or "") if saved is not None else ""
+        date = str(saved.get("date") or "") if saved is not None else ""
         body = body.replace(
             f"{role} & & & \\\\",
-            f"{role} & {escape_latex(name)} & & \\\\",
+            f"{role} & {escape_latex(name)} & {escape_latex(signature)} & "
+            f"{escape_latex(date)} \\\\",
             1,
         )
     return body
@@ -627,14 +699,14 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
     business_topics = business_topics or {}
     goals = [g.get("description", g) if isinstance(g, dict) else g
              for g in _as_list(data.get("business_goals"))]
-    if business_topics.get("Business Objectives"):
+    if "Business Objectives" in business_topics:
         goals = [business_topics["Business Objectives"]]
     elif narrative and narrative.get("business_objectives"):
         goals = [narrative["business_objectives"]]
     narrative = dict(narrative or {})
-    if business_topics.get("Expected Benefit"):
+    if "Expected Benefit" in business_topics:
         narrative["expected_benefit"] = business_topics["Expected Benefit"]
-    if business_topics.get("Success Metrics"):
+    if "Success Metrics" in business_topics:
         narrative["success_metrics"] = business_topics["Success Metrics"]
     actors = data.get("actors") or []
 
@@ -654,13 +726,15 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
     def _topic(name: str, fallback: str) -> str:
         value = business_topics.get(name)
         cleaned_value = _numbered_text(value)
-        return r"\prdfield{" + _cell_text(cleaned_value) + "}" if cleaned_value else fallback
+        if name in business_topics:
+            return r"\prdfield{" + _cell_text(cleaned_value) + "}"
+        return fallback
 
     epic = _topic("Introduction & Executive Summary", _narr("exec_summary", r"\prdfield{}"))
 
     problem_source = (
         [business_topics["Problem Statement"]]
-        if business_topics.get("Problem Statement")
+        if "Problem Statement" in business_topics
         else [narrative["problem_statement"]]
         if narrative and narrative.get("problem_statement")
         else _as_list(data.get("problem_statement"))
@@ -688,11 +762,13 @@ def _fill_business_overview(body: str, data: Dict[str, Any],
         (a.get("name", a) if isinstance(a, dict) else a) for a in (actors or [])
     ]
     target = [n for n in target if str(n or "").strip()]
-    target_text = _numbered_text(
-        business_topics.get("Target Audience & user Personas")
-        or ((narrative or {}).get("target_audience"))
+    target_source = (
+        business_topics["Target Audience & user Personas"]
+        if "Target Audience & user Personas" in business_topics
+        else ((narrative or {}).get("target_audience"))
         or ", ".join(str(n) for n in target)
     )
+    target_text = _numbered_text(target_source)
     target_cell = r"\prdfield{" + _cell_text(target_text) + "}"
 
     rows = [
@@ -1045,6 +1121,7 @@ def _normalize_glossary_entries(value: Any) -> List[tuple[str, str]]:
     """Accept model/manual glossary shapes without letting bad data break PRD generation."""
     if not value:
         return []
+    candidates: List[Any]
     if isinstance(value, dict):
         candidates = list(value.items())
     elif isinstance(value, str):
@@ -1123,6 +1200,7 @@ def fill_template_body(
     version_history: Optional[str] = None,
     version_label: Optional[str] = None,
     version_author: Optional[str] = None,
+    reviews: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     """Return the official Krungsri template BODY with its blanks filled from
     the project dataset. ``data`` maps: ``business_goals``, ``actors``,
@@ -1147,7 +1225,7 @@ def fill_template_body(
         body, version_label, author, today, version_summary, version_history,
         version_author,
     )
-    body = _fill_reviews(body, data.get("actors") or [])
+    body = _fill_reviews(body, data.get("actors") or [], reviews)
     body = _fill_business_overview(body, data, narrative, business_topics)
     body = _fill_product_scope(body, data, narrative)
     body = _fill_tech_appendix(body, narrative)

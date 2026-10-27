@@ -8,8 +8,8 @@ from typing import Any, Dict, List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import PendingActionModel
 from app.application_types import PendingMutation
+from app.models import PendingActionModel
 from app.repositories.base import as_uuid, serialize_pending_action
 
 logger = logging.getLogger(__name__)

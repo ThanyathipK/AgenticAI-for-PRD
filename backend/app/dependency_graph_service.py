@@ -1,20 +1,19 @@
 """Persisted artifact dependency graph and dependency-scoped regeneration."""
 from __future__ import annotations
 
+import uuid
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Iterable
-import uuid
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ArtifactDependencyModel, PRDSectionModel, RegenerationRunModel
 from app.merge_service import normalize_ticket_code
+from app.models import ArtifactDependencyModel, PRDSectionModel, RegenerationRunModel
 from app.repositories.prd_section import PRDSectionRepository
 from app.repositories.requirement_state import RequirementStateRepository
 from app.traceability_service import extract_codes
-
 
 ALLOWED_ARTIFACT_TYPES = {
     "requirement", "user_story", "acceptance_criterion", "prd_section", "diagram",

@@ -251,6 +251,29 @@ async def test_architect_raises_on_empty_dataset(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_architect_rebuilds_existing_prd_after_final_requirement_is_archived(
+    monkeypatch,
+):
+    empty = copy.deepcopy(REQ_STATE)
+    empty["requirements"] = []
+    empty["user_stories"] = []
+    empty["generated_prd"] = "# Existing PRD with archived requirement US-001"
+    _patch(monkeypatch, empty)
+
+    result = await agents.architect_node({
+        "project_id": "p1",
+        "current_version": 2,
+        "structured_requirements": {},
+        "force_prd_rebuild": True,
+        "stage_artifacts_only": True,
+    })
+
+    assert result["prd_markdown"]
+    assert "Submit refund request online" not in result["prd_markdown"]
+    assert result["mermaid_diagram"] == ""
+
+
+@pytest.mark.asyncio
 async def test_architect_rolls_back_and_fails_when_section_sync_fails(monkeypatch):
     _patch(monkeypatch, REQ_STATE)
     session = TrackingSession()
@@ -525,6 +548,8 @@ async def test_architect_preserves_locked_tech_section_and_refreshes_diagram(mon
             {
                 "section_key": "tech_ops",
                 "title": "3. Technical & Operational Considerations",
+                "section_order": 8,
+                "content": "## 3. Technical & Operational Considerations\n\nLocked text for deleted US-999",
                 "ai_generatable": True,
                 "is_locked": True,
                 "locked_by": "user",
@@ -552,6 +577,7 @@ async def test_architect_preserves_locked_tech_section_and_refreshes_diagram(mon
     })
 
     assert result["prd_markdown"]
+    assert "Locked text for deleted US-999" in result["prd_markdown"]
     assert result["mermaid_diagram"] == "flowchart TD\n  CURRENT[Refreshed from requirements]"
     assert result["diagram_regenerated"] is True
     assert "Technical & Operational Considerations" in result["agent_message"]
@@ -559,3 +585,30 @@ async def test_architect_preserves_locked_tech_section_and_refreshes_diagram(mon
     assert "locked by" not in result["agent_message"]
     assert len(result["skipped_locked_prd_sections"]) == 2
     assert "existing content was preserved" in result["agent_message"]
+
+
+@pytest.mark.asyncio
+async def test_architect_fails_closed_if_locked_preview_cannot_be_composed(monkeypatch):
+    _patch(monkeypatch, REQ_STATE)
+
+    async def sections(*_args, **_kwargs):
+        return [{
+            "section_key": "product_scope",
+            "title": "2. Product Scope & Functional Requirements",
+            "section_order": 7,
+            "content": "## 2. Product Scope & Functional Requirements\n\nLocked US-001",
+            "ai_generatable": True,
+            "is_locked": True,
+        }]
+
+    monkeypatch.setattr(agents.PRDSectionRepository, "get_by_project", sections)
+    monkeypatch.setattr(agents, "merge_sections_for_preview", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(RuntimeError, match="could not preserve locked PRD sections"):
+        await agents.architect_node({
+            "project_id": "p1",
+            "current_version": 2,
+            "structured_requirements": {},
+            "db_session": object(),
+            "stage_artifacts_only": True,
+        })

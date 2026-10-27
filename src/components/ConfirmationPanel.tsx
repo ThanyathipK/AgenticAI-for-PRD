@@ -5,6 +5,8 @@ import type {
   ConfirmActionResponse,
   ImpactAnalysisPayload,
   PendingActionPayload,
+  RequirementImpact,
+  StoryImpact,
 } from '../api/types';
 import { handleError } from './Toast';
 
@@ -26,6 +28,8 @@ interface DraftShape {
   requirements: number;
   stories: number;
   versionNumber?: number;
+  changedRequirements: RequirementImpact[];
+  changedStories: StoryImpact[];
 }
 
 function asArray(value: unknown): Record<string, unknown>[] {
@@ -115,9 +119,35 @@ function ImpactAnalysisSection({
       </div>
 
       {state === 'loading' && (
-        <p className="mt-2 text-[11px] text-on-surface-variant font-mono">
-          Analyzing changes and affected artifacts…
-        </p>
+        <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50/60 p-3 space-y-3 max-h-72 overflow-y-auto custom-scrollbar">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">What changes</p>
+            {draft.changedRequirements.length > 0 || draft.changedStories.length > 0 ? (
+              <ul className="space-y-1">
+                {draft.changedRequirements.map((requirement, index) => (
+                  <li key={`draft-req-${index}`} className="flex items-center gap-2 flex-wrap text-[11px]">
+                    <ChangeBadge kind={requirement.change_kind} />
+                    <span className="font-mono font-bold text-slate-700">{requirement.requirement_code}</span>
+                    <span className="text-slate-600 break-words min-w-0">{requirement.title || '(untitled)'}</span>
+                  </li>
+                ))}
+                {draft.changedStories.map((story, index) => (
+                  <li key={`draft-story-${index}`} className="flex items-center gap-2 flex-wrap text-[11px]">
+                    <ChangeBadge kind={story.change_kind} />
+                    <span className="font-mono font-bold text-primary">{story.ticket_code}</span>
+                    <span className="text-slate-600 break-words min-w-0">{story.story_title || '(untitled)'}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-[11px] text-on-surface-variant font-mono">Reading the proposed changes…</p>
+            )}
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-1">What is affected</p>
+            <p className="text-[11px] text-on-surface-variant font-mono">Checking referenced PRD sections and diagrams…</p>
+          </div>
+        </div>
       )}
 
       {state === 'error' && (
@@ -242,7 +272,16 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
     const stories = requirements.reduce((acc, r) => acc + asArray(r.user_stories).length, 0)
       + asArray(proposed.user_stories).length;
     const versionNumber = typeof proposed.version_number === 'number' ? proposed.version_number : undefined;
-    return { requirements: requirements.length, stories, versionNumber };
+    const preview = proposed._change_preview && typeof proposed._change_preview === 'object'
+      ? proposed._change_preview as Record<string, unknown>
+      : {};
+    return {
+      requirements: requirements.length,
+      stories,
+      versionNumber,
+      changedRequirements: asArray(preview.requirements) as unknown as RequirementImpact[],
+      changedStories: asArray(preview.user_stories) as unknown as StoryImpact[],
+    };
   }, [action.proposed_changes]);
 
   // CONFIRM 1.2 — Save handler: calls the write endpoint and hands the persisted

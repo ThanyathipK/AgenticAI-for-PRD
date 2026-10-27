@@ -28,19 +28,23 @@ import logging
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field, field_validator
 
 from app.llm_factory import llm
-from app.schemas import RequirementIntentDetectionResult, WorkflowRoutingResult, RequirementMatcherResult
-from app.prompt_loader import load_prompt
 from app.llm_utils import invoke_llm_structured
 from app.merge_service import (
     format_story_context_lines,
     normalize_ticket_code,
     normalize_title,
     titles_match,
+)
+from app.prompt_loader import load_prompt
+from app.schemas import (
+    RequirementIntentDetectionResult,
+    RequirementMatcherResult,
+    WorkflowRoutingResult,
 )
 
 # ==========================================
@@ -711,7 +715,7 @@ async def detect_requirement_intent(raw_input: str, current_stories: Optional[Li
     #             same format as the gatherer/matcher prompts) or a placeholder when
     #             the project has no stories yet. This is what lets the classifier
     #             tell "update the transfer limit" (existing) from "add transfers".
-    context_lines = format_story_context_lines(current_stories)
+    context_lines = format_story_context_lines(current_stories or [])
     current_context = "\n".join(context_lines) if context_lines else "No existing user stories in this project."
 
     # INTENT 2.3 — Prompt assembly from prompts/intent.md (the intent taxonomy:
@@ -938,8 +942,9 @@ async def generate_general_chat_response(
     system_prompt = load_prompt("general_chat")
     
     try:
-        from app.llm_factory import llm
         from langchain_core.messages import HumanMessage, SystemMessage
+
+        from app.llm_factory import llm
         
         knowledge_rules = (
             "\n\nProject-knowledge rules:\n"

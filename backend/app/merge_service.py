@@ -31,9 +31,14 @@ workflow.
 import difflib
 import json
 import re
-from typing import Dict, Any, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
-from app.application_types import RequirementMergeReport, SemanticChangePayload
+from app.application_types import (
+    AcceptanceCriteriaMergeSummary,
+    MergeAction,
+    RequirementMergeReport,
+    SemanticChangePayload,
+)
 
 
 # ==========================================
@@ -479,6 +484,7 @@ def merge_user_stories_with_report(
             # without field diffs; NO_CHANGE keeps the "unchanged" label even
             # when incoming values were applied (values win, label follows
             # the recommendation).
+            final_change: MergeAction
             if rec_act == "UPDATE":
                 final_change = "updated"
             elif rec_act == "NO_CHANGE":
@@ -492,7 +498,7 @@ def merge_user_stories_with_report(
                 "matched_by": matched_by,
                 "protected": False,
                 "fields_changed": changed_fields,
-                "acceptance_criteria": ac_report,
+                "acceptance_criteria": cast(AcceptanceCriteriaMergeSummary, ac_report),
             }
             continue
 

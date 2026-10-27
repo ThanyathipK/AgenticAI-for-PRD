@@ -39,6 +39,7 @@ from app.prd_section_service import (
     assemble_document_markdown,
     ensure_sections_seeded,
     merge_edited_section,
+    merge_sections_for_preview,
     prd_has_renderable_operational_sections,
     prd_is_sectioned_markdown,
     split_markdown_sections,
@@ -272,6 +273,31 @@ class TestSplitMarkdownSections:
         latex_parts = split_markdown_sections("\\section*{Stakeholders}\nbody")
         assert len(latex_parts) == 1
         assert latex_parts[0]["section_key"] == "title"
+
+    def test_preview_merge_preserves_locked_content_verbatim(self):
+        generated = _markdown_prd().replace("US-001", "US-002")
+        locked_content = (
+            "## 2. Product Scope & Functional Requirements\n\n"
+            "Locked baseline still contains US-001"
+        )
+        merged = merge_sections_for_preview(
+            generated,
+            [{
+                "section_key": "product_scope",
+                "section_order": 7,
+                "content": locked_content,
+                "ai_generatable": True,
+                "is_locked": True,
+            }],
+        )
+
+        assert merged is not None
+        product_scope = next(
+            part for part in split_markdown_sections(merged)
+            if part["section_key"] == "product_scope"
+        )
+        assert product_scope["content"] == locked_content
+        assert "US-002" not in product_scope["content"]
 
 
 # =====================================================================

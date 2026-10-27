@@ -16,14 +16,16 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import (
-    create_access_token,
-    get_password_hash,
-    change_password as auth_change_password,
-    verify_password,
-    authenticate_user,
     AuthenticatedUser,
-    get_current_user,
     UserResponse,
+    authenticate_user,
+    create_access_token,
+    get_current_user,
+    get_password_hash,
+    verify_password,
+)
+from app.auth import (
+    change_password as auth_change_password,
 )
 from app.config import settings
 from app.database import get_db

@@ -130,7 +130,9 @@ class ClarificationQuestionRepository:
 
         # 3. Resolve target_user_story_id UUID
         target_us = data.get("target_user_story_id")
-        story_id_val = await ClarificationQuestionRepository._resolve_story_id(pid, session, target_us)
+        story_id_val = await ClarificationQuestionRepository._resolve_story_id(
+            pid, session, str(target_us or "")
+        )
 
         # Clarification questions are audit findings, not edits to the target
         # story. They may reference locked artifacts and retain their normal

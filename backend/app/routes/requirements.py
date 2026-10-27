@@ -3,12 +3,13 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents import gather_clarification_answer_batch, prd_workflow
 from app.auth import (
     AuthenticatedUser,
     get_current_user,
@@ -17,48 +18,52 @@ from app.auth import (
 )
 from app.config import settings
 from app.database import get_db
+from app.errors import classify_exception
+from app.event_manager import event_manager
+from app.impact_service import build_change_preview
+from app.input_validation import validate_body_budget, validate_text_budget
 from app.llm_client import (
     LMStudioGatewayError,
     LMStudioOutputParsingError,
     LMStudioUnavailableError,
 )
+from app.observability import LogContext, log_event
 from app.rate_limit import rate_limit_dependency
-from app.workflow_cancellation import workflow_cancellations
-from app.input_validation import validate_text_budget, validate_body_budget
 from app.repositories import (
+    AcceptanceCriteriaRepository,
+    ClarificationQuestionRepository,
+    ConversationMessageRepository,
+    DocumentRepository,
+    PendingActionRepository,
+    PRDVersionRepository,
     RequirementRepository,
     RequirementStateRepository,
     UserStoryRepository,
-    AcceptanceCriteriaRepository,
-    ConversationMessageRepository,
-    PendingActionRepository,
-    ClarificationQuestionRepository,
-    DocumentRepository,
-    PRDVersionRepository,
+)
+from app.requirement_codes import (
+    default_requirement_code,
+    extract_requirement_codes,
+    normalize_requirement_code,
 )
 from app.schemas import (
+    AuditRespondResponse,
+    IntentDetectorRequest,
     ProcessRequirementsRequest,
+    ProcessRequirementsResponse,
+    RequirementDetail,
+    RequirementIntentDetectionResult,
     RequirementLockRequest,
+    RequirementLockResponse,
+    RequirementMatcherRequest,
+    RequirementMatcherResult,
+    RequirementStateResponse,
     UserAnswerSubmit,
     WorkflowRouterRequest,
-    IntentDetectorRequest,
-    RequirementMatcherRequest,
-    RequirementDetail,
-    RequirementLockResponse,
-    AuditRespondResponse,
-    RequirementStateResponse,
-    ProcessRequirementsResponse,
     WorkflowRoutingResult,
-    RequirementIntentDetectionResult,
-    RequirementMatcherResult,
 )
-from app.agents import prd_workflow, gather_clarification_answer_batch
-from app.event_manager import event_manager
-from app.requirement_codes import default_requirement_code, extract_requirement_codes, normalize_requirement_code
-from app.services.requirement_processing_service import RequirementProcessingService
-from app.errors import classify_exception
-from app.observability import LogContext, log_event
 from app.semantic_memory import extract_and_remember
+from app.services.requirement_processing_service import RequirementProcessingService
+from app.workflow_cancellation import workflow_cancellations
 
 logger = logging.getLogger("app.routes.requirements")
 
@@ -535,6 +540,9 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
     project_id = payload.get("project_id")
     answers = payload.get("answers", {})
 
+    if not isinstance(project_id, str):
+        raise HTTPException(status_code=400, detail="Invalid project_id format")
+
     try:
         UUID(project_id)
     except ValueError:
@@ -966,6 +974,14 @@ async def _process_requirements_pipeline(
                     "Save or discard the pending requirement changes before "
                     "generating a PRD. PRD generation uses confirmed project state only."
                 ),
+            )
+        if not req_state or not (
+            (req_state.get("requirements") or [])
+            or str(req_state.get("generated_prd") or "").strip()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="There are no requirements to generate.",
             )
 
     # Detect intent on the raw input
@@ -1679,6 +1695,10 @@ async def _process_requirements_pipeline(
                     "proposed_changes": {
                         **req_state,
                         "_base_requirements_revision": persisted_requirements_revision_at_start,
+                        "_change_preview": build_change_preview(
+                            requirement_state_before_workflow,
+                            req_state,
+                        ),
                     },
                     # Archive actions store canonical REQ/US codes here for a
                     # second lock check at confirmation time. Other merge types
@@ -2068,7 +2088,7 @@ async def post_requirement_matcher(
     Raises:
         HTTPException: 413 if ``message`` exceeds ``MAX_CONTEXT_TOKENS``.
     """
-    from app.semantic_service import match_requirement, detect_requirement_intent
+    from app.semantic_service import detect_requirement_intent, match_requirement
 
     # Finding #39: enforce MAX_CONTEXT_TOKENS on the incoming message.
     validate_text_budget(payload.message, "Requirement-matcher message")

@@ -1,9 +1,8 @@
 """Parse the optional chat-line priority prefixes used by requirement intake."""
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import List
-
 
 _PRIORITY_LINE = re.compile(r"^\s*(!{1,3})(?:\s+|$)(.*)$")
 

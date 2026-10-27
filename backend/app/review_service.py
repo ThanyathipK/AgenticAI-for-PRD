@@ -13,14 +13,13 @@ from app.models import (
     AuditResultModel,
     AuditWaiverModel,
     ClarificationQuestionModel,
+    PRDVersionModel,
     ProjectModel,
     ProjectReviewEventModel,
-    PRDVersionModel,
     RequirementModel,
     UserStoryModel,
 )
 from app.repositories.base import as_uuid
-
 
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "draft": {"in_review_hpo"},

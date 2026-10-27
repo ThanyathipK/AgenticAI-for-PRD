@@ -344,7 +344,6 @@ export function useRequirementStore(
         (rs) => !prevSections.some((ps) => ps.id === rs.id),
       );
       if (missingSections.length > 0) {
-        changed = true;
         return [...updated, ...missingSections];
       }
 

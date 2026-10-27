@@ -5,6 +5,9 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I"]
 
+[tool.ruff.lint.per-file-ignores]
+"alembic/env.py" = ["E402"]
+
 [tool.mypy]
 python_version = "3.12"
 plugins = ["pydantic.mypy"]
@@ -15,3 +18,17 @@ warn_unused_ignores = true
 no_implicit_optional = true
 explicit_package_bases = true
 pretty = true
+
+# FastAPI validates and serializes route dictionaries through response_model.
+# Mypy cannot connect that runtime contract to decorated function returns.
+[[tool.mypy.overrides]]
+module = "app.routes.*"
+disable_error_code = ["return-value", "misc"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated.*:starlette.exceptions.StarletteDeprecationWarning",
+    "ignore:'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated.*:DeprecationWarning",
+    "ignore:builtin type SwigPy.* has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+]

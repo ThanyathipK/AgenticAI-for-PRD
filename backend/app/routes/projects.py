@@ -3,7 +3,7 @@ import logging
 import re
 import uuid
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthenticatedUser, get_current_user, require_project_owner
 from app.database import get_db
+from app.event_manager import event_manager
 from app.latex_service import (
     compile_latex_to_pdf,
     convert_latex_to_docx,
@@ -24,41 +25,40 @@ from app.latex_service import (
     prd_to_markdown,
     soffice_available,
 )
+from app.prd_section_service import assemble_document_markdown, ensure_sections_seeded
+from app.prompt_loader import load_prd_latex_template, load_prd_template
 from app.repositories import (
-    ProjectRepository,
-    RequirementStateRepository,
     ConversationMessageRepository,
     PRDDocumentRepository,
     PRDVersionRepository,
+    ProjectRepository,
+    RequirementStateRepository,
 )
 from app.repositories.base import serialize_project
-from app.schemas import (
-    ProjectCreate,
-    ProjectSummary,
-    ProjectCreated,
-    ProjectDeleteResponse,
-    ProjectPinRequest,
-    ProjectFlagRequest,
-    ProjectStatusRequest,
-    ProjectReviewEventResponse,
-    RequirementStateResponse,
-    ConversationMessageResponse,
-    ConversationMessageCreate,
-    PRDVersionResponse,
-    PrdVersionDiffResponse,
-    PrdVersionRestoreResponse,
-    PRDExportResponse,
-)
-from app.prd_section_service import ensure_sections_seeded, assemble_document_markdown
 from app.repositories.prd_section import PRDSectionRepository
-from app.prompt_loader import load_prd_template, load_prd_latex_template
-from app.event_manager import event_manager
 from app.review_service import (
     ReviewTransitionError,
     get_review_history,
     governed_state_changed,
     mark_revised_if_approved,
     transition_project,
+)
+from app.schemas import (
+    ConversationMessageCreate,
+    ConversationMessageResponse,
+    PRDExportResponse,
+    PrdVersionDiffResponse,
+    PRDVersionResponse,
+    PrdVersionRestoreResponse,
+    ProjectCreate,
+    ProjectCreated,
+    ProjectDeleteResponse,
+    ProjectFlagRequest,
+    ProjectPinRequest,
+    ProjectReviewEventResponse,
+    ProjectStatusRequest,
+    ProjectSummary,
+    RequirementStateResponse,
 )
 
 logger = logging.getLogger("app.routes.projects")
@@ -832,7 +832,13 @@ async def post_prd_export_generation(
     # skeleton - every table, merged-cell structure and \newpage marker - is
     # always the untouched official template, so the export is PDF-exact and
     # compiles every time.
-    from app.prd_filler import PENDING_VERSION_LABEL, extract_intake_fields, fill_template_body, format_project_status, stamp_version_label
+    from app.prd_filler import (
+        PENDING_VERSION_LABEL,
+        extract_intake_fields,
+        fill_template_body,
+        format_project_status,
+        stamp_version_label,
+    )
 
     nested = any(
         isinstance(r, dict) and r.get("user_stories") for r in (requirements or [])
@@ -1090,7 +1096,11 @@ async def _fill_official_export_template(
     """Put project data and legacy prose into the official template body."""
     from app.prd.model import CanonicalPRD, PRDContent, PRDMetadata
     from app.prd.renderers import render_latex
-    from app.prd_filler import extract_intake_fields, extract_manual_export_fields, format_project_status
+    from app.prd_filler import (
+        extract_intake_fields,
+        extract_manual_export_fields,
+        format_project_status,
+    )
 
     req_state = await RequirementStateRepository.get_by_project_id(project_id, db) or {}
     requirements = req_state.get("requirements") or []
@@ -1166,7 +1176,9 @@ async def _fill_official_export_template(
     if manual_fields.get("scope_present"):
         data["scope_in"] = manual_fields["scope_in"]
         data["scope_out"] = manual_fields["scope_out"]
-    if manual_fields.get("functional_table_present") and manual_fields.get("functional_rows"):
+    if manual_fields.get("epic_name_present"):
+        data["epic_name"] = manual_fields["epic_name"]
+    if manual_fields.get("functional_table_present"):
         # The Product Scope section was manually edited; export those saved
         # FR/AC rows instead of reconstructing older rows from requirements.
         data["requirements"] = []
@@ -1182,6 +1194,11 @@ async def _fill_official_export_template(
             status=format_project_status(project.get("status")),
             stakeholders=saved_intake.get("stakeholders") or {},
             business_topics=saved_intake.get("business_topics") or {},
+            reviews=(
+                manual_fields["reviews"]
+                if manual_fields.get("reviews_present")
+                else None
+            ),
             version=version_number,
             version_summary=current_version_summary,
             version_history=previous_version_history,
@@ -1230,7 +1247,7 @@ async def _export_prd_bytes(
 
     if not source:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="No PRD content was supplied to export.",
         )
 
@@ -1286,16 +1303,16 @@ async def _export_prd_bytes(
             if fmt == "pdf":
                 retry_fn = lambda: _pdf_export(source, True)  # noqa: E731
             else:
-                retry_fn = convert_markdown_to_docx
+                retry_fn = lambda: convert_markdown_to_docx(source)  # noqa: E731
             try:
-                data = await asyncio.to_thread(retry_fn, source)
+                data = await asyncio.to_thread(retry_fn)
             except FileNotFoundError as err:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err),
                 ) from err
             except ValueError as err:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(err),
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(err),
                 ) from err
             except RuntimeError as err:
                 logger.error("Markdown retry export failed for project %s (%s): %s", project_id, fmt, err)
@@ -1318,7 +1335,7 @@ async def _export_prd_bytes(
     except ValueError as err:
         # Empty / unusable source.
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(err),
         ) from err
 
@@ -1408,7 +1425,7 @@ async def convert_prd_to_markdown(
     source = strip_template_only_details(payload.latex_source).strip()
     if not source:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="No PRD content was supplied to convert.",
         )
     source_kind = "markdown" if is_markdown_prd(source) else "latex"
@@ -1416,7 +1433,7 @@ async def convert_prd_to_markdown(
         markdown = await asyncio.to_thread(prd_to_markdown, source)
     except ValueError as err:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(err),
         ) from err
     except RuntimeError as err:

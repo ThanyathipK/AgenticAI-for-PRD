@@ -260,6 +260,31 @@ def diff_stories(
     return changes, affected
 
 
+def build_change_preview(
+    current_state: Dict[str, Any],
+    proposed_state: Dict[str, Any],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Build the fast, database-free part of the confirmation preview.
+
+    Pending actions store this alongside the proposed state so the browser can
+    render changed requirements and stories immediately.  The impact endpoint
+    still performs the slower downstream PRD/diagram scan for the authoritative
+    completed analysis.
+    """
+    current = _flatten_state_requirements(current_state)
+    proposed = _flatten_state_requirements(proposed_state)
+    requirements, _ = diff_requirements(current, proposed)
+    stories, _ = diff_stories(current, proposed)
+    return {
+        "requirements": [
+            item for item in requirements if item["change_kind"] != CHANGE_UNCHANGED
+        ],
+        "user_stories": [
+            item for item in stories if item["change_kind"] != CHANGE_UNCHANGED
+        ],
+    }
+
+
 # CONFIRM 4.4 — Downstream impact (DB READ ONLY): scans the stored prd_sections and
 #             prd_documents for the affected codes, flags locked sections, and reports
 #             codes that would become DANGLING when a requirement/story is removed —

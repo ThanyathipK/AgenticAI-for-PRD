@@ -250,7 +250,9 @@ export function useProjectState(
     if (isAuthenticated) return;
     store.resetProjectState();
     projectsApi.setPendingActions([]);
-  }, [isAuthenticated]); // reset only when the authentication boundary changes
+    // Reset only when the authentication boundary changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
   useEffect(() => {
     setActiveCascadeJobId(
@@ -363,6 +365,8 @@ export function useProjectState(
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
+    // Depend on stable scalar/setter members, not the reconstructed store.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     activeCascadeJobId,
     cascadeStorageKey,

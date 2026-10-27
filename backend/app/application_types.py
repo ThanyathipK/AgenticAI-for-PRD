@@ -82,14 +82,8 @@ class PRDGenerationResult(TypedDict, total=False):
     agent_message: str
 
 
-class WorkflowNodeOutcome(PRDGenerationResult, total=False):
-    structured_requirements: Dict[str, Any]
-    audit_result: AuditResultPayload
-    audit_operational_error: bool
-    detected_intent: Optional[str]
-    workflow_routing: Dict[str, Any]
-    requirement_match: Dict[str, Any]
-    lock_blocked: bool
+# LangGraph nodes emit partial, stage-specific internal patches.
+WorkflowNodeOutcome: TypeAlias = Dict[str, Any]
 
 
 class BackgroundJobState(TypedDict, total=False):

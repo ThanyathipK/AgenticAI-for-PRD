@@ -38,8 +38,8 @@ from app.repositories import (
 from app.schemas import (
     ArtifactLockRequest,
     PrdSectionListResponse,
-    PrdSectionRevertResponse,
     PrdSectionResponse,
+    PrdSectionRevertResponse,
     PrdSectionUpdate,
     PrdSectionUpdateResponse,
     PrdSectionVersionResponse,
@@ -392,7 +392,7 @@ async def lock_prd_section(
 ) -> Dict:
     """Lock ONE PRD part: blocks edits AND excludes it from AI regeneration."""
     await _validate_project(project_id)
-    from app.lock_service import LockService, ArtifactLockError
+    from app.lock_service import ArtifactLockError, LockService
 
     await _ensure_sections_for_write(project_id, session)
     section = await _get_section_or_404(section_key, project_id, session)

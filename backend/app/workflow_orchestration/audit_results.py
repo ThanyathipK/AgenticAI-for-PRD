@@ -126,7 +126,7 @@ def merge_audit_passes(
     severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     findings.sort(
         key=lambda item: (
-            impact_rank.get(item.get("impact"), 3),
+            impact_rank.get(str(item.get("impact") or ""), 3),
             severity_rank.get(str(item.get("severity") or "").lower(), 4),
             -item.get("confidence", 0.0),
         )
@@ -141,12 +141,12 @@ def merge_audit_passes(
         and finding.get("evidence_status") == "supported"
     ]
     failed = {str(finding.get("category") or "Mandatory control") for finding in blocking}
-    contexts = [
-        result.get("project_context")
-        for result in results
-        if isinstance(result.get("project_context"), dict)
-    ]
-    project_context = max(
+    contexts: list[dict[str, Any]] = []
+    for result in results:
+        context = result.get("project_context")
+        if isinstance(context, dict):
+            contexts.append(context)
+    project_context: dict[str, Any] = max(
         contexts,
         key=lambda item: float(item.get("confidence") or 0.0),
         default={},
