@@ -394,6 +394,7 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
         "launch & rollout plan": "launch_plan",
         "open questions & risks": "open_questions",
         "assumptions": "assumptions",
+        "related documents": "related_documents",
     }
 
     def clean_cell(value: str) -> str:
@@ -959,8 +960,10 @@ def _fill_tech_appendix(body: str, narrative: Optional[Dict[str, str]]) -> str:
     def _cell(key: str, _legacy_fallback: str = "") -> str:
         if narrative and narrative.get(key):
             return r"\prdfield{" + _latex_multiline(narrative[key]) + "}"
-        guidance = _TECHNICAL_COMPLETION_GUIDANCE[key]
-        return r"\prdfield{" + escape_latex(guidance) + "}"
+        # Missing evidence must stay visibly empty. Completion guidance used to
+        # be written into the document itself, where it looked like extracted
+        # project data and was subsequently eligible for re-import.
+        return r"\prdfield{}"
 
     def _launch_cell() -> str:
         parts = []
@@ -975,8 +978,7 @@ def _fill_tech_appendix(body: str, narrative: Optional[Dict[str, str]]) -> str:
                     escape_latex(f"{label}:") + " " + _latex_multiline(value, numbered=False)
                 )
         if not parts:
-            guidance = _TECHNICAL_COMPLETION_GUIDANCE["launch_plan"]
-            return r"\prdfield{" + escape_latex(guidance) + "}"
+            return r"\prdfield{}"
         return r"\prdfield{" + r"\newline ".join(parts) + "}"
 
     def _appendix_cell(key: str, *, minimum_height: bool = False) -> str:
@@ -986,12 +988,7 @@ def _fill_tech_appendix(body: str, narrative: Optional[Dict[str, str]]) -> str:
         items = [item for item in items if item]
         height = r"\rule{0pt}{1cm}" if minimum_height else ""
         if not items:
-            fallback = {
-                "open_questions": _OPEN_ITEMS_GUIDANCE,
-                "assumptions": _ASSUMPTIONS_GUIDANCE,
-                "related_documents": _RELATED_DOCUMENTS_GUIDANCE,
-            }.get(key, _TECHNICAL_COMPLETION_GUIDANCE["non_functional"])
-            return height + r"\prdfield{" + escape_latex(fallback) + "}"
+            return height + r"\prdfield{}"
         numbered = r"\newline ".join(
             f"{index}. {escape_latex(item)}"
             for index, item in enumerate(items, start=1)
@@ -1079,11 +1076,8 @@ def _fill_glossary_rows(body: str, narrative: Optional[Dict[str, Any]]) -> str:
     entries = _normalize_glossary_entries((narrative or {}).get("glossary"))
     if not entries:
         blank = (
-            "\n  \\cline{2-3}\n  & \\prdfield{"
-            + escape_latex(_GLOSSARY_GUIDANCE_TERM)
-            + "} & \\prdfield{"
-            + escape_latex(_GLOSSARY_GUIDANCE_DEFINITION)
-            + "} \\\\"
+            "\n  \\cline{2-3}\n"
+            "  & \\prdfield{} & \\prdfield{} \\\\"
         )
         return _GLOSSARY_GRID_RE.sub(lambda _match: blank, body, count=1)
     rows = []

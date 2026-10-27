@@ -227,6 +227,9 @@ def test_manual_scope_and_operational_edits_feed_the_official_document():
 | --- | --- | --- |
 | Open<br> Questions &<br> Risks | Manually edited risk | |
 | Assumptions | Manually edited assumption | |
+| Glossary | Term | Definition |
+| | Settlement SLA | Maximum settlement completion time |
+| Related<br> Documents | Payments API specification | |
 """
     fields = extract_manual_export_fields(saved)
     assert fields["scope_in"] == ["Manual included feature", "Another included feature"]
@@ -243,6 +246,10 @@ def test_manual_scope_and_operational_edits_feed_the_official_document():
     assert fields["narrative"]["launch_plan"] == "Manually edited pilot plan"
     assert fields["narrative"]["open_questions"] == "Manually edited risk"
     assert fields["narrative"]["assumptions"] == "Manually edited assumption"
+    assert fields["narrative"]["glossary"] == [
+        ("Settlement SLA", "Maximum settlement completion time")
+    ]
+    assert fields["narrative"]["related_documents"] == "Payments API specification"
 
     body = fill_template_body(
         data={"scope_in": fields["scope_in"], "scope_out": fields["scope_out"]},
@@ -252,6 +259,8 @@ def test_manual_scope_and_operational_edits_feed_the_official_document():
     assert "Manual excluded feature" in body
     assert "Manually edited latency target" in body
     assert "Manually edited risk" in body
+    assert "Settlement SLA" in body
+    assert "Payments API specification" in body
 
 
 def test_generated_multiline_fields_use_visible_table_cell_breaks():
@@ -391,29 +400,33 @@ def test_appendix_export_keeps_layout_and_numbers_only_real_details():
 
     assert (
         r"Open\newline Questions \&\newline Risks & "
-        r"\multicolumn{2}{L{12.56cm}|}{\prdfield{Confirm performance targets, integration limits, security controls, data retention, operational ownership, rollout criteria, and rollback conditions.}}"
+        r"\multicolumn{2}{L{12.56cm}|}{\prdfield{}}"
     ) in empty
     assert (
-        r"Assumptions & \multicolumn{2}{L{12.56cm}|}{\prdfield{Confirm assumptions for external services, data availability, compliance ownership, support coverage, and deployment environments.}}"
+        r"Assumptions & \multicolumn{2}{L{12.56cm}|}{\prdfield{}}"
     ) in empty
     assert r"\prdfield{1. Confirm the retention period}" in populated
     assert r"\prdfield{1. Identity provider remains available}" in populated
     assert r"\prdfield{1. Security architecture decision record}" in populated
 
 
-def test_technical_and_appendix_show_actionable_guidance_without_guessing():
+def test_technical_and_appendix_leave_missing_evidence_empty():
     markdown = prd_to_markdown(fill_template_body(data={}, narrative={}))
 
     technical = markdown[markdown.index("### 3. Technical & Operational Considerations"):]
     appendix = markdown[markdown.index("### 4. Appendix"):]
-    assert "Define measurable performance, availability, security, privacy" in technical
-    assert "Confirm peak transactions per second, concurrent users" in technical
-    assert "Confirm the year-over-year growth forecast" in technical
-    assert "Define pilot users, release stages, readiness criteria" in technical
-    assert "Confirm performance targets, integration limits" in appendix
-    assert "Confirm assumptions for external services" in appendix
-    assert "Reference the source requirements, architecture decisions" in appendix
-    assert "Project terminology" in appendix
+    for guidance in (
+        "Define measurable performance, availability, security, privacy",
+        "Confirm peak transactions per second, concurrent users",
+        "Confirm the year-over-year growth forecast",
+        "Define pilot users, release stages, readiness criteria",
+        "Confirm performance targets, integration limits",
+        "Confirm assumptions for external services",
+        "Reference the source requirements, architecture decisions",
+        "Project terminology",
+    ):
+        assert guidance not in technical
+        assert guidance not in appendix
 
 
 def test_version_history_writes_every_version_as_its_own_row():

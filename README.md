@@ -25,11 +25,12 @@ Agentic AI turns plain-English banking product briefs into **audited, versioned,
 - **Local-first inference** — OpenAI-compatible calls to `http://localhost:1234/v1`; no API keys, no cloud dependency
 - **Versioned banking compliance audit** — the Auditor evaluates a structured 12-rule checklist with stable rule IDs, evidence-aware applicability, actionable recommendations, and the exact checklist version persisted with every result; if a full model pass fails, it retries bounded checklist subsets and never treats unevaluated categories as passed
 - **Automated PRD + system flow diagrams** — the Architect synthesizes a full Product Requirements Document and an interactive project flowchart
-- **Document knowledge base & extraction** — upload DOCX / PDF / Markdown / TXT briefs (≤ `MAX_UPLOAD_MB`); they are converted to canonical markdown, then an explicit, user-triggered extraction feeds them through the Gatherer (one pass, or chunked passes with overlap, single-tokenized chunking, and bounded concurrency up to `DOCUMENT_EXTRACTION_CONCURRENCY`) into a **single staged pending action** — nothing is written until you confirm. The extraction request, result, and failure state are recorded in the normal chat timeline, while live chunk progress streams over SSE (`chunk X/N`) without extra project-state downloads
+- **Document knowledge base & extraction** — upload DOCX / PDF / Markdown / TXT briefs (≤ `MAX_UPLOAD_MB`); they are converted to canonical markdown, then an explicit, user-triggered extraction strips embedded image bytes from the model input, feeds the text through the Gatherer (one pass, or token-bounded overlapping chunks), and preserves explicitly headed PRD narrative such as scope, metrics, risks, and technical constraints. The result is **one staged pending action** — nothing is written until you confirm. Progress streams over SSE (`chunk X/N`), and the shared Stop control cancels the active extraction without retaining partial results
 - **Server-side PRD export** — the generated LaTeX PRD (`template-krungsrinimble.tex`) downloads as **DOCX** through the native `python-docx` renderer; PDF uses headless LibreOffice over that DOCX when available, with a Tectonic LaTeX fallback
 - **Clean repeatable PRD rendering** — export strips previously generated outline/FR/AC numbering before applying the template, omits empty sentence fragments, and renders missing optional content as blank cells instead of leaking `TBD` placeholders
 - **Version snapshot ledger** — every generated or manually edited PRD is an immutable snapshot (internal integer `version` + display `semver`); the first AI generation is recorded immediately as `1.0.0`, every version—including the first—has line-level details, and restores are append-only
-- **Human-in-the-loop** — requirement changes are staged as *pending actions* for confirmation; Generate PRD persists only the derived PRD/diagram artifacts immediately and never sends unchanged requirements through the merge window
+- **Human-in-the-loop** — requirement changes are staged as *pending actions* for confirmation; zero-diff legacy drafts are discarded automatically, and Generate PRD remains disabled while real requirement changes await review. Generation then persists only the derived PRD/diagram artifacts without sending unchanged requirements through the merge window
+- **Source-grounded requirement updates** — explicit `REQ-`/`US-` targets are resolved deterministically, updated stories receive a complete revalidated acceptance-criteria set, and model-introduced technical values or behaviors without source evidence are withheld and turned into clarification questions
 - **Project review status and revision tracking** — the dashboard lets owners directly select Draft, HPO Review, PO Review, Approved, or Revised. Governed content changes automatically move an approved project to Revised and append a review-history event; the stricter transition/approval service exists for internal use and tests but is not called by the status API
 - **Operational project health** — dashboard health separates fully traced requirements from story, acceptance-criteria, PRD-reference, and diagram-reference coverage, then rolls in audit freshness/findings, unresolved questions, PRD review state, approval evidence, and active waivers
 - **Persistent background generation** — Architect and scoped-regeneration jobs continue after a browser disconnect, are requeued after a server restart, and can be cancelled explicitly; partial work is rolled back
@@ -123,11 +124,13 @@ flowchart LR
 ```
 agenticdia/
 ├── index.html                  # Vite entry HTML
-├── package.json                # npm scripts: dev / build / preview / lint / clean / schema:*
+├── package.json                # npm scripts: dev / build / preview / lint / test / schema:* / inventory:tests
 ├── vite.config.ts              # React + Tailwind plugins, /api proxy → :8000
 ├── tsconfig.json
 ├── scripts/
-│   └── parse_check.ts          # tsx harness inspecting the parsed init.sql DDL
+│   ├── parse_check.ts          # tsx harness inspecting the parsed init.sql DDL
+│   ├── generate_untested_inventory.py # Refreshes the test-coverage inventory
+│   └── *.test.ts              # Frontend/auth/locking/workflow node:test suites
 ├── src/
 │   ├── main.tsx                # React root
 │   ├── App.tsx                 # App shell (navbar + workspace)
@@ -137,14 +140,16 @@ agenticdia/
 │   │                           # useRequirementStore · useDocuments · useArtifactLocks
 │   │                           # useAuth · useModalBehavior · useLmStudioHealth · useWorkspaceUi
 │   ├── schema/                 # DDL parser (npm run schema:parse self-check tool)
-│   ├── utils/                  # markdown helpers
+│   ├── utils/                  # markdown, highlighting, SemVer, time, and PRD-clarity helpers
 │   └── components/
 │       ├── Dashboard.tsx       # Multi-agent requirements workspace (SSE, locks, PRD)
 │       ├── ProjectsDashboard.tsx # Cross-project overview (pins, flags, status)
 │       ├── ChatPanel.tsx       # Agent chat · LLM-health pill · Stop button
-│       ├── ChatEmptyState.tsx  # Onboarding prompts for an empty conversation
 │       ├── DocumentLibrary.tsx # Knowledge-base uploads + requirement extraction
 │       ├── PRDEditor.tsx       # LaTeX/markdown PRD editor + per-part editing + PDF/DOCX export
+│       ├── MainArtifactPanel.tsx / WorkspaceNavigation.tsx # Workspace composition/navigation
+│       ├── HelpGuidelines.tsx  # Searchable in-app operating guide
+│       ├── PRDGenerationPreview.tsx / PrdClarityStatus.tsx # PRD review flow
 │       ├── VersionHistory.tsx  # Immutable PRD version ledger (semver, diff, restore)
 │       ├── RequirementTraceability.tsx # Requirements ↔ stories ↔ AC ↔ PRD ↔ diagrams matrix
 │       ├── AuthModal.tsx / AuthPanel.tsx # Sign-in / sign-up + signed-in user chip
@@ -171,7 +176,9 @@ agenticdia/
 │       ├── llm_client.py       # Direct LM Studio HTTP client (strict JSON mode)
 │       ├── llm_factory.py      # Shared LangChain ChatOpenAI factory (agents + services)
 │       ├── llm_utils.py        # Structured-output helpers
-│       ├── agents.py           # LangGraph nodes + compiled prd_workflow graph
+│       ├── agents.py           # Agent nodes + compatibility facade
+│       ├── workflow_orchestration/ # Graph topology, state, routing, audit/deletion helpers
+│       ├── services/           # Requirement processing, ingestion, and diagram services
 │       ├── semantic_service.py # Semantic change detection + router / intent / matcher agents
 │       ├── request_priority.py # Parses !!! / !! / ! line-priority prefixes
 │       ├── semantic_memory.py  # Long-term per-project memory (distil → embed → recall)
@@ -198,6 +205,7 @@ agenticdia/
 │       └── routes/             # auth.py chat.py projects.py requirements.py documents.py
 │                               # lock.py events.py prd_sections.py traceability.py
 │                               # operational.py banking_knowledge.py generation_jobs.py
+├── test-data/                  # Sample Markdown/TXT briefs for extraction checks
 └── venv/                       # Local Python virtual environment
 ```
 
@@ -378,7 +386,7 @@ All backend configuration lives in `backend/.env`. Unlisted keys such as `GEMINI
 |----------|---------|-------------|
 | `LM_STUDIO_URL` | `http://localhost:1234/v1` | Base URL of the LM Studio OpenAI-compatible server |
 | `LM_STUDIO_API_KEY` | `lm-studio` | Bearer token sent to LM Studio (any value is accepted locally) |
-| `LM_STUDIO_MODEL_FALLBACK` | `qwen3.5-9b-instruct` | Model id used in every request; must match a model loaded in LM Studio |
+| `LM_STUDIO_MODEL_FALLBACK` | `qwen3.5-9b-instruct` | Code default for the model id used in every request. The supplied `.env.example` sets `qwen/qwen3.5-9b`; in either case, use the exact id shown by your LM Studio server |
 | `DATABASE_URL` | `sqlite+aiosqlite:///app.db` | PostgreSQL URL override. `postgres://` → `postgresql+asyncpg://`; `ssl=require` is appended for `supabase.com` hosts. Empty values and unfilled placeholders (`[YOUR_PROJECT_REF]`, `<password>`) also fall back to SQLite while `ALLOW_SQLITE_FALLBACK=true` |
 | `ALLOW_SQLITE_FALLBACK` | `true` | When `true`, an empty or placeholder `DATABASE_URL` warns and uses SQLite. Set `false` in production to abort startup on such a misconfiguration |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Comma-separated browser origins allowed by CORS |
@@ -386,10 +394,11 @@ All backend configuration lives in `backend/.env`. Unlisted keys such as `GEMINI
 | `TEMPERATURE` | `0.0` | Sampling temperature for all agent calls |
 | `LM_STUDIO_DISABLE_THINKING` | `true` | Sends `enable_thinking: false` to Qwen3.x reasoning models so structured-JSON generation (PRD / audit) never exhausts `max_tokens` on chain-of-thought |
 | `MAX_UPLOAD_MB` | `25` | Document upload size gate — the **only** size limit; the full converted markdown is always persisted regardless of size |
-| `DOCUMENT_BUDGET_FRACTION` | `0.6` | Fraction of `MAX_CONTEXT_TOKENS` reserved per document-extraction chunk |
-| `DOCUMENT_CHUNK_SIZE` / `DOCUMENT_CHUNK_OVERLAP` | `3500` / `250` | Token size of one extraction chunk and its overlap (keeps headings from being clipped). Bigger chunks → fewer gatherer passes → faster extraction for the same content |
+| `DOCUMENT_BUDGET_FRACTION` | `0.1` | Fraction of `MAX_CONTEXT_TOKENS` used as the one-pass extraction threshold; larger documents use the explicit chunk settings below |
+| `DOCUMENT_CHUNK_SIZE` / `DOCUMENT_CHUNK_OVERLAP` | `900` / `100` | Token size of one extraction chunk and its overlap. The smaller input budget leaves room for the Gatherer prompt, JSON schema, and a complete structured response |
+| `DOCUMENT_EXTRACTION_OUTPUT_TOKENS` | `4000` | Dedicated completion-token allowance for each document-extraction Gatherer call |
 | `DOCUMENT_EXTRACTION_CONCURRENCY` | `1` | Bounded parallel gatherer passes for chunked document extraction. `1` = sequential (safe for a single-slot local model). Raise to `2-4` when the inference gateway serves concurrent requests (LM Studio multi-slot / cloud OpenAI-compatible endpoint) to cut wall-clock time for many-chunk documents; results keep document order regardless |
-| `MAX_DOCUMENT_CHUNKS` | `30` | Hard ceiling on gatherer passes per document extraction; beyond this the extraction is refused with HTTP 413 (with 3500-token chunks this covers ~105k-token documents) |
+| `MAX_DOCUMENT_CHUNKS` | `30` | Hard ceiling on gatherer passes per document extraction; beyond this the extraction is refused with HTTP 413 (the default 900/100 chunking covers roughly 24,100 tokens) |
 | `RATE_LIMIT_ENABLED` | `true` | Master switch for in-process sliding-window rate limiting on LLM-facing endpoints |
 | `RATE_LIMIT_CHAT_LIMIT` / `RATE_LIMIT_CHAT_WINDOW` | `30` / `60` | Max `/api/chat` requests per client IP per window (seconds) |
 | `RATE_LIMIT_WORKFLOW_LIMIT` / `RATE_LIMIT_WORKFLOW_WINDOW` | `60` / `60` | Max workflow-endpoint requests (`process-requirements`, `workflow-router`, `intent-detector`, `requirement-matcher`) per client IP per window (seconds) |
@@ -464,8 +473,8 @@ In a normal requirement pass the map is: **Router → Matcher → Gatherer** (pr
 |------|------|
 | **router_node** | Classifies each message as `CHAT`, `QUESTION`, `COMMAND`, or `REQUIREMENT` with a confidence score and reason (heuristic fallback). Below the confidence floor it asks a clarifying question instead of guessing. |
 | **requirement_matcher_node** | Maps the message to existing user stories (e.g. `US-001`) and proposes `NEW / UPDATE / DELETE / CLARIFY` via `requirement-matcher` + semantic change detection; low-confidence matches stop the workflow rather than mutate the wrong story. A ticket code the model invented (absent from the backlog) is discarded and forces clarification instead of driving a mutation. |
-| **gatherer_node** | Parses the requirement text into structured **user stories + acceptance criteria**; sanitizes and re-codes the LLM output, then reconciles it against previously persisted stories (create / update / archive / unchanged) using the merge service. For multi-line input it honours `!!!` Must Complete, `!!` Important, unmarked Normal, and `!` Nice to Have ordering. |
-| **auditor_node** | Evaluates all active stories and project evidence against the versioned structured banking checklist. Only substantiated mandatory blockers fail; uncertain applicability produces clarification questions, while warnings and best-practice recommendations remain non-blocking. A failed full-checklist pass is retried in up to three smaller rule batches; partial recovery is reported as incomplete and preserves the previous saved verdict. Invented or unverifiable citations are removed and the affected observation is downgraded to non-blocking instead of discarding the entire audit. |
+| **gatherer_node** | Parses the requirement text into structured **user stories + acceptance criteria**; sanitizes and re-codes the LLM output, then reconciles it against previously persisted stories (create / update / archive / unchanged) using the merge service. Explicit story codes bypass fuzzy targeting, parent-requirement updates replace obsolete criteria with the complete revalidated set, unsupported material literals are held for clarification, and final requirement groups retain canonical code order. For multi-line input it honours `!!!` Must Complete, `!!` Important, unmarked Normal, and `!` Nice to Have ordering. |
+| **auditor_node** | Evaluates all active stories and project evidence against the versioned structured banking checklist. Only substantiated mandatory blockers fail; uncertain applicability produces clarification questions, while warnings and best-practice recommendations remain non-blocking. A failed full-checklist pass is retried in bounded smaller rule batches; partial recovery is reported as incomplete and preserves the previous saved verdict. Deterministic checks supplement the model for high-confidence contradictions, overlapping stories, and invalid process sequencing. Invented or unverifiable citations are removed and the affected observation is downgraded to non-blocking instead of discarding the entire audit. |
 | **architect_node** | Synthesizes the final template-based **PRD document** and project flowchart from the audited dataset, honouring human-owned/locked PRD parts. The resulting artifacts are persisted without rewriting the gathered requirements. |
 | **delete_requirement_node** | Handles `DELETE_REQUIREMENT` intent to archive/remove a requirement, asking for disambiguation when the target is unclear. |
 
@@ -531,7 +540,7 @@ Two implementation notes worth knowing when touching this area:
 2. **Sign in** (bottom-left rail → *Sign in*) with the seeded system account you configured via `SYSTEM_USER_PASSWORD`, or create your own account while `SIGNUP_ENABLED=true`.
 3. In the **Agent Workspace**, create a project (name limit: 50 characters). The new project opens automatically; existing projects can be selected, pinned, or flagged from the dashboard.
 4. Type a feature brief in the chat (e.g. *"Add a PromptPay real-time merchant settlement flow"*). For several request lines, optionally prefix them with `!!!` (Must Complete), `!!` (Important), or `!` (Nice to Have); unmarked lines are Normal. The Router + Matcher classify the input and the **Gatherer** produces user stories in priority order. Then run the **Auditor** to validate compliance and **Generate PRD** to have the Architect draft the document.
-5. Alternatively, upload an existing brief (DOCX / PDF / MD / TXT) in the **Document Library** and hit **Process** — the extraction runs through the Gatherer, reports its progress and outcome in chat, and lands as a single staged pending action to confirm.
+5. Alternatively, upload an existing brief (DOCX / PDF / MD / TXT) in the **Document Library** and select **Extract Requirements**. The Gatherer reports progress and outcome in chat and creates one staged pending action. While it runs, the chat composer’s **Stop** control cancels extraction and discards partial results. Review and save or cancel any pending requirement change before **Generate PRD** becomes available.
 6. Review the result in the **ConfirmationPanel** — a compact *merge window* that shows only what matters: **What changes** (requirements / user stories / acceptance criteria deltas) and **What is affected** (PRD sections and diagrams referencing the affected `REQ-`/`US-` codes, with `DANGLING` and `locked` flags). Then accept (`confirm`) or reject (`cancel`).
 7. Inspect the **Traceability** tab for the Requirements ↔ Stories ↔ Acceptance Criteria ↔ PRD ↔ diagrams matrix and its coverage/gap report, and the **Version History** tab for the immutable PRD ledger (SemVer, detailed line changes—including the first version—and append-only restore).
 8. Use the **lock** buttons on any artifact — including individual PRD sections — to freeze it; locked and human-owned parts are never rewritten by the agents.
@@ -713,7 +722,8 @@ The backend is a FastAPI app; full interactive documentation (with request/respo
 | `GET` | `/api/project/{project_id}/documents` | List the project's uploaded documents (metadata, newest first) |
 | `GET` | `/api/project/{project_id}/documents/{document_id}` | Full canonical markdown for one document (never truncated) |
 | `DELETE` | `/api/project/{project_id}/documents/{document_id}` | Permanently remove an uploaded document (and any still-unconfirmed DRAFT review staged from it) from the knowledge base. Already-confirmed requirements are NOT affected (404 unknown document) |
-| `POST` | `/api/project/{project_id}/documents/{document_id}/process` | Explicit, user-triggered extraction: feeds the document through the Gatherer in one pass (if it fits the document budget) or bounded-concurrency overlapping chunks (SSE `document_extraction_progress` events), records the request/outcome in chat, de-duplicates across chunks, and stages **one** `INSERT_CHUNKED_REQUIREMENTS` pending action — applied atomically with a single version bump on confirm (400 on failed/OCR doc, 413 too large, 502 gatherer failure) |
+| `POST` | `/api/project/{project_id}/documents/{document_id}/process` | Explicit, user-triggered extraction: removes base64 image payloads from the model input (without altering stored markdown), feeds the text through the Gatherer in one pass or bounded-concurrency overlapping chunks, deterministically preserves recognized headed PRD narrative, records progress/outcome in chat, de-duplicates across chunks, and stages **one** `INSERT_CHUNKED_REQUIREMENTS` pending action — applied atomically with a single version bump on confirm (400 on failed/OCR doc, 413 too large, 502 gatherer failure) |
+| `POST` | `/api/project/{project_id}/documents/{document_id}/process/cancel` | Cancel an active extraction, abort its LM Studio request, discard partial chunk results, reset the document to retryable `not_extracted`, and record the cancellation in chat |
 
 ### Locking & Pending Actions
 
@@ -820,7 +830,7 @@ are allowlisted.
 ## Testing
 
 ```bash
-# Frontend type-check (tsc --noEmit)
+# Frontend type-check + scoped ESLint + backend Ruff checks
 npm run lint
 
 # Frontend unit tests (node:test via tsx)
@@ -840,6 +850,9 @@ npm test
 
 # Schema drift harness (init.sql ↔ models.py must stay identical)
 npm run schema:drift
+
+# Regenerate UNTESTED_FUNCTION_INVENTORY.md from the current source/tests
+npm run inventory:tests
 
 # SSE end-to-end stream test (runs against the real StreamingResponse generator)
 (cd backend && ../venv/bin/python test_sse.py)
