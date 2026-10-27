@@ -536,7 +536,11 @@ Two implementation notes worth knowing when touching this area:
 
 1. Open **http://localhost:3000**.
 2. **Sign in** (bottom-left rail → *Sign in*) with the seeded system account you configured via `SYSTEM_USER_PASSWORD`, or create your own account while `SIGNUP_ENABLED=true`.
-3. In the **Agent Workspace**, create a project (name limit: 50 characters). The new project opens automatically; existing projects can be selected, pinned, or flagged from the dashboard.
+3. In the **Agent Workspace**, select **New Project** (project names are limited to 50 characters), then choose one of these paths:
+   - **Skip & Create Empty** requires only a project name. PMO No., Author, stakeholders, and business-overview fields may be left blank; the project opens with the standard empty PRD structure.
+   - **Create & Start Gatherer** requires a project name, PMO No., Author, and **Introduction & Executive Summary**. It saves the intake and asks the Gatherer to draft the initial requirements. The remaining stakeholder and business-overview fields are optional.
+
+   You must be signed in before creating a project. The new project opens automatically; existing projects can be selected, pinned, or flagged from the dashboard.
 4. Type a feature brief in the chat (e.g. *"Add a PromptPay real-time merchant settlement flow"*). For several request lines, optionally prefix them with `!!!` (Must Complete), `!!` (Important), or `!` (Nice to Have); unmarked lines are Normal. The Router + Matcher classify the input and the **Gatherer** produces user stories in priority order. Then run the **Auditor** to validate compliance and **Generate PRD** to have the Architect draft the document.
 5. Alternatively, upload an existing brief (DOCX / PDF / MD / TXT) in the **Document Library** and select **Extract Requirements**. The Gatherer reports progress and outcome in chat and creates one staged pending action. While it runs, the chat composer’s **Stop** control cancels extraction and discards partial results. Review and save or cancel any pending requirement change before **Generate PRD** becomes available.
 6. Review the result in the **ConfirmationPanel** — a compact *merge window* that shows only what matters: **What changes** (requirements / user stories / acceptance criteria deltas) and **What is affected** (PRD sections and diagrams referencing the affected `REQ-`/`US-` codes, with `DANGLING` and `locked` flags). Then accept (`confirm`) or reject (`cancel`).
@@ -600,7 +604,7 @@ The backend is a FastAPI app; full interactive documentation (with request/respo
 |--------|------|-------------|
 | `GET` | `/api/projects` | List all projects |
 | `GET` | `/api/projects/search?q=...` | Search projects by name/description |
-| `POST` | `/api/projects` | Create a project (`name` is required, unique per owner, and limited to 50 characters; the SPA opens the new project immediately) |
+| `POST` | `/api/projects` | Create a project (`name` is required, unique per owner, and limited to 50 characters). In the SPA, **Skip & Create Empty** needs only the name, while **Create & Start Gatherer** also requires PMO No., Author, and an executive summary. |
 | `PUT` | `/api/projects/{project_id}` | Rename / update a project |
 | `PUT` | `/api/projects/{project_id}/pin` | Toggle the pinned (quick-access) flag |
 | `PUT` | `/api/projects/{project_id}/flag` | Toggle the dashboard ★ flag (independent of pinning) |
@@ -870,6 +874,7 @@ sandboxed; the application fallback paths remain unit-tested with mocks.
 | SQLite table errors after switching DBs | Delete `backend/app.db` (and rerun) when toggling between SQLite and Postgres; migrations run on startup. |
 | `401 Unauthorized` on every project call | You are not signed in (or the token expired after `JWT_EXPIRATION_MINUTES`). Sign in again; the seeded system account needs `SYSTEM_USER_PASSWORD` set in `backend/.env`. |
 | `403` on `POST /api/auth/register` | `SIGNUP_ENABLED=false` — the UI hides the sign-up form for the same reason. Toggle it, or sign in with an existing account. |
+| **New Project** cannot be submitted | Sign in first. For **Skip & Create Empty**, enter a project name only. For **Create & Start Gatherer**, also enter PMO No., Author, and **Introduction & Executive Summary**. If the request still fails, inspect the inline error for a duplicate name or authentication problem. |
 | No semantic-memory recall / memory logs are skipped | `LM_STUDIO_EMBEDDING_MODEL` is not loaded in LM Studio (or `MEMORY_ENABLED=false`). This is fail-open by design — chat keeps working; load the embedding model to enable recall. |
 | Port already in use | `8000` (backend) or `3000` (vite) may be occupied; stop the other process or change ports in `package.json`. |
 
