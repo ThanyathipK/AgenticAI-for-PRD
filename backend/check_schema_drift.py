@@ -8,12 +8,8 @@ that there is exactly one source of truth and reports any divergence:
        - tables present on only one side
        - per-table columns present on only one side
        - nullability mismatches (reported for information; no fail by default)
-  2. Alembic migrations are cross-checked against init.sql table list.
-
-Documented, intentional deviations are allowlisted (e.g. `requirement_states`
-and `pending_actions` are provisioned by Alembic migrations at startup and are
-not part of init.sql). Any *other* drift is reported and exits non-zero so this
-can be used as a CI gate.
+All application tables must be represented in init.sql. Any drift is reported
+and exits non-zero so this can be used as a CI gate.
 
 Usage:
     python backend/check_schema_drift.py
@@ -30,12 +26,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKEND = os.path.join(ROOT, "backend")
 INIT_SQL = os.path.join(BACKEND, "init.sql")
 
-# Tables intentionally absent from init.sql but provisioned by Alembic at startup.
-DOCUMENTED_MODEL_ONLY_TABLES = {
-    "requirement_states",
-    "pending_actions",
-    "uploaded_documents",
-}
+DOCUMENTED_MODEL_ONLY_TABLES: set[str] = set()
 
 
 def strip_comments(sql: str) -> str:
@@ -106,7 +97,7 @@ def compare_tables(sql_tables, model_tables, documented_set):
     only_model = sorted(model_names - sql_names)
     for t in only_model:
         if t in documented_set:
-            notes.append(f"[info] {t}: provisioned by migrations, intentionally not in init.sql")
+            notes.append(f"[info] {t}: intentionally not in init.sql")
         else:
             problems.append(f"[DRIFT] table in models.py but NOT in init.sql: {t}")
 

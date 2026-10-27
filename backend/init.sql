@@ -63,6 +63,30 @@ CREATE TRIGGER handle_updated_at_projects
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 
+-- ==========================================
+-- 2b. REQUIREMENT STATES TABLE
+-- ==========================================
+-- One materialized workflow state row per project. Detailed requirements,
+-- stories, criteria, and questions live in their normalized tables below.
+CREATE TABLE requirement_states (
+    project_id UUID PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    business_goals JSONB NOT NULL DEFAULT '[]'::jsonb,
+    actors JSONB NOT NULL DEFAULT '[]'::jsonb,
+    prd_narrative JSONB NOT NULL DEFAULT '{}'::jsonb,
+    validation_status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    generated_prd TEXT NOT NULL DEFAULT '',
+    generated_diagrams TEXT NOT NULL DEFAULT '',
+    current_workflow_state VARCHAR(50) NOT NULL DEFAULT 'gatherer_node',
+    requirements_revision INTEGER NOT NULL DEFAULT 1,
+    version_number INTEGER NOT NULL DEFAULT 1,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TRIGGER handle_updated_at_requirement_states
+    BEFORE UPDATE ON requirement_states
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+
 CREATE TABLE project_review_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -384,6 +408,57 @@ CREATE TABLE conversation_messages (
 
 CREATE INDEX idx_conversation_messages_project_id ON conversation_messages(project_id);
 CREATE INDEX idx_conversation_messages_created_at ON conversation_messages(created_at);
+CREATE INDEX idx_conversation_messages_project_created_id
+    ON conversation_messages(project_id, created_at, id);
+
+-- ==========================================
+-- 10b. PENDING ACTIONS TABLE
+-- ==========================================
+-- Human-in-the-loop changes staged until the user confirms or cancels them.
+CREATE TABLE pending_actions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    action_type VARCHAR(50) NOT NULL,
+    target_requirement_id VARCHAR(50),
+    original_user_message TEXT NOT NULL,
+    proposed_changes JSONB NOT NULL DEFAULT '{}'::jsonb,
+    affected_user_story_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    affected_acceptance_criteria_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    workflow_stage VARCHAR(100) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'WAITING_CONFIRMATION',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX idx_pending_actions_project_id ON pending_actions(project_id);
+
+-- ==========================================
+-- 10c. UPLOADED DOCUMENTS TABLE
+-- ==========================================
+-- Immutable project source material. Extracted requirements are staged in
+-- pending_actions and are never stored on the document row.
+CREATE TABLE uploaded_documents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    original_filename VARCHAR(255) NOT NULL,
+    original_format VARCHAR(20) NOT NULL,
+    mime_type VARCHAR(100),
+    content_markdown TEXT NOT NULL DEFAULT '',
+    file_size_bytes INTEGER NOT NULL DEFAULT 0,
+    token_count INTEGER NOT NULL DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'processed',
+    uploaded_by VARCHAR(100) NOT NULL DEFAULT 'user',
+    extraction_status VARCHAR(30) NOT NULL DEFAULT 'not_extracted',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_uploaded_documents_project_id ON uploaded_documents(project_id);
+
+CREATE TRIGGER handle_updated_at_uploaded_documents
+    BEFORE UPDATE ON uploaded_documents
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
 
 -- ==========================================
 -- 11. INDEXES FOR LOOK-UP OPTIMISATION & CONSTRAINT SPEED
@@ -439,7 +514,7 @@ CREATE INDEX idx_artifact_event_logs_timestamp ON artifact_event_logs(timestamp)
 -- Project-scoped distilled facts (Option A memory layer) extracted from chat
 -- turns by a small LLM pass, embedded with the local LM Studio embedding model
 -- and recalled at prompt-build time by blended cosine-relevance + recency
--- scoring. Mirrors alembic/versions/0008_add_semantic_memories.py.
+-- scoring.
 -- Embeddings are stored as a JSON float array (not pgvector) so the schema
 -- works on both Supabase Postgres and the SQLite dev fallback.
 CREATE TABLE semantic_memories (

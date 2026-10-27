@@ -158,8 +158,8 @@ agenticdia/
 │   ├── .env.example            # ← copy to backend/.env
 │   ├── requirements.txt        # Python dependencies
 │   ├── alembic.ini
-│   ├── alembic/                # Numbered schema migrations (current database evolution)
-│   ├── init.sql                # Full PostgreSQL reference DDL
+│   ├── alembic/                # Legacy/in-place database upgrade history
+│   ├── init.sql                # Complete canonical PostgreSQL DDL for fresh databases
 │   ├── check_schema_drift.py   # init.sql ↔ models.py drift harness
 │   ├── test_sse.py             # End-to-end SSE stream test
 │   ├── tests/                  # pytest suite (documents, latex, prd filler, rate limit, …)
@@ -759,14 +759,13 @@ curl -X POST "http://localhost:3000/api/confirm-action/<action-id>?project_id=00
 
 ## Database Schema
 
-Tables are provisioned by **Alembic migrations that run automatically at backend startup** (see [`backend/app/migrations.py`](backend/app/migrations.py)). The full PostgreSQL reference DDL lives in [`backend/init.sql`](backend/init.sql).
+Fresh databases can be provisioned completely from [`backend/init.sql`](backend/init.sql); it contains every application table and column. Alembic remains available for upgrading databases that already exist.
 
-Migration `0029_add_read_path_indexes.py` adds the composite
+The canonical DDL includes the composite
 `conversation_messages(project_id, created_at, id)` index used by newest-first
-chat loading and its `before` cursor. The index was added only after query-plan
-verification showed the bounded conversation read could use it directly. The
-existing unique `(project_id, version_number)` PRD-version index already serves
-the new version-history cursor, so no redundant ledger index is created.
+chat loading and its `before` cursor. The existing unique
+`(project_id, version_number)` PRD-version index already serves the version-history
+cursor, so no redundant ledger index is created.
 
 ### Single source of truth & drift checking
 
@@ -784,9 +783,8 @@ npm run schema:parse   # tsx scripts/parse_check.ts  (inspect the parsed DDL)
 
 The harness compares `init.sql` against `backend/app/models.py` (SQLAlchemy
 metadata), reporting — and exiting non-zero on — any table or column that
-exists on only one side. `requirement_states`, `pending_actions`, and
-`uploaded_documents` are intentionally provisioned by Alembic migrations and
-are allowlisted.
+exists on only one side. Every modeled application table must be present in
+`init.sql`; there are no migration-only table exceptions.
 
 
 | Table | Purpose |
@@ -806,10 +804,10 @@ are allowlisted.
 | `prd_documents` / `prd_versions` | Generated PRD records; immutable versioned snapshots (integer `version` + display `semver`) |
 | `prd_sections` / `prd_section_versions` | The nine editable PRD parts (independently lockable, with `ai_generatable`) and their append-only per-part history |
 | `semantic_memories` | Long-term per-project memory facts + 768-dim JSON embeddings (recall-scored in process) |
-| `requirement_states` | Centralized per-project JSON state (created by migrations) |
-| `pending_actions` | Human-in-the-loop staged changes (created by migrations) |
+| `requirement_states` | Centralized per-project JSON state |
+| `pending_actions` | Human-in-the-loop staged changes |
 | `conversation_messages` | Persistent chat history per project |
-| `uploaded_documents` | Project knowledge base: uploaded DOCX/PDF/MD/TXT briefs + their converted canonical markdown (created by migrations) |
+| `uploaded_documents` | Project knowledge base: uploaded DOCX/PDF/MD/TXT briefs + their converted canonical markdown |
 | `artifact_event_logs` | **Append-only** audit trail of `CREATE / UPDATE / DELETE / ARCHIVE / LOCK / UNLOCK` |
 
 > **Supabase note:** the engine targets the transaction pooler (port `6543`), uses minimal SQLAlchemy pooling, `pool_pre_ping`, and disables the statement cache for PgBouncer compatibility. On SQLite fallback, the GUID type degrades to `CHAR(36)`.
