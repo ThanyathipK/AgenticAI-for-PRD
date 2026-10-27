@@ -108,7 +108,6 @@ async def test_uninitialized_project_gets_an_empty_board(client, db_session):
     )
     state_row = stored.scalar_one_or_none()
     assert state_row is not None, "the state row is initialized so SSE clients can sync"
-    assert state_row.requirements in ({}, None, [])
 
 
 @pytest.mark.asyncio

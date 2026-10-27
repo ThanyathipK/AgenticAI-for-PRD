@@ -158,14 +158,10 @@ async def post_regeneration(
     current_user: AuthenticatedUser = Depends(require_project_owner),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    from app.lock_service import ArtifactLockError, LockService
-
     current_task = asyncio.current_task()
     if current_task is not None:
         workflow_cancellations.register(str(project_id), current_task)
     try:
-        lock_info = await LockService.get_lock_status("project", project_id, db, project_id=project_id)
-        LockService.raise_if_locked("project", project_id, lock_info)
         result = await execute_regeneration(
             project_id,
             [item.model_dump() for item in payload.changed_artifacts],
@@ -181,8 +177,6 @@ async def post_regeneration(
             "status": "cancelled",
             "message": "Partial regeneration was stopped before completion. No changes were saved.",
         }
-    except ArtifactLockError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
     except LookupError:
         raise HTTPException(status_code=404, detail="Project requirement state not found") from None
     except ValueError as exc:

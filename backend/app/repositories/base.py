@@ -147,10 +147,6 @@ def serialize_epic(epic: EpicModel, *, with_status: bool = False) -> Dict[str, A
         "project_id": str(epic.project_id),
         "epic_name": epic.epic_name,
         "version": epic.version,
-        "is_locked": bool(epic.is_locked),
-        "locked_by": epic.locked_by,
-        "locked_at": dt_iso_or_none(epic.locked_at),
-        "lock_reason": epic.lock_reason,
     }
     if with_status:
         data["status"] = epic.status
@@ -171,15 +167,12 @@ def serialize_requirement(req: RequirementModel) -> Dict[str, Any]:
         "is_locked": bool(req.is_locked) if req.is_locked is not None else False,
         "locked_by": req.locked_by,
         "locked_at": dt_iso_or_none(req.locked_at),
-        "lock_reason": req.lock_reason,
     }
 
 
 def serialize_user_story(
     story: UserStoryModel,
     project_id,
-    *,
-    with_lock_fields: bool = False,
 ) -> Dict[str, Any]:
     """Serialize a UserStoryModel into its public dict representation.
 
@@ -200,13 +193,6 @@ def serialize_user_story(
         "last_modified_by": story.last_modified_by,
         "change_type": story.change_type,
     }
-    if with_lock_fields:
-        data.update({
-            "is_locked": story.is_locked,
-            "locked_by": story.locked_by,
-            "locked_at": dt_iso_or_none(story.locked_at),
-            "lock_reason": story.lock_reason,
-            })
     return data
 
 
@@ -226,10 +212,6 @@ def serialize_acceptance_criteria(
         "version": ac.version,
         "last_modified_by": ac.last_modified_by,
         "change_type": ac.change_type,
-        "is_locked": bool(ac.is_locked),
-        "locked_by": ac.locked_by,
-        "locked_at": dt_iso_or_none(ac.locked_at),
-        "lock_reason": ac.lock_reason,
     }
 
 
@@ -327,7 +309,6 @@ def serialize_prd_section(s: PRDSectionModel, *, current_version: Optional[int] 
         "is_locked": bool(s.is_locked) if s.is_locked is not None else False,
         "locked_by": s.locked_by,
         "locked_at": dt_iso_or_none(s.locked_at),
-        "lock_reason": s.lock_reason,
         "created_at": dt_iso(s.created_at),
         "updated_at": dt_iso(s.updated_at),
     }

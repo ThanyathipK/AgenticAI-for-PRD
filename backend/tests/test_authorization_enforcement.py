@@ -105,8 +105,6 @@ async def _create_project(client: AsyncClient, token: str, name: str) -> str:
 async def _seed_clarification_question(
     db_session: AsyncSession,
     project_id: str,
-    is_locked: bool = False,
-    locked_by: str | None = None,
 ) -> str:
     """Attach a Requirement → AuditResult → ClarificationQuestion to a project.
 
@@ -115,11 +113,7 @@ async def _seed_clarification_question(
     result → requirement) before it can gate on ownership. This seeds that
     chain and returns the question id under test.
 
-    ``is_locked`` seeds the lock flag the endpoint must now honour (a locked
-    question is a 409, never a silent overwrite).
     """
-    from datetime import datetime, timezone
-
     from app.models import (
         AuditResultModel,
         ClarificationQuestionModel,
@@ -151,9 +145,6 @@ async def _seed_clarification_question(
         checklist_category="Regulatory Compliance",
         question_text="Who is the accountable approver for this change?",
         is_resolved=False,
-        is_locked=is_locked,
-        locked_by=locked_by,
-        locked_at=datetime.now(timezone.utc) if is_locked else None,
     )
     db_session.add(question)
     await db_session.flush()
@@ -214,7 +205,8 @@ async def test_artifact_lock_requires_authentication(client, db_session):
         json={"locked_by": "owner"},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert owner.status_code == 200, owner.text
+    assert owner.status_code == 400, owner.text
+    assert "requirement, prd_section" in owner.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -389,13 +381,11 @@ async def test_audit_respond_owner_can_resolve_question(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_clarification_status_is_independent_from_legacy_lock_columns(client, db_session):
+async def test_clarification_questions_are_not_lockable(client, db_session):
     """Clarifications use resolved/status logic and are not lockable artifacts."""
     owner_token = await _register_and_login(client, "audit-locked-authz@bank.com")
     project_id = await _create_project(client, owner_token, "AuthZ Locked Q Project")
-    question_id = await _seed_clarification_question(
-        db_session, project_id, is_locked=True, locked_by="compliance-reviewer"
-    )
+    question_id = await _seed_clarification_question(db_session, project_id)
 
     resp = await client.post(
         f"/api/audit/respond/{question_id}",

@@ -159,12 +159,6 @@ def _assemble(
                 criterion.criteria_text
                 for criterion in criterion_rows
                 if criterion.change_type == "review_required"
-                or (
-                    bool(criterion.is_locked)
-                    and story.updated_at is not None
-                    and criterion.updated_at is not None
-                    and story.updated_at > criterion.updated_at
-                )
             ]
             if needs_review:
                 criteria_needing_review.append(story_code)
@@ -182,7 +176,6 @@ def _assemble(
                     "so_that": story.so_that,
                     "acceptance_criteria": criteria,
                     "criteria_needing_review": needs_review,
-                    "is_locked": bool(story.is_locked),
                 }
             )
         # Sections/diagrams traced to this requirement directly, plus indirectly

@@ -345,7 +345,6 @@ test("traceability renders PRD sections, current and historical diagrams, covera
         story_title: "Submit a transfer",
         acceptance_criteria: ["Transfer requires approval"],
         criteria_needing_review: ["Transfer requires approval"],
-        is_locked: false,
       },
     ],
     prd_sections: ["functional_requirements"],

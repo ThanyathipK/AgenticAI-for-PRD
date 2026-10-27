@@ -8,14 +8,12 @@ Locks in the extraction-quality fixes:
   changes and never regresses.
 - No-op / GENERAL_CHAT invocations never touch the requirement state.
 - Low-confidence semantic changes produce a user-visible clarification message.
-- Locked stories survive a gather run and are never mutated.
+- Requirement locks protect all stories under the requirement.
 - A recycled requirement code for a different feature is minted a fresh code.
 - The persisted epic name is kept unless the user explicitly renames it.
 - Intent classification reaches the prompt truthfully: the real classifier
   confidence (propagated from the route/matcher node) is quoted and a low
   confidence makes the gatherer prefer preserving over inventing.
-- Locked stories are rendered into the prompt with an explicit LOCKED marker so
-  the model cannot mistake them for deletable/duplicable stories.
 """
 import sys
 
@@ -348,17 +346,10 @@ async def test_delete_node_stages_archive_by_omitting_story_until_confirmation(m
 
 
 @pytest.mark.asyncio
-async def test_delete_node_keeps_locked_story_and_tells_user_to_unlock(monkeypatch):
+async def test_delete_node_keeps_story_under_locked_requirement(monkeypatch):
     locked_state = copy.deepcopy(REQ_STATE)
-    for story in locked_state["user_stories"]:
-        if story["ticket_code"] == "US-002":
-            story["is_locked"] = True
-            story["locked_by"] = "product-owner"
-    for requirement in locked_state["requirements"]:
-        for story in requirement["user_stories"]:
-            if story["ticket_code"] == "US-002":
-                story["is_locked"] = True
-                story["locked_by"] = "product-owner"
+    locked_state["requirements"][0]["is_locked"] = True
+    locked_state["requirements"][0]["locked_by"] = "product-owner"
 
     _patch(monkeypatch, locked_state)
     result = await agents.delete_requirement_node({
@@ -379,15 +370,9 @@ async def test_delete_node_keeps_locked_story_and_tells_user_to_unlock(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_update_match_to_locked_story_stops_before_semantic_or_llm(monkeypatch):
+async def test_update_match_under_locked_requirement_stops_before_llm(monkeypatch):
     locked_state = copy.deepcopy(REQ_STATE)
-    for story in locked_state["user_stories"]:
-        if story["ticket_code"] == "US-002":
-            story["is_locked"] = True
-    for requirement in locked_state["requirements"]:
-        for story in requirement["user_stories"]:
-            if story["ticket_code"] == "US-002":
-                story["is_locked"] = True
+    locked_state["requirements"][0]["is_locked"] = True
 
     _saved, llm_calls = _patch(monkeypatch, locked_state)
 
@@ -431,10 +416,7 @@ async def test_compiled_workflow_routes_delete_matcher_to_archive_node(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_delete_lock_query_casts_legacy_postgres_uuid_columns(monkeypatch):
-    """Production may retain VARCHAR IDs while ORM metadata declares UUID."""
-    from sqlalchemy.dialects import postgresql
-
+async def test_delete_story_does_not_query_removed_child_locks(monkeypatch):
     class EmptyRows:
         def all(self):
             return []
@@ -461,10 +443,7 @@ async def test_delete_lock_query_casts_legacy_postgres_uuid_columns(monkeypatch)
         },
     })
 
-    sql = str(session.statements[0].compile(dialect=postgresql.dialect()))
-    assert "CAST(user_stories.project_id AS VARCHAR)" in sql
-    assert "CAST(acceptance_criteria.user_story_id AS VARCHAR)" in sql
-    assert "CAST(user_stories.id AS VARCHAR)" in sql
+    assert session.statements == []
 
 
 @pytest.mark.asyncio
@@ -708,7 +687,7 @@ async def test_low_confidence_change_asks_user_instead_of_guessing(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_locked_stories_survive_and_are_never_mutated(monkeypatch):
+async def test_legacy_story_lock_flag_is_ignored(monkeypatch):
     locked_state = copy.deepcopy(REQ_STATE)
     locked_state["user_stories"][1]["is_locked"] = True
 
@@ -738,9 +717,7 @@ async def test_locked_stories_survive_and_are_never_mutated(monkeypatch):
         s for s in result["requirement_state"]["user_stories"]
         if s["ticket_code"] == "US-002"
     )
-    # Still present, still locked, content untouched
-    assert us002["is_locked"] is True
-    assert us002["i_want_to"] == US_002["i_want_to"]
+    assert us002["i_want_to"] == "HACKED VALUE"
     # And still grouped under its original requirement
     grouping = _story_codes_by_requirement(result["requirement_state"]["requirements"])
     assert "US-002" in grouping["REQ-001"]
@@ -1189,9 +1166,7 @@ async def test_gatherer_requests_native_json_schema(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_locked_stories_are_flagged_in_the_prompt_context(monkeypatch):
-    """The prompt tells the model to preserve locked stories - so they must
-    actually appear in <current_project_context> with a LOCKED marker."""
+async def test_legacy_story_lock_flag_is_not_rendered(monkeypatch):
     locked_state = copy.deepcopy(REQ_STATE)
     locked_state["user_stories"][1]["is_locked"] = True
 
@@ -1216,10 +1191,10 @@ async def test_locked_stories_are_flagged_in_the_prompt_context(monkeypatch):
     })
 
     context = llm_calls[0]["variables"]["current_context"]
-    assert "LOCKED STORIES" in context
-    assert "Flags: LOCKED" in context
-    assert "US-002" in context            # the locked story is visible
-    assert context.count("US-002") == 1   # ...and rendered exactly once
+    assert "LOCKED STORIES" not in context
+    assert "Flags: LOCKED" not in context
+    assert "US-002" in context
+    assert context.count("US-002") == 1
 
 # ==========================================
 # SEMANTIC RECOMMENDATION MERGE (matcher + detection)

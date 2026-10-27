@@ -54,10 +54,6 @@ CREATE TABLE projects (
     last_approved_audit_version INTEGER,
     last_approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
     last_approved_at TIMESTAMPTZ,
-    is_locked BOOLEAN NOT NULL DEFAULT FALSE,
-    locked_by VARCHAR(100),
-    locked_at TIMESTAMPTZ,
-    lock_reason VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -93,10 +89,6 @@ CREATE TABLE epics (
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     epic_name VARCHAR(255) NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
-    is_locked BOOLEAN NOT NULL DEFAULT FALSE,
-    locked_by VARCHAR(100),
-    locked_at TIMESTAMPTZ,
-    lock_reason VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status VARCHAR(50) NOT NULL DEFAULT 'active'
@@ -124,7 +116,6 @@ CREATE TABLE requirements (
     is_locked BOOLEAN NOT NULL DEFAULT FALSE,
     locked_by VARCHAR(100),
     locked_at TIMESTAMPTZ,
-    lock_reason VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -151,10 +142,6 @@ CREATE TABLE user_stories (
     version INTEGER NOT NULL DEFAULT 1,
     last_modified_by VARCHAR(100) NOT NULL DEFAULT 'automated_agent',
     change_type VARCHAR(50) NOT NULL DEFAULT 'created',
-    is_locked BOOLEAN NOT NULL DEFAULT FALSE,
-    locked_by VARCHAR(100),
-    locked_at TIMESTAMPTZ,
-    lock_reason VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -179,10 +166,6 @@ CREATE TABLE acceptance_criteria (
     version INTEGER NOT NULL DEFAULT 1,
     last_modified_by VARCHAR(100) NOT NULL DEFAULT 'automated_agent',
     change_type VARCHAR(50) NOT NULL DEFAULT 'created',
-    is_locked BOOLEAN NOT NULL DEFAULT FALSE,
-    locked_by VARCHAR(100),
-    locked_at TIMESTAMPTZ,
-    lock_reason VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -275,9 +258,6 @@ CREATE TABLE clarification_questions (
     provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
     target_requirement_id VARCHAR(100),
     requirement_context TEXT,
-    is_locked BOOLEAN NOT NULL DEFAULT FALSE,
-    locked_by VARCHAR(100),
-    locked_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -297,10 +277,6 @@ CREATE TABLE prd_documents (
     version INT NOT NULL,
     prd_markdown TEXT NOT NULL,
     mermaid_diagram TEXT, -- System architecture flowcharts or state diagrams
-    is_locked BOOLEAN NOT NULL DEFAULT FALSE,
-    locked_by VARCHAR(100),
-    locked_at TIMESTAMPTZ,
-    lock_reason VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -345,7 +321,7 @@ ALTER TABLE prd_versions
 -- content_source: 'template' | 'ai' | 'human' — who owns the content.
 -- ai_generatable FALSE => the Architect agent never regenerates the part.
 -- review_status: 'draft' | 'satisfied' | 'approved'.
--- Lock columns follow the same pattern as every other artifact table.
+-- Lock columns are intentionally limited to PRD sections and requirements.
 CREATE TABLE prd_sections (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -359,7 +335,6 @@ CREATE TABLE prd_sections (
     is_locked BOOLEAN NOT NULL DEFAULT FALSE,
     locked_by VARCHAR(100),
     locked_at TIMESTAMPTZ,
-    lock_reason VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_prd_sections_project_key UNIQUE (project_id, section_key)
@@ -428,7 +403,6 @@ CREATE INDEX idx_prd_documents_project_id ON prd_documents(project_id);
 
 -- Frequently Queried Status & Categories Indexes (To accelerate dashboard metrics and filter runs)
 CREATE INDEX idx_users_role ON users(role);
-CREATE INDEX idx_epics_is_locked ON epics(is_locked);
 CREATE INDEX idx_audit_results_is_valid ON audit_results(is_valid);
 CREATE INDEX idx_clarification_questions_is_resolved ON clarification_questions(is_resolved);
 CREATE INDEX idx_clarification_questions_category ON clarification_questions(checklist_category);

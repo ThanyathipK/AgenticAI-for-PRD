@@ -729,7 +729,7 @@ The backend is a FastAPI app; full interactive documentation (with request/respo
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/project/{project_id}/artifacts/{artifact_type}/{artifact_id}/lock` | Generic lock. `artifact_type ∈ {project, epic, requirement, user_story, acceptance_criteria, clarification_question, prd_document, prd_section}`; body `{locked_by?}` |
+| `POST` | `/api/project/{project_id}/artifacts/{artifact_type}/{artifact_id}/lock` | Generic lock. `artifact_type ∈ {requirement, prd_section}`; body `{locked_by?}` |
 | `POST` | `/api/project/{project_id}/artifacts/{artifact_type}/{artifact_id}/unlock` | Generic unlock (same body) |
 | `GET` | `/api/project/{project_id}/artifacts/{artifact_type}/{artifact_id}/lock-status` | Read lock metadata (`is_locked`, `locked_by`, `locked_at`) |
 | `GET` | `/api/pending-actions/{project_id}` | List pending actions awaiting confirmation |

@@ -161,6 +161,7 @@ async def transition_project(
     actor_name: str,
     actor_role: str,
     comment: Optional[str] = None,
+    manual: bool = False,
 ) -> ProjectModel:
     pid = as_uuid(project_id)
     project = await session.scalar(
@@ -172,16 +173,33 @@ async def transition_project(
     if project is None:
         raise LookupError("Project not found")
     current = project.status or "draft"
-    if to_status not in ALLOWED_TRANSITIONS.get(current, set()):
+    if not manual and to_status not in ALLOWED_TRANSITIONS.get(current, set()):
         raise ReviewTransitionError(f"Transition from '{current}' to '{to_status}' is not allowed.")
-    if to_status in {"draft", "revised"} and not (comment or "").strip():
+    if not manual and to_status in {"draft", "revised"} and not (comment or "").strip():
         raise ReviewTransitionError("A reason is required when requesting changes or reopening an approval.")
 
     prd_version = None
     audit_version = None
     if to_status == "approved":
-        prd_version, audit = await _approval_evidence(pid, session)
-        audit_version = audit.audit_version_reviewed
+        if manual:
+            latest_prd = await session.scalar(
+                select(PRDVersionModel)
+                .where(PRDVersionModel.project_id == pid)
+                .order_by(PRDVersionModel.version_number.desc(), PRDVersionModel.created_at.desc())
+                .limit(1)
+            )
+            latest_audit = await session.scalar(
+                select(AuditResultModel)
+                .join(RequirementModel, AuditResultModel.requirement_id == RequirementModel.id)
+                .where(RequirementModel.project_id == pid)
+                .order_by(AuditResultModel.updated_at.desc(), AuditResultModel.created_at.desc())
+                .limit(1)
+            )
+            prd_version = latest_prd.version_number if latest_prd else None
+            audit_version = latest_audit.audit_version_reviewed if latest_audit else None
+        else:
+            prd_version, audit = await _approval_evidence(pid, session)
+            audit_version = audit.audit_version_reviewed
         project.last_approved_prd_version = prd_version
         project.last_approved_audit_version = audit_version
         project.last_approved_by = as_uuid(actor_id)

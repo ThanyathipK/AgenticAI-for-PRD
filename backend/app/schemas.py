@@ -37,11 +37,10 @@ class ProjectCreate(BaseModel):
         return stripped
 
 class RequirementState(BaseModel):
-    """Schema tracking current locking state and Epic structure attributes."""
+    """Schema tracking Epic structure attributes."""
     epic_name: str = Field(..., description="High-level functional domain name.")
     total_user_stories: int = Field(0, ge=0, description="Count of parsed customer workflows.")
     current_version: int = Field(1, ge=1, description="Latest revision of the requirement document.")
-    is_locked: bool = Field(False, description="When True, active editing is locked pending audit resolution.")
 
 class UserAnswerSubmit(BaseModel):
     """Schema wrapping feedback replies to unresolved compliance query logs."""
@@ -186,7 +185,6 @@ class ProcessRequirementsRequest(BaseModel):
 class ArtifactLockRequest(BaseModel):
     """Request body for locking/unlocking any artifact."""
     locked_by: Optional[str] = Field(default="user", description="Identifier of who is locking/unlocking the artifact.")
-    lock_reason: Optional[str] = Field(default=None, max_length=255, description="Optional reason for protecting the artifact.")
 
 
 class RequirementLockRequest(BaseModel):
@@ -343,10 +341,6 @@ class UserStoryDetail(BaseModel):
     version: Optional[int] = Field(None, description="Story revision.")
     last_modified_by: Optional[str] = Field(None, description="Actor that last modified.")
     change_type: Optional[str] = Field(None, description="Change classification.")
-    is_locked: Optional[bool] = Field(False, description="Whether the story is locked.")
-    locked_by: Optional[str] = Field(None, description="Locking actor.")
-    locked_at: Optional[str] = Field(None, description="ISO8601 lock timestamp.")
-    lock_reason: Optional[str] = Field(None, description="Optional lock reason.")
 
 
 class BusinessGoalItem(BaseModel):
@@ -376,10 +370,6 @@ class AcceptanceCriterionItem(BaseModel):
     version: Optional[int] = Field(None, description="Criterion version.")
     last_modified_by: Optional[str] = Field(None, description="Actor that last modified.")
     change_type: Optional[str] = Field(None, description="Change classification.")
-    is_locked: Optional[bool] = Field(False, description="Whether locked against edits.")
-    locked_by: Optional[str] = Field(None, description="Locking actor.")
-    locked_at: Optional[str] = Field(None, description="ISO8601 lock timestamp.")
-    lock_reason: Optional[str] = Field(None, description="Optional lock reason.")
 
 
 class ClarificationQuestionDetail(BaseModel):
@@ -431,7 +421,6 @@ class RequirementDetail(BaseModel):
     is_locked: Optional[bool] = Field(False, description="Whether locked against edits.")
     locked_by: Optional[str] = Field(None, description="Locking actor.")
     locked_at: Optional[str] = Field(None, description="ISO8601 lock timestamp.")
-    lock_reason: Optional[str] = Field(None, description="Optional lock reason.")
     user_stories: Optional[List[UserStoryDetail]] = Field(default_factory=list, description="User stories under this requirement.")
 
 
@@ -571,7 +560,6 @@ class LockStatusResponse(BaseModel):
     is_locked: bool = Field(False, description="Whether the artifact is currently locked.")
     locked_by: Optional[str] = Field(None, description="Identifier of the current locking user/agent.")
     locked_at: Optional[str] = Field(None, description="ISO8601 lock timestamp, if locked.")
-    lock_reason: Optional[str] = Field(None, description="Optional reason supplied when locked.")
 
 
 class PendingActionResponse(BaseModel):
@@ -1080,7 +1068,6 @@ class TraceabilityStory(BaseModel):
     so_that: Optional[str] = Field(None, description="Business benefit/outcome.")
     acceptance_criteria: List[str] = Field(default_factory=list, description="Criteria bodies linked to this story.")
     criteria_needing_review: List[str] = Field(default_factory=list, description="Criteria invalidated by a parent story change.")
-    is_locked: bool = Field(False, description="Whether the story is locked.")
 
 
 class TraceabilityRow(BaseModel):

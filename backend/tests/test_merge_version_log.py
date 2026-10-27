@@ -386,12 +386,12 @@ class TestMergeVersionLog:
             f"/api/confirm-action/{baseline.id}", params={"project_id": seeded_project}
         )).status_code == status.HTTP_200_OK
 
-        story = await db_session.scalar(
-            select(UserStoryModel).where(UserStoryModel.ticket_code == "US-001")
+        requirement = await db_session.scalar(
+            select(RequirementModel).where(RequirementModel.requirement_code == "REQ-001")
         )
-        assert story is not None
-        story.is_locked = True
-        story.locked_by = "product-owner"
+        assert requirement is not None
+        requirement.is_locked = True
+        requirement.locked_by = "product-owner"
 
         proposed = _merged_state(1)
         proposed["requirements"][0]["user_stories"] = []

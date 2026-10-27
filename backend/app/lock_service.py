@@ -9,13 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models import (
-    ProjectModel,
-    EpicModel,
     RequirementModel,
-    UserStoryModel,
-    AcceptanceCriteriaModel,
-    AuditResultModel,
-    PRDDocumentModel,
     PRDSectionModel
 )
 
@@ -35,59 +29,17 @@ class ArtifactLockError(Exception):
 
 class LockService:
     """
-    Generic service for locking and unlocking artifacts.
-    Works with all supported artifact types.
+    Lock and unlock requirements and PRD sections.
     """
 
     # Mapping of artifact types to their models and lock column names
     ARTIFACT_CONFIG = {
-        "project": {
-            "model": ProjectModel,
-            "id_field": "id",
-            "lock_field": "is_locked",
-            "locked_by_field": "locked_by",
-            "locked_at_field": "locked_at",
-            "lock_reason_field": "lock_reason",
-        },
-        "epic": {
-            "model": EpicModel,
-            "id_field": "id",
-            "lock_field": "is_locked",
-            "locked_by_field": "locked_by",
-            "locked_at_field": "locked_at",
-            "lock_reason_field": "lock_reason",
-        },
         "requirement": {
             "model": RequirementModel,
             "id_field": "id",
             "lock_field": "is_locked",
             "locked_by_field": "locked_by",
             "locked_at_field": "locked_at",
-            "lock_reason_field": "lock_reason",
-        },
-        "user_story": {
-            "model": UserStoryModel,
-            "id_field": "id",
-            "lock_field": "is_locked",
-            "locked_by_field": "locked_by",
-            "locked_at_field": "locked_at",
-            "lock_reason_field": "lock_reason",
-        },
-        "acceptance_criteria": {
-            "model": AcceptanceCriteriaModel,
-            "id_field": "id",
-            "lock_field": "is_locked",
-            "locked_by_field": "locked_by",
-            "locked_at_field": "locked_at",
-            "lock_reason_field": "lock_reason",
-        },
-        "prd_document": {
-            "model": PRDDocumentModel,
-            "id_field": "id",
-            "lock_field": "is_locked",
-            "locked_by_field": "locked_by",
-            "locked_at_field": "locked_at",
-            "lock_reason_field": "lock_reason",
         },
         "prd_section": {
             "model": PRDSectionModel,
@@ -95,7 +47,6 @@ class LockService:
             "lock_field": "is_locked",
             "locked_by_field": "locked_by",
             "locked_at_field": "locked_at",
-            "lock_reason_field": "lock_reason",
         },
     }
 
@@ -113,37 +64,9 @@ class LockService:
             has no project association.
         """
         try:
-            if artifact_type == "project":
-                return str(getattr(artifact, "id"))
-
-            elif artifact_type in ("epic", "requirement", "user_story", "prd_document", "prd_section"):
+            if artifact_type in ("requirement", "prd_section"):
                 pid = getattr(artifact, "project_id", None)
                 return str(pid) if pid is not None else None
-
-            elif artifact_type == "acceptance_criteria":
-                # acceptance_criteria -> user_stories.project_id
-                user_story_id = getattr(artifact, "user_story_id", None)
-                if not user_story_id:
-                    return None
-                stmt = select(UserStoryModel.project_id).where(UserStoryModel.id == user_story_id)
-                result = await session.execute(stmt)
-                owning_project_id = result.scalar_one_or_none()
-                return str(owning_project_id) if owning_project_id is not None else None
-
-            elif artifact_type == "clarification_question":
-                # clarification_question -> audit_results.requirement_id -> requirements.project_id
-                audit_result_id = getattr(artifact, "audit_result_id", None)
-                if not audit_result_id:
-                    return None
-                stmt = select(AuditResultModel.requirement_id).where(AuditResultModel.id == audit_result_id)
-                result = await session.execute(stmt)
-                requirement_id = result.scalar_one_or_none()
-                if requirement_id is None:
-                    return None
-                stmt = select(RequirementModel.project_id).where(RequirementModel.id == requirement_id)
-                result = await session.execute(stmt)
-                owning_project_id = result.scalar_one_or_none()
-                return str(owning_project_id) if owning_project_id is not None else None
         except Exception:
             logger.exception(f"[LOCK] Failed to resolve project ownership for {artifact_type} {getattr(artifact, 'id', 'unknown')}")
 
@@ -182,14 +105,13 @@ class LockService:
         artifact_id: str,
         session: AsyncSession,
         locked_by: str = "user",
-        lock_reason: Optional[str] = None,
         project_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Lock an artifact to prevent modifications.
         
         Args:
-            artifact_type: Type of artifact (project, epic, requirement, user_story, etc.)
+            artifact_type: Either requirement or prd_section
             artifact_id: UUID of the artifact
             session: Database session
             locked_by: Who is locking the artifact
@@ -214,7 +136,6 @@ class LockService:
         lock_field = config["lock_field"]
         locked_by_field = config["locked_by_field"]
         locked_at_field = config["locked_at_field"]
-        lock_reason_field = config["lock_reason_field"]
 
         # Query the artifact
         stmt = select(model).where(getattr(model, id_field) == artifact_id)
@@ -259,7 +180,6 @@ class LockService:
         setattr(artifact, lock_field, True)
         setattr(artifact, locked_by_field, locked_by)
         setattr(artifact, locked_at_field, datetime.now(timezone.utc))
-        setattr(artifact, lock_reason_field, lock_reason)
 
         await session.flush()
         await session.refresh(artifact)
@@ -277,7 +197,6 @@ class LockService:
                     "is_locked": True,
                     "locked_by": locked_by,
                     "locked_at": datetime.now(timezone.utc).isoformat(),
-                    "lock_reason": lock_reason,
                 },
                 performed_by=locked_by,
                 project_id=project_id,
@@ -326,7 +245,6 @@ class LockService:
         lock_field = config["lock_field"]
         locked_by_field = config["locked_by_field"]
         locked_at_field = config["locked_at_field"]
-        lock_reason_field = config["lock_reason_field"]
 
         # Query the artifact
         stmt = select(model).where(getattr(model, id_field) == artifact_id)
@@ -362,13 +280,11 @@ class LockService:
         # Store old values for logging
         old_locked_by = getattr(artifact, locked_by_field)
         old_locked_at = getattr(artifact, locked_at_field)
-        old_lock_reason = getattr(artifact, lock_reason_field)
 
         # Unlock the artifact
         setattr(artifact, lock_field, False)
         setattr(artifact, locked_by_field, None)
         setattr(artifact, locked_at_field, None)
-        setattr(artifact, lock_reason_field, None)
 
         await session.flush()
         await session.refresh(artifact)
@@ -384,8 +300,7 @@ class LockService:
                 old_value={
                     "is_locked": True,
                     "locked_by": old_locked_by,
-                    "locked_at": old_locked_at.isoformat() if old_locked_at else None
-                    ,"lock_reason": old_lock_reason
+                    "locked_at": old_locked_at.isoformat() if old_locked_at else None,
                 },
                 new_value={"is_locked": False},
                 performed_by=unlocked_by,
@@ -444,7 +359,6 @@ class LockService:
             "is_locked": bool(getattr(artifact, config["lock_field"])) if getattr(artifact, config["lock_field"]) is not None else False,
             "locked_by": getattr(artifact, config["locked_by_field"]),
             "locked_at": getattr(artifact, config["locked_at_field"]).isoformat() if getattr(artifact, config["locked_at_field"]) else None,
-            "lock_reason": getattr(artifact, config["lock_reason_field"]),
         }
 
     @staticmethod

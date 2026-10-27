@@ -67,10 +67,6 @@ class ProjectModel(Base):
     last_approved_audit_version = Column(Integer, nullable=True)
     last_approved_by = Column(GUID, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     last_approved_at = Column(DateTime(timezone=True), nullable=True)
-    is_locked = Column(Boolean, nullable=False, default=False)
-    locked_by = Column(String(100), nullable=True)
-    locked_at = Column(DateTime(timezone=True), nullable=True)
-    lock_reason = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -99,10 +95,6 @@ class EpicModel(Base):
     project_id = Column(GUID, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     epic_name = Column(String(255), nullable=False)
     version = Column(Integer, nullable=False, default=1)
-    is_locked = Column(Boolean, nullable=False, default=False)
-    locked_by = Column(String(100), nullable=True)
-    locked_at = Column(DateTime(timezone=True), nullable=True)
-    lock_reason = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     status = Column(String(50), nullable=False, default="active", server_default="active")
@@ -122,7 +114,6 @@ class RequirementModel(Base):
     is_locked = Column(Boolean, nullable=False, default=False, server_default="false")
     locked_by = Column(String(100), nullable=True)
     locked_at = Column(DateTime(timezone=True), nullable=True)
-    lock_reason = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -143,10 +134,6 @@ class UserStoryModel(Base):
     version = Column(Integer, nullable=False, default=1, server_default="1")
     last_modified_by = Column(String(100), nullable=False, default="automated_agent", server_default="automated_agent")
     change_type = Column(String(50), nullable=False, default="created", server_default="created")
-    is_locked = Column(Boolean, nullable=False, default=False)
-    locked_by = Column(String(100), nullable=True)
-    locked_at = Column(DateTime(timezone=True), nullable=True)
-    lock_reason = Column(String(255), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("project_id", "ticket_code", name="uq_user_stories_project_id_ticket_code"),
@@ -164,10 +151,6 @@ class AcceptanceCriteriaModel(Base):
     version = Column(Integer, nullable=False, default=1, server_default="1")
     last_modified_by = Column(String(100), nullable=False, default="automated_agent", server_default="automated_agent")
     change_type = Column(String(50), nullable=False, default="created", server_default="created")
-    is_locked = Column(Boolean, nullable=False, default=False)
-    locked_by = Column(String(100), nullable=True)
-    locked_at = Column(DateTime(timezone=True), nullable=True)
-    lock_reason = Column(String(255), nullable=True)
 
 class AuditResultModel(Base):
     __tablename__ = "audit_results"
@@ -377,9 +360,6 @@ class ClarificationQuestionModel(Base):
     provenance = Column(JSON, nullable=False, default=dict)
     target_requirement_id = Column(String(100), nullable=True)
     requirement_context = Column(Text, nullable=True)
-    is_locked = Column(Boolean, nullable=False, default=False)
-    locked_by = Column(String(100), nullable=True)
-    locked_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -391,10 +371,6 @@ class PRDDocumentModel(Base):
     version = Column(Integer, nullable=False)
     prd_markdown = Column(Text, nullable=False)
     mermaid_diagram = Column(Text, nullable=True)
-    is_locked = Column(Boolean, nullable=False, default=False)
-    locked_by = Column(String(100), nullable=True)
-    locked_at = Column(DateTime(timezone=True), nullable=True)
-    lock_reason = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -475,7 +451,6 @@ class PRDSectionModel(Base):
     is_locked = Column(Boolean, nullable=False, default=False)
     locked_by = Column(String(100), nullable=True)
     locked_at = Column(DateTime(timezone=True), nullable=True)
-    lock_reason = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -513,17 +488,15 @@ class RequirementStateModel(Base):
     """
     __tablename__ = "requirement_states"
     
-    project_id = Column(GUID, ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True, index=True)
+    # The primary key already creates an index; a separate project_id index is
+    # redundant because this table has exactly one state row per project.
+    project_id = Column(GUID, ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True)
     # The project name deliberately belongs only to ``projects.name``.  Keeping
     # a second copy here made a rename dependent on every state write path and
     # allowed generated artifacts to use an obsolete name.
-    requirements = Column(JSON, nullable=False, default=dict)
     business_goals = Column(JSON, nullable=False, default=list)
     actors = Column(JSON, nullable=False, default=list)
-    user_stories = Column(JSON, nullable=False, default=list)
-    acceptance_criteria = Column(JSON, nullable=False, default=list)
     prd_narrative = Column(JSON, nullable=False, default=dict)
-    clarification_questions = Column(JSON, nullable=False, default=list)
     validation_status = Column(String(50), nullable=False, default="pending")
     generated_prd = Column(Text, nullable=False, default="")
     generated_diagrams = Column(Text, nullable=False, default="")

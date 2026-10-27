@@ -8,9 +8,7 @@ renders). Each part can be:
   - inspected per-version          -> GET    .../prd/sections/{section_key}/versions
   - restored from history          -> POST   .../prd/sections/{section_key}/revert/{version}
 
-Lock semantics (coarse -> fine):
-  project lock  >  prd_document lock  >  prd_section lock
-All three are enforced before any part mutation. Restores are APPEND-ONLY:
+Only the section lock is enforced before a part mutation. Restores are APPEND-ONLY:
 reverting copies old content into a NEW version, history is never rewritten.
 """
 import logging
@@ -33,7 +31,6 @@ from app.prd_section_service import (
 )
 from app.repositories import (
     ArtifactEventLogRepository,
-    PRDDocumentRepository,
     PRDSectionRepository,
     PRDSectionVersionRepository,
     RequirementStateRepository,
@@ -58,48 +55,6 @@ async def _validate_project(project_id: str) -> None:
         UUID(project_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project_id format")
-
-
-# PRD-SECTION 2.0 — Route-layer lock helpers, applied in strict coarse→fine order by
-#             every mutating endpoint (2.2/2.3): project first (2.0.1), then the PRD
-#             document (2.0.2) — a locked document freezes every part. The finest gate
-#             (the section's own lock) lives in the repository (4.4).
-# PRD-SECTION 2.0.1 — Project-level gate → 409 when locked, 404 when unresolvable.
-async def _raise_if_project_locked(project_id: str, session: AsyncSession) -> None:
-    from app.lock_service import LockService, ArtifactLockError
-    try:
-        lock_info = await LockService.get_lock_status("project", project_id, session, project_id=project_id)
-        LockService.raise_if_locked("project", project_id, lock_info)
-    except ArtifactLockError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-
-# PRD-SECTION 2.0.2 — Document-level gate (the coarse switch): a locked
-#                 prd_document blocks every part edit. No document row ⇒ nothing to
-#                 enforce; a row that vanishes between the two queries degrades to
-#                 "not locked" rather than erroring the request.
-async def _raise_if_document_locked(project_id: str, session: AsyncSession) -> None:
-    """The PRD document lock is the coarse switch: a locked document freezes
-    every part."""
-    from app.lock_service import LockService, ArtifactLockError
-    docs = await PRDDocumentRepository.get_by_project(project_id, session)
-    if not docs:
-        return
-    try:
-        lock_info = await LockService.get_lock_status(
-            "prd_document", docs[0]["id"], session, project_id=project_id
-        )
-        LockService.raise_if_locked(
-            "prd_document", docs[0]["id"], lock_info,
-            message=f"The PRD document is locked by {lock_info.get('locked_by') or 'unknown'}. "
-                    "Unlock the document before modifying any of its parts.",
-        )
-    except ArtifactLockError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ValueError:
-        return  # document row vanished between the two queries — nothing to enforce
 
 
 async def _get_section_or_404(section_key: str, project_id: str, session: AsyncSession) -> Dict:
@@ -186,8 +141,6 @@ async def update_prd_section(
     row for the part, then re-stitches and persists the full document.
     """
     await _validate_project(project_id)
-    await _raise_if_project_locked(project_id, session)
-    await _raise_if_document_locked(project_id, session)
     await _ensure_sections_for_write(project_id, session)
 
     if payload.review_status and payload.review_status not in VALID_REVIEW_STATUSES:
@@ -369,8 +322,6 @@ async def revert_prd_section(
     rewritten. Enforces project > document > section locks.
     """
     await _validate_project(project_id)
-    await _raise_if_project_locked(project_id, session)
-    await _raise_if_document_locked(project_id, session)
     await _ensure_sections_for_write(project_id, session)
 
     section = await _get_section_or_404(section_key, project_id, session)
@@ -451,7 +402,6 @@ async def lock_prd_section(
             artifact_id=section["id"],
             session=session,
             locked_by=payload.locked_by or "user",
-            lock_reason=payload.lock_reason,
             project_id=project_id,
         )
     except ArtifactLockError as e:

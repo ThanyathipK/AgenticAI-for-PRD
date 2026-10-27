@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.lock_service import LockService
 from app.models import AcceptanceCriteriaModel, RequirementModel, UserStoryModel
 from app.repositories.base import as_uuid, serialize_user_story
 from app.requirement_codes import UNASSIGNED_REQUIREMENT_CODE
@@ -29,8 +28,6 @@ class UserStoryRepository:
             )
         )
         for criterion in result.scalars().all():
-            if criterion.is_locked:
-                continue
             if criterion.change_type != "review_required":
                 criterion.version += 1
             criterion.change_type = "review_required"
@@ -107,12 +104,6 @@ class UserStoryRepository:
                 ticket_code = await UserStoryRepository.generate_unique_ticket_code(pid, session)
 
         if story:
-            # LOCK ENFORCEMENT: Cannot update a locked user story
-            LockService.raise_if_locked_model(
-                "user_story",
-                story,
-                message=f"User Story {story.ticket_code} is locked by {story.locked_by or 'unknown'}. Unlock it before modifying."
-            )
             content_changed = any([
                 story.ticket_code != ticket_code,
                 story.story_title != story_title,
@@ -170,7 +161,7 @@ class UserStoryRepository:
         result = await session.execute(stmt)
         story = result.scalar_one_or_none()
         if story:
-            return serialize_user_story(story, pid, with_lock_fields=True)
+            return serialize_user_story(story, pid)
         return None
 
     @staticmethod
@@ -190,7 +181,7 @@ class UserStoryRepository:
 
         result = await session.execute(stmt)
         stories = result.scalars().all()
-        return [serialize_user_story(s, pid, with_lock_fields=True) for s in stories]
+        return [serialize_user_story(s, pid) for s in stories]
 
     @staticmethod
     async def get_by_requirement_ids(
@@ -212,7 +203,7 @@ class UserStoryRepository:
         result = await session.execute(stmt)
         for story in result.scalars().all():
             grouped.setdefault(story.requirement_id, []).append(
-                serialize_user_story(story, story.project_id, with_lock_fields=True)
+                serialize_user_story(story, story.project_id)
             )
         return grouped
 
@@ -227,12 +218,6 @@ class UserStoryRepository:
         result = await session.execute(stmt)
         story = result.scalar_one_or_none()
         if story:
-            # LOCK ENFORCEMENT: Cannot update a locked user story
-            LockService.raise_if_locked_model(
-                "user_story",
-                story,
-                message=f"User Story {story.ticket_code} is locked by {story.locked_by or 'unknown'}. Unlock it before modifying."
-            )
             content_changed = any(
                 field in updates and getattr(story, field) != updates[field]
                 for field in ("ticket_code", "story_title", "as_a", "i_want_to", "so_that")
@@ -273,12 +258,6 @@ class UserStoryRepository:
         result = await session.execute(stmt)
         story = result.scalar_one_or_none()
         if story:
-            # LOCK ENFORCEMENT: Cannot delete a locked user story
-            LockService.raise_if_locked_model(
-                "user_story",
-                story,
-                message=f"User Story {story.ticket_code} is locked by {story.locked_by or 'unknown'}. Unlock it before deleting."
-            )
             await session.delete(story)
             await session.flush()
             return True

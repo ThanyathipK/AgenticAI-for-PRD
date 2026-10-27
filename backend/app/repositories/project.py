@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.lock_service import LockService
 from app.models import ConversationMessageModel, ProjectModel, RequirementStateModel
 from app.repositories.base import as_uuid, serialize_project
 from app.repositories.event_log import ArtifactEventLogRepository
@@ -260,12 +259,6 @@ class ProjectRepository:
         result = await session.execute(stmt)
         p = result.scalar_one_or_none()
         if p:
-            # LOCK ENFORCEMENT: Cannot update a locked project
-            LockService.raise_if_locked_model(
-                "project",
-                p,
-                message=f"Project '{p.name}' is locked by {p.locked_by or 'unknown'}. Unlock it before modifying."
-            )
             if "name" in updates:
                 p.name = updates["name"]
             if "description" in updates:
@@ -412,12 +405,6 @@ class ProjectRepository:
         result = await session.execute(stmt)
         p = result.scalar_one_or_none()
         if p:
-            # LOCK ENFORCEMENT: Cannot delete a locked project
-            LockService.raise_if_locked_model(
-                "project",
-                p,
-                message=f"Project '{p.name}' is locked by {p.locked_by or 'unknown'}. Unlock it before deleting."
-            )
             # Log while the parent row still exists. The previous order deleted
             # and flushed the project first, then inserted an event whose
             # project_id FK referenced that deleted row. PostgreSQL rejected

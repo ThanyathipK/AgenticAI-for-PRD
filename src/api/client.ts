@@ -268,7 +268,8 @@ export const api = {
   searchProjects: (query: string) => get<ProjectSummary[]>('/api/projects/search', { q: query }),
   // PROJECT 4.3 — API client (PROJECT 4.2 → route PROJECT 4.4). A duplicate
   //               name answers 409 and is rendered inline by the modal.
-  createProject: (name: string) => post<ProjectCreated>('/api/projects', { name }),
+  createProject: (name: string, description?: string) =>
+    post<ProjectCreated>('/api/projects', { name, description: description?.trim() || null }),
   // PROJECT 5.2 — API client (PROJECT 5.1 → route PROJECT 5.3); the name is
   //               trimmed client-side and again in the ProjectCreate schema.
   renameProject: (projectId: string, name: string) =>
@@ -348,10 +349,10 @@ export const api = {
     get<ImpactAnalysisPayload>(`/api/pending-actions/${actionId}/impact`, { project_id: projectId }),
 
   // ---- Artifact locks -----------------------------------------------------
-  lockArtifact: (projectId: string, artifactType: string, artifactId: string, lockedBy = 'user', lockReason?: string) =>
+  lockArtifact: (projectId: string, artifactType: string, artifactId: string, lockedBy = 'user') =>
     post<ArtifactLockResponse>(
       `/api/project/${projectId}/artifacts/${artifactType}/${artifactId}/lock`,
-      { locked_by: lockedBy, lock_reason: lockReason }
+      { locked_by: lockedBy }
     ),
   unlockArtifact: (projectId: string, artifactType: string, artifactId: string, lockedBy = 'user') =>
     post<ArtifactLockResponse>(

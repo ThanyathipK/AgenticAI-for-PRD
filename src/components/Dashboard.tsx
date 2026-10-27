@@ -872,7 +872,10 @@ export default function Dashboard() {
           // Do not select yet: selecting starts an async project load, which
           // previously raced the intake writes and could repaint the editor
           // with the empty template after the intake had saved.
-          const result = await handleCreateProject(name, { select: false });
+          const result = await handleCreateProject(name, {
+            select: false,
+            description: intake.businessTopics['Introduction & Executive Summary']?.trim(),
+          });
           if (result.error || !result.projectId) return result.error || 'Failed to create the project.';
           try {
             await seedPrdIntake(result.projectId, name, intake);

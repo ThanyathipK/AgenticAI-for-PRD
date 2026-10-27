@@ -58,6 +58,7 @@ from app.requirement_codes import default_requirement_code, extract_requirement_
 from app.services.requirement_processing_service import RequirementProcessingService
 from app.errors import classify_exception
 from app.observability import LogContext, log_event
+from app.semantic_memory import extract_and_remember
 
 logger = logging.getLogger("app.routes.requirements")
 
@@ -168,9 +169,6 @@ async def _stage_requirement_reactivation(
     for requirement in targets:
         requirement_id = UUID(str(requirement["id"]))
         stories = stories_by_requirement.get(requirement_id, [])
-        if any(story.get("is_locked") for story in stories):
-            locked.append(str(requirement["requirement_code"]))
-            continue
         criteria = criteria_by_requirement.get(requirement_id, [])
         criteria_by_story: Dict[str, List[str]] = {}
         for criterion in criteria:
@@ -467,25 +465,12 @@ async def post_audit_resolution_reply(
         raise HTTPException(status_code=404, detail=f"Clarification question {question_id} not found")
     await verify_project_access(str(project_id), current_user, session)
 
-    # Project-scoped write through the repository: it resolves the question
-    # through its own project (audit_result -> requirement) and honours the
-    # artifact lock, instead of a bare ORM update by PK.
-    from app.lock_service import ArtifactLockError
-
-    try:
-        # AUDIT 3.2 — The write itself (AUDIT 4.1): resolves the question through its
-        #            own project (audit_result → requirement) and honours the artifact
-        #            lock, instead of a bare ORM update by primary key.
-        updated = await ClarificationQuestionRepository.update(
-            str(question_id),
-            str(project_id),
-            {"user_answer": payload.answer_text, "is_resolved": True},
-            session,
-        )
-    except ArtifactLockError as e:
-        # Locked questions must be unlocked before they can be answered. The
-        # repository's lock gate raises a domain error, not an HTTP one.
-        raise HTTPException(status_code=409, detail=str(e))
+    updated = await ClarificationQuestionRepository.update(
+        str(question_id),
+        str(project_id),
+        {"user_answer": payload.answer_text, "is_resolved": True},
+        session,
+    )
     if updated is None:
         # The question vanished between the ownership lookup and the write.
         raise HTTPException(status_code=404, detail=f"Clarification question {question_id} not found")
@@ -544,14 +529,12 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
         RequirementStateResponse: The updated requirement state.
 
     Raises:
-        HTTPException: 400 if ``project_id`` is not a valid UUID; 409 if the
-            project is locked; 404 if the project does not exist.
+        HTTPException: 400 if ``project_id`` is not a valid UUID; 404 if the
+            project does not exist.
     """
     project_id = payload.get("project_id")
     answers = payload.get("answers", {})
 
-    # LOCK ENFORCEMENT: Cannot submit clarification answers on a locked project
-    from app.lock_service import LockService, ArtifactLockError
     try:
         UUID(project_id)
     except ValueError:
@@ -559,14 +542,6 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
 
     # AUTHZ: the caller must own the project before anything is read/written.
     await verify_project_access(str(project_id), current_user, session)
-
-    try:
-        lock_info = await LockService.get_lock_status("project", project_id, session, project_id=project_id)
-        LockService.raise_if_locked("project", project_id, lock_info)
-    except ArtifactLockError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
 
     req_state = await RequirementStateRepository.get_by_project_id(project_id, session)
     if not req_state:
@@ -854,7 +829,20 @@ async def post_process_requirements(
         pipeline=_process_requirements_pipeline,
         verify_access=verify_project_access,
     )
-    return await service.process(request, session, current_user)
+    response = await service.process(request, session, current_user)
+
+    # The SPA uses this multi-agent endpoint rather than /api/chat. Feed every
+    # completed turn into the same fail-open semantic-memory writer so durable
+    # project facts are actually persisted during the product's normal flow.
+    reply = getattr(response, "message", None)
+    user_message = (request.raw_input or "").strip()
+    if user_message and reply and getattr(response, "status", None) != "cancelled":
+        await extract_and_remember(
+            project_id=str(request.project_id),
+            user_message=user_message,
+            assistant_reply=str(reply),
+        )
+    return response
 
 
 async def _process_requirements_pipeline(
@@ -1107,30 +1095,19 @@ async def _process_requirements_pipeline(
             for req in ((req_state or {}).get("requirements") or [])
             if isinstance(req, dict) and req.get("requirement_code")
         }
-        stories_by_code = {}
         parent_by_story = {}
         for requirement in requirements_by_code.values():
             for story in requirement.get("user_stories") or []:
                 if isinstance(story, dict) and story.get("ticket_code"):
                     code = normalize_ticket_code(story.get("ticket_code"))
-                    stories_by_code[code] = story
                     parent_by_story[code] = requirement
         blocked = []
         for code in requested_requirement_codes:
             requirement = requirements_by_code.get(code) or {}
-            locked_children = [
-                normalize_ticket_code(story.get("ticket_code"))
-                for story in (requirement.get("user_stories") or [])
-                if isinstance(story, dict) and story.get("is_locked")
-            ]
-            if requirement.get("is_locked") or (
-                detected_intent == "DELETE_REQUIREMENT" and locked_children
-            ):
+            if requirement.get("is_locked"):
                 blocked.append(code)
         for code in requested_story_codes:
-            if (stories_by_code.get(code) or {}).get("is_locked") or (
-                parent_by_story.get(code) or {}
-            ).get("is_locked"):
+            if (parent_by_story.get(code) or {}).get("is_locked"):
                 blocked.append(code)
         if blocked:
             blocked = sorted(set(blocked))

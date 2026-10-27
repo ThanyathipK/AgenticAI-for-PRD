@@ -100,7 +100,6 @@ export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
                       <span className="text-xs font-semibold text-on-surface">
                         {story.story_title || "Untitled user story"}
                       </span>
-                      {lockChip(story.is_locked)}
                     </div>
                     <div className="mt-3">
                       {story.acceptance_criteria.length === 0 ? (

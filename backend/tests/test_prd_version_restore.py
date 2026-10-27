@@ -202,15 +202,12 @@ class TestRestorePrdVersion:
         assert exc.value.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_restore_refused_when_project_locked_409(self, db_session):
+    async def test_project_lock_is_not_supported(self, db_session):
         session, project_id = db_session
-        await _seed_history(session, project_id)
-        await LockService.lock_artifact(
-            "project", project_id, session, locked_by="other_user", project_id=project_id
-        )
-        with pytest.raises(HTTPException) as exc:
-            await restore_prd_version(project_id, 1, "user", session)
-        assert exc.value.status_code == 409
+        with pytest.raises(ValueError, match="Unsupported artifact type: project"):
+            await LockService.lock_artifact(
+                "project", project_id, session, locked_by="other_user", project_id=project_id
+            )
 
     @pytest.mark.asyncio
     async def test_restore_invalid_project_id_400(self, db_session):

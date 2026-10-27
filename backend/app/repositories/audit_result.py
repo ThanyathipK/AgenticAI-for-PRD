@@ -34,9 +34,6 @@ class AuditResultRepository:
                     # Internal anchor for document-only audits. Archived keeps
                     # it out of the visible requirement board.
                     status="archived",
-                    is_locked=False,
-                    locked_by=None,
-                    locked_at=None
                 )
                 session.add(req)
                 await session.flush()

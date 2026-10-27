@@ -31,6 +31,7 @@ from app.repositories import (
     PRDDocumentRepository,
     PRDVersionRepository,
 )
+from app.repositories.base import serialize_project
 from app.schemas import (
     ProjectCreate,
     ProjectSummary,
@@ -52,8 +53,13 @@ from app.prd_section_service import ensure_sections_seeded, assemble_document_ma
 from app.repositories.prd_section import PRDSectionRepository
 from app.prompt_loader import load_prd_template, load_prd_latex_template
 from app.event_manager import event_manager
-from app.review_service import get_review_history
-from app.review_service import governed_state_changed, mark_revised_if_approved
+from app.review_service import (
+    ReviewTransitionError,
+    get_review_history,
+    governed_state_changed,
+    mark_revised_if_approved,
+    transition_project,
+)
 
 logger = logging.getLogger("app.routes.projects")
 
@@ -437,17 +443,25 @@ async def set_project_status(
             detail=f"Invalid status '{payload.status}'. Allowed: {', '.join(sorted(allowed))}",
         )
 
-    # Dashboard status is manually selected metadata. Any canonical status can
-    # be chosen directly; it is not inferred from project health or constrained
-    # to a workflow transition path.
-    updated = await ProjectRepository.update_status(
-        project_id,
-        payload.status,
-        db,
-        user_id=UUID(current_user.id),
-    )
-    if updated is None:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Use the governed transition path so every dashboard status change creates
+    # an append-only review event and approval records capture their PRD/audit
+    # evidence instead of leaving the project approval columns permanently NULL.
+    try:
+        project = await transition_project(
+            project_id,
+            payload.status,
+            db,
+            actor_id=current_user.id,
+            actor_name=current_user.full_name,
+            actor_role=current_user.role,
+            comment=payload.comment,
+            manual=True,
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Project not found") from None
+    except ReviewTransitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    updated = serialize_project(project)
     await event_manager.publish(project_id, "project_updated", {
         "project_id": project_id,
         "status": payload.status,
@@ -680,27 +694,12 @@ async def update_project_requirement_state(
         RequirementStateResponse: The updated, flattened requirement state.
 
     Raises:
-        HTTPException: 400 if ``project_id`` is not a valid UUID; 409 if the
-            project is locked; 404 if the project cannot be resolved.
+        HTTPException: 400 if ``project_id`` is not a valid UUID.
     """
     try:
         UUID(project_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project_id format")
-
-    # PROJECT 8.2.1 — Artifact-lock gate (coarse, project-level): a locked project
-    #                refuses this write with 409; an unresolvable project id maps
-    #                to 404. Uses the shared locks_service resolution so the lock
-    #                semantics match the generic /artifacts/.../lock endpoints.
-    # LOCK ENFORCEMENT: Cannot update requirement state of a locked project
-    from app.lock_service import LockService, ArtifactLockError
-    try:
-        lock_info = await LockService.get_lock_status("project", project_id, session, project_id=project_id)
-        LockService.raise_if_locked("project", project_id, lock_info)
-    except ArtifactLockError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
 
     logger.info(f"[DB LOG] Updating RequirementState directly for project {project_id}")
     # PROJECT 8.2.2 — Repository write: RequirementStateRepository.save_or_update
@@ -1615,48 +1614,16 @@ async def restore_prd_version(
     """Restore the whole PRD document from a ledger version.
 
     APPEND-ONLY: the snapshot's content becomes a NEW version — history is
-    never rewritten. Lock contract: the restore flows through the SAME part
-    mutation path as manual edits, so project > document > section locks are
-    all enforced and locked parts keep their current content untouched.
+    never rewritten. Section locks are preserved during the restore.
     """
     try:
         UUID(project_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project_id format")
 
-    from app.lock_service import LockService, ArtifactLockError
-
-    # Coarse lock: the project itself is frozen -> no restore.
-    try:
-        lock_info = await LockService.get_lock_status("project", project_id, session, project_id=project_id)
-        LockService.raise_if_locked("project", project_id, lock_info)
-    except ArtifactLockError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
     target = await PRDVersionRepository.get_by_version_number(project_id, version_number, session)
     if not target:
         raise HTTPException(status_code=404, detail=f"PRD version {version_number} not found for this project")
-
-    # The PRD document lock is the coarse switch: a locked document freezes
-    # every part, so a restore must be refused as well.
-    from app.repositories.prd import PRDDocumentRepository
-    docs = await PRDDocumentRepository.get_by_project(project_id, session)
-    if docs:
-        try:
-            doc_lock_info = await LockService.get_lock_status(
-                "prd_document", docs[0]["id"], session, project_id=project_id
-            )
-            LockService.raise_if_locked(
-                "prd_document", docs[0]["id"], doc_lock_info,
-                message=f"The PRD document is locked by {doc_lock_info.get('locked_by') or 'unknown'}. "
-                        "Unlock the document before restoring a version.",
-            )
-        except ArtifactLockError as e:
-            raise HTTPException(status_code=409, detail=str(e))
-        except ValueError:
-            pass  # document row vanished — nothing to enforce
 
     # Seed the nine lockable parts from the CURRENT document first so the
     # restore always has rows to write into (no-op when they already exist).

@@ -153,9 +153,6 @@ def _story(project_id, requirement_id, stub, *, status, ticket_code):
         version=1,
         last_modified_by="automated_agent",
         change_type="created",
-        is_locked=False,
-        locked_by=None,
-        locked_at=None,
     )
 
 
@@ -174,12 +171,8 @@ def _ac(story_id, stub, *, criteria_text):
 def _make_state(project_id):
     return RequirementStateModel(
         project_id=project_id,
-        requirements={},
         business_goals=[],
         actors=[],
-        user_stories=[],
-        acceptance_criteria=[],
-        clarification_questions=[],
         validation_status="pending",
         generated_prd="",
         generated_diagrams="",

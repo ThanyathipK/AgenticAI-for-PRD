@@ -22,6 +22,8 @@ export type CreateProjectResult =
 export interface CreateProjectOptions {
   /** Keep the project unselected while a caller seeds its initial PRD data. */
   select?: boolean;
+  /** Business summary stored on the project and shown in the dashboard. */
+  description?: string;
 }
 
 export interface UseProjectsResult {
@@ -276,7 +278,7 @@ export function useProjects(isAuthenticated: boolean, authUserId: string | null)
     if (trimmed.length > 50) return { projectId: null, error: 'Project name must be 50 characters or fewer.' };
     try {
       // PROJECT 4.3 — API boundary → POST /api/projects (route PROJECT 4.4).
-      const created = await api.createProject(trimmed);
+      const created = await api.createProject(trimmed, options.description);
       // PROJECT 4.5 — Re-read the authoritative list, then select the returned
       // project id. Changing projectId triggers useProjectSync, which loads the
       // new project's empty state immediately after the modal closes.
@@ -363,7 +365,7 @@ export function useProjects(isAuthenticated: boolean, authUserId: string | null)
       // PROJECT 7.5.2 — API boundary → PUT /api/projects/{id}/status (route 7.5.3).
       const updated = await api.updateProjectStatus(projectIdToUpdate, newStatus, comment);
       setProjects(prev =>
-        prev.map(p => (p.id === projectIdToUpdate ? { ...p, status: updated.status, updated_at: updated.updated_at } : p))
+        prev.map(p => (p.id === projectIdToUpdate ? { ...p, ...updated } : p))
       );
       setProjectContextMenu(null);
       return true;
@@ -371,7 +373,7 @@ export function useProjects(isAuthenticated: boolean, authUserId: string | null)
       setProjects(prev =>
         prev.map(p => (p.id === projectIdToUpdate ? { ...p, status: previousStatus } : p))
       );
-      handleError('Failed to update the project status.', err);
+      handleError(detailFromJsonError(err) ?? 'Failed to update the project status.', err);
       setProjectContextMenu(null);
       return false;
     }

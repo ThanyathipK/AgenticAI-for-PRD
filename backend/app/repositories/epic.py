@@ -7,8 +7,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.lock_service import LockService
-from app.models import EpicModel, ProjectModel
+from app.models import EpicModel
 from app.repositories.base import as_uuid, serialize_epic
 from app.repositories.event_log import ArtifactEventLogRepository
 
@@ -37,12 +36,6 @@ class EpicRepository:
 
         name_to_use = epic_name.strip() if (epic_name and epic_name.strip()) else "Untitled Epic"
         if epic:
-            # LOCK ENFORCEMENT: Cannot update a locked epic
-            LockService.raise_if_locked_model(
-                "epic",
-                epic,
-                message=f"Epic '{epic.epic_name}' is locked by {epic.locked_by or 'unknown'}. Unlock it before modifying."
-            )
             old_name = epic.epic_name
             old_version = epic.version
             if epic_name and epic_name.strip():
@@ -94,16 +87,6 @@ class EpicRepository:
     @staticmethod
     async def create(project_id: str, data: Dict[str, Any], session: AsyncSession) -> Dict[str, Any]:
         pid = as_uuid(project_id)
-        # LOCK ENFORCEMENT: Cannot create a new epic under a locked project
-        stmt_project = select(ProjectModel).where(ProjectModel.id == pid)
-        res_project = await session.execute(stmt_project)
-        project = res_project.scalar_one_or_none()
-        if project:
-            LockService.raise_if_locked_model(
-                "project",
-                project,
-                message=f"Project '{project.name}' is locked by {project.locked_by or 'unknown'}. Unlock it before creating a new epic."
-            )
         epic = EpicModel(
             project_id=pid,
             epic_name=data.get("epic_name", "Untitled Epic"),
@@ -141,12 +124,6 @@ class EpicRepository:
         result = await session.execute(stmt)
         epic = result.scalar_one_or_none()
         if epic:
-            # LOCK ENFORCEMENT: Cannot update a locked epic
-            LockService.raise_if_locked_model(
-                "epic",
-                epic,
-                message=f"Epic '{epic.epic_name}' is locked by {epic.locked_by or 'unknown'}. Unlock it before modifying."
-            )
             if "epic_name" in updates:
                 epic.epic_name = updates["epic_name"]
             if "version" in updates:
@@ -164,12 +141,6 @@ class EpicRepository:
         result = await session.execute(stmt)
         epic = result.scalar_one_or_none()
         if epic:
-            # LOCK ENFORCEMENT: Cannot delete a locked epic
-            LockService.raise_if_locked_model(
-                "epic",
-                epic,
-                message=f"Epic '{epic.epic_name}' is locked by {epic.locked_by or 'unknown'}. Unlock it before deleting."
-            )
             await session.delete(epic)
             await session.flush()
             return True

@@ -4,7 +4,7 @@ from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import String, cast, func, select
+from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthenticatedUser, require_project_owner
@@ -33,12 +33,7 @@ router = APIRouter()
 
 # Valid artifact types for the generic lock/unlock endpoints
 VALID_ARTIFACT_TYPES = [
-    "project",
-    "epic",
     "requirement",
-    "user_story",
-    "acceptance_criteria",
-    "prd_document",
     "prd_section",
 ]
 
@@ -59,8 +54,7 @@ async def lock_artifact(
     """
     Generic lock endpoint for any artifact type.
 
-    Supported types: project, epic, requirement, user_story, acceptance_criteria,
-    clarification_question, prd_document.
+    Supported types: requirement and prd_section.
 
     Args:
         project_id: Owning project UUID string.
@@ -97,7 +91,6 @@ async def lock_artifact(
             artifact_id=artifact_id,
             session=session,
             locked_by=payload.locked_by or "user",
-            lock_reason=payload.lock_reason,
             project_id=project_id
         )
         await event_manager.publish(project_id, "artifact_locked", {
@@ -354,8 +347,6 @@ async def confirm_action(
     """
     Confirm a pending merge action, applying its proposed changes to the database.
 
-    Refuses to confirm when the project is locked.
-
     Args:
         action_id: Pending-action UUID string.
         project_id: Project UUID string.
@@ -366,25 +357,13 @@ async def confirm_action(
 
     Raises:
         HTTPException: 400 on invalid project ID or missing proposed changes;
-            404 if the action does not exist; 409 if the project is locked.
+            404 if the action does not exist.
     """
-    from app.lock_service import LockService, ArtifactLockError
     try:
         project_uuid = UUID(project_id)
         action_uuid = UUID(action_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project_id or action_id format")
-    # CONFIRM 3.3.2 — Lock gate (coarse, project-level): a locked project refuses the
-    #               merge with 409; an unresolvable project id becomes 404. This is
-    #               what stops an AI merge from overwriting a frozen baseline.
-    try:
-        lock_info = await LockService.get_lock_status("project", project_id, session, project_id=project_id)
-        LockService.raise_if_locked("project", project_id, lock_info)
-    except ArtifactLockError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
     # 1. Get the action
     # Serialize confirmation of this exact preview. On PostgreSQL, a second
     # request waits here and then observes that the first transaction consumed
@@ -442,18 +421,6 @@ async def confirm_action(
         }
         locked_items: set[str] = set()
 
-        if criterion_ids:
-            locked_criteria = await session.execute(
-                select(AcceptanceCriteriaModel.id).where(
-                    cast(AcceptanceCriteriaModel.id, String).in_(criterion_ids),
-                    AcceptanceCriteriaModel.is_locked.is_(True),
-                )
-            )
-            locked_items.update(
-                f"acceptance criterion {criterion_id}"
-                for criterion_id in locked_criteria.scalars().all()
-            )
-
         if requirement_codes:
             locked_requirements = await session.execute(
                 select(RequirementModel.requirement_code).where(
@@ -467,11 +434,9 @@ async def confirm_action(
         if story_codes:
             story_lock_rows = await session.execute(
                 select(
-                    UserStoryModel.ticket_code,
-                    UserStoryModel.is_locked,
                     RequirementModel.requirement_code,
-                    RequirementModel.is_locked,
                 )
+                .select_from(UserStoryModel)
                 .join(
                     RequirementModel,
                     cast(UserStoryModel.requirement_id, String)
@@ -480,35 +445,32 @@ async def confirm_action(
                 .where(
                     cast(RequirementModel.project_id, String) == str(project_id),
                     UserStoryModel.ticket_code.in_(story_codes),
+                    RequirementModel.is_locked.is_(True),
                 )
             )
-            for story_code, story_locked, req_code, requirement_locked in story_lock_rows.all():
-                if story_locked:
-                    locked_items.add(str(story_code))
-                if requirement_locked:
-                    locked_items.add(str(req_code))
+            locked_items.update(str(code) for code in story_lock_rows.scalars().all())
 
-            criteria_lock_rows = await session.execute(
-                select(UserStoryModel.ticket_code)
+        if criterion_ids:
+            criterion_parent_locks = await session.execute(
+                select(RequirementModel.requirement_code)
+                .join(
+                    UserStoryModel,
+                    cast(UserStoryModel.requirement_id, String)
+                    == cast(RequirementModel.id, String),
+                )
                 .join(
                     AcceptanceCriteriaModel,
                     cast(AcceptanceCriteriaModel.user_story_id, String)
                     == cast(UserStoryModel.id, String),
                 )
-                .join(
-                    RequirementModel,
-                    cast(UserStoryModel.requirement_id, String)
-                    == cast(RequirementModel.id, String),
-                )
                 .where(
                     cast(RequirementModel.project_id, String) == str(project_id),
-                    UserStoryModel.ticket_code.in_(story_codes),
-                    func.lower(AcceptanceCriteriaModel.status) == "active",
-                    AcceptanceCriteriaModel.is_locked.is_(True),
+                    cast(AcceptanceCriteriaModel.id, String).in_(criterion_ids),
+                    RequirementModel.is_locked.is_(True),
                 )
             )
             locked_items.update(
-                f"{code} acceptance criteria" for code in criteria_lock_rows.scalars().all()
+                str(code) for code in criterion_parent_locks.scalars().all()
             )
 
         if locked_items:

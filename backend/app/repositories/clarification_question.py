@@ -108,9 +108,6 @@ class ClarificationQuestionRepository:
                     # Internal anchor for document-only audits; never surface
                     # it as a product requirement.
                     status="archived",
-                    is_locked=False,
-                    locked_by=None,
-                    locked_at=None
                 )
                 session.add(req)
                 await session.flush()

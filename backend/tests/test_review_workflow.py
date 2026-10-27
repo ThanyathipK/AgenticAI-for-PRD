@@ -32,6 +32,34 @@ async def test_illegal_transition_is_rejected(db_session, seeded_project):
 
 
 @pytest.mark.asyncio
+async def test_manual_status_allows_direct_approval_and_records_event(db_session, seeded_project):
+    actor = await _actor(db_session, seeded_project)
+
+    project = await transition_project(
+        seeded_project,
+        "approved",
+        db_session,
+        manual=True,
+        **actor,
+    )
+
+    assert project.status == "approved"
+    assert project.last_approved_prd_version is None
+    assert project.last_approved_audit_version is None
+    assert str(project.last_approved_by) == actor["actor_id"]
+    assert project.last_approved_at is not None
+    event = await db_session.scalar(
+        select(ProjectReviewEventModel).where(
+            ProjectReviewEventModel.project_id == seeded_project
+        )
+    )
+    assert event is not None
+    assert event.from_status == "draft"
+    assert event.to_status == "approved"
+    assert event.action == "approve"
+
+
+@pytest.mark.asyncio
 async def test_request_changes_requires_reason(db_session, seeded_project):
     actor = await _actor(db_session, seeded_project)
     await transition_project(seeded_project, "in_review_hpo", db_session, **actor)

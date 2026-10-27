@@ -1079,27 +1079,6 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
     # Store existing user stories before processing passed_structured or raw_input
     existing_user_stories = list(req_state.get("user_stories", []))
 
-    # Split stories into locked (protected from modification) and unlocked sets.
-    # Locked stories are still fed to the merge as PROTECTED entries so they stay
-    # in the merged output under their original requirement - previously they
-    # were excluded from the merge entirely and silently vanished from the board.
-    # GATHERING 1.3 — Lock partitioning: human-locked stories are split out of the
-    #             mutable set, but their UUIDs AND ticket codes are collected in
-    #             `locked_protected_ids` (GATHERING 6.4) so the merge can never
-    #             mutate them and they cannot vanish from the board. They are still
-    #             rendered into the prompt (GATHERING 2.6) to stop the model from
-    #             recreating them as duplicates.
-    locked_user_stories = [us for us in existing_user_stories if us.get("is_locked", False)]
-    unlocked_user_stories = [us for us in existing_user_stories if not us.get("is_locked", False)]
-    if locked_user_stories:
-        logger.info(f"[GATHERER] {len(locked_user_stories)} locked user story(ies) are protected from modification.")
-    locked_protected_ids = [
-        pid for pid in (
-            [str(us.get("id")) for us in locked_user_stories if us.get("id")]
-            + [us.get("ticket_code") for us in locked_user_stories if us.get("ticket_code")]
-        ) if pid
-    ]
-
     passed_structured = state.get("structured_requirements") or {}
 
     # ---- No-op guard -------------------------------------------------------
@@ -1298,14 +1277,6 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
         ),
         None,
     )
-    matched_story = next(
-        (
-            story for story in existing_user_stories
-            if normalize_ticket_code(story.get("ticket_code"))
-            == normalize_ticket_code(matched_req_id)
-        ),
-        None,
-    )
     matched_story_parent = next(
         (
             requirement for requirement in (req_state.get("requirements") or [])
@@ -1321,7 +1292,6 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
     )
     if detected_intent == "UPDATE_REQUIREMENT" and (
         (parent_requirement or {}).get("is_locked")
-        or (matched_story or {}).get("is_locked")
         or (matched_story_parent or {}).get("is_locked")
     ):
         target = parent_requirement_code or normalize_ticket_code(matched_req_id) or str(matched_req_id)
@@ -1353,7 +1323,7 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
         # criteria even when the model correctly preserved them unchanged.
         semantic_recs = []
     else:
-        semantic_recs = await detect_semantic_changes(raw_input, unlocked_user_stories)
+        semantic_recs = await detect_semantic_changes(raw_input, existing_user_stories)
     # GATHERING 2.3 — Matcher reconciliation: the matcher's single verdict (MATCHING
     #             3.1/3.2) is MERGED into the semantic recommendations instead of
     #             replacing them, so "change story X AND add something new" keeps both
@@ -1456,11 +1426,6 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
     requirements = req_state.get("requirements", [])
     existing_epic = req_state.get("epic_name") or (requirements[0].get("title", "") if requirements else "")
     context_lines = []
-    locked_story_codes = {
-        normalize_ticket_code(story.get("ticket_code"))
-        for story in locked_user_stories
-        if normalize_ticket_code(story.get("ticket_code"))
-    }
     if existing_epic:
         context_lines.append(f"CURRENT ACTIVE EPIC: {existing_epic}\n(Note: DO NOT change this Epic Name unless the user explicitly requests to change or rename the epic)\n")
     for requirement in requirements:
@@ -1475,22 +1440,8 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
         mutable_children = [
             story for story in (requirement.get("user_stories") or [])
             if isinstance(story, dict)
-            and not story.get("is_locked", False)
-            and normalize_ticket_code(story.get("ticket_code")) not in locked_story_codes
         ]
         context_lines.extend(format_story_context_lines(mutable_children))
-    if locked_user_stories:
-        # Locked stories ARE rendered (with an explicit marker) so the model can
-        # see them and avoid re-creating them as duplicates. They are protected
-        # by ``locked_protected_ids`` in the merge, so even a misbehaving draft
-        # can never mutate them.
-        context_lines.append(
-            "\nLOCKED STORIES (human-verified - reproduce EXACTLY as-is, never modify, "
-            "renumber, reword or drop them):"
-        )
-        context_lines.extend(
-            f"{line}\n  Flags: LOCKED" for line in format_story_context_lines(locked_user_stories)
-        )
     current_context = "\n".join(context_lines) if context_lines else "No existing user stories in this project."
 
     # Explicit intent rules for the LLM: with only the raw intent label the
@@ -1753,18 +1704,16 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
     # ONE merge pass over the FULL flattened story list.
     # Previously merge_user_stories ran once PER LLM requirement with the
     # whole existing backlog, duplicating every existing story into EVERY
-    # requirement group. Locked stories are protected (never mutated) but
-    # stay in the merge input so they never vanish from the board.
+    # requirement group.
     # ===============================================
     # GATHERING 4.1 — THE merge (GATHERING 6.0): one pass over the flattened story
-    #             list (unlocked mutable + locked protected) with the semantic
-    #             recommendations and `locked_protected_ids`. Per-story field merge,
+    #             list with the semantic recommendations. Per-story field merge,
     #             AC union and the protected/conflict rule live in merge_service.
     merged_stories, merge_report = merge_user_stories_with_report(
-        existing_stories=unlocked_user_stories + locked_user_stories,
+        existing_stories=existing_user_stories,
         new_incoming_stories=incoming_entries,
         semantic_recs=semantic_recs,
-        protected_ids=locked_protected_ids,
+        protected_ids=[],
         # Parent updates return complete, revalidated AC sets for affected
         # children. Story wording may be unchanged, so a normal field-diff
         # would otherwise union obsolete criteria back into the result.
@@ -2099,33 +2048,11 @@ async def delete_requirement_node(state: AgentState) -> WorkflowNodeOutcome:
                     if code:
                         codes_to_check.add(code)
 
-        # Criteria locks are not embedded in the flattened story payload, so
-        # inspect them explicitly before offering an archive confirmation.
-        locked_criteria_by_story: Dict[str, List[str]] = {}
-        criterion_rows_by_key: Dict[tuple[str, str], tuple[str, bool]] = {}
+        criterion_rows_by_key: Dict[tuple[str, str], str] = {}
         if db_session is not None and codes_to_check:
             from sqlalchemy import String, cast, func, select
 
             from app.models import AcceptanceCriteriaModel, UserStoryModel
-
-            locked_rows = await db_session.execute(
-                select(UserStoryModel.ticket_code, AcceptanceCriteriaModel.locked_by)
-                .join(
-                    AcceptanceCriteriaModel,
-                    cast(AcceptanceCriteriaModel.user_story_id, String)
-                    == cast(UserStoryModel.id, String),
-                )
-                .where(
-                    cast(UserStoryModel.project_id, String) == str(project_id),
-                    UserStoryModel.ticket_code.in_(codes_to_check),
-                    func.lower(AcceptanceCriteriaModel.status) == "active",
-                    AcceptanceCriteriaModel.is_locked.is_(True),
-                )
-            )
-            for ticket_code, locked_by in locked_rows.all():
-                locked_criteria_by_story.setdefault(normalize_ticket_code(ticket_code), []).append(
-                    str(locked_by or "unknown")
-                )
 
             if acceptance_criteria_targets:
                 criterion_rows = await db_session.execute(
@@ -2133,7 +2060,6 @@ async def delete_requirement_node(state: AgentState) -> WorkflowNodeOutcome:
                         UserStoryModel.ticket_code,
                         AcceptanceCriteriaModel.id,
                         AcceptanceCriteriaModel.criteria_text,
-                        AcceptanceCriteriaModel.is_locked,
                     )
                     .join(
                         AcceptanceCriteriaModel,
@@ -2146,11 +2072,11 @@ async def delete_requirement_node(state: AgentState) -> WorkflowNodeOutcome:
                         func.lower(AcceptanceCriteriaModel.status) == "active",
                     )
                 )
-                for ticket_code, criterion_id, criterion_text, is_locked in criterion_rows.all():
+                for ticket_code, criterion_id, criterion_text in criterion_rows.all():
                     criterion_rows_by_key[(
                         normalize_ticket_code(ticket_code),
                         " ".join(str(criterion_text).split()),
-                    )] = (str(criterion_id), bool(is_locked))
+                    )] = str(criterion_id)
 
         blocked: List[str] = []
         archive_requirement_codes: set[str] = set()
@@ -2162,17 +2088,14 @@ async def delete_requirement_node(state: AgentState) -> WorkflowNodeOutcome:
             story_code = normalize_ticket_code(target.get("story_code"))
             criterion_text = " ".join(str(target.get("text") or "").split())
             label = str(target.get("label") or f"{story_code} acceptance criterion")
-            story = stories_by_code.get(story_code) or {}
             parent = requirement_by_story.get(story_code) or {}
             db_criterion = criterion_rows_by_key.get((story_code, criterion_text))
-            if parent.get("is_locked") or story.get("is_locked") or (
-                db_criterion is not None and db_criterion[1]
-            ):
+            if parent.get("is_locked"):
                 blocked.append(f"{label} (locked)")
                 continue
             archive_criteria_keys.add((story_code, criterion_text))
             if db_criterion is not None:
-                archive_acceptance_criteria_ids.add(db_criterion[0])
+                archive_acceptance_criteria_ids.add(db_criterion)
 
         for req_code in sorted(target_requirement_codes):
             requirement = requirements_by_code.get(req_code)
@@ -2183,15 +2106,8 @@ async def delete_requirement_node(state: AgentState) -> WorkflowNodeOutcome:
                 for story in (requirement.get("user_stories") or [])
                 if isinstance(story, dict) and normalize_ticket_code(story.get("ticket_code"))
             }
-            locked_children = [
-                code for code in child_codes
-                if (stories_by_code.get(code) or {}).get("is_locked") or locked_criteria_by_story.get(code)
-            ]
-            if requirement.get("is_locked") or locked_children:
-                detail = f"{req_code} (locked)"
-                if locked_children:
-                    detail = f"{req_code} (contains locked items: {', '.join(sorted(locked_children))})"
-                blocked.append(detail)
+            if requirement.get("is_locked"):
+                blocked.append(f"{req_code} (locked)")
                 continue
             archive_requirement_codes.add(req_code)
             archive_story_codes.update(child_codes)
@@ -2201,7 +2117,7 @@ async def delete_requirement_node(state: AgentState) -> WorkflowNodeOutcome:
             if not story:
                 continue
             parent = requirement_by_story.get(code) or {}
-            if parent.get("is_locked") or story.get("is_locked") or locked_criteria_by_story.get(code):
+            if parent.get("is_locked"):
                 blocked.append(f"{code} (locked)")
                 continue
             archive_story_codes.add(code)

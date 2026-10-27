@@ -146,23 +146,6 @@ class RequirementStateRepository:
             all_user_stories.extend(active_stories)
             all_acceptance_criteria.extend(flat_ac)
 
-        # Fallback if no epic found in epics table but present in model.requirements
-        if not epic_name and model.requirements:
-            if isinstance(model.requirements, dict):
-                epic_name = model.requirements.get("epic_name", "")
-            elif isinstance(model.requirements, list) and len(model.requirements) > 0:
-                epic_name = model.requirements[0].get("epic_name", "")
-            if epic_name:
-                saved_epic = await EpicRepository.save_or_update_epic(str(project_id), epic_name, session, version=version_num)
-                epic_name = saved_epic["epic_name"]
-
-        if not requirements_list:
-            # Fallback: use the old flat model.user_stories if no requirements found
-            all_user_stories = model.user_stories or []
-            all_acceptance_criteria = model.acceptance_criteria or []
-            if model.requirements and isinstance(model.requirements, dict) and "epic_name" in model.requirements:
-                epic_name = model.requirements["epic_name"]
-
         # CLARIFY 4.1 — Read path of the clarification questions the UI renders: the
         #             project-state load (PROJECT 2.3.2) pulls them through the
         #             dedicated repository (4.2) and flattens them into
@@ -279,13 +262,9 @@ class RequirementStateRepository:
         if not model:
             model = RequirementStateModel(
                 project_id=project_id,
-                requirements={},
                 business_goals=updates.get("business_goals", []),
                 actors=updates.get("actors", []),
-                user_stories=[],
-                acceptance_criteria=[],
                 prd_narrative=updates.get("prd_narrative", {}),
-                clarification_questions=[],
                 validation_status=updates.get("validation_status", "pending"),
                 generated_prd="",
                 generated_diagrams="",
@@ -315,16 +294,6 @@ class RequirementStateRepository:
             if "prd_narrative" in updates and updates["prd_narrative"] is not None:
                 model.prd_narrative = updates["prd_narrative"]
 
-            # Only clear JSON blob fields that are being re-derived from relation tables.
-            # This avoids wasteful clearing and prevents data loss if re-derivation fails mid-way.
-            if "requirements" in updates and updates["requirements"] is not None:
-                model.requirements = {}
-            if "user_stories" in updates and updates["user_stories"] is not None:
-                model.user_stories = []
-            if "acceptance_criteria" in updates and updates["acceptance_criteria"] is not None:
-                model.acceptance_criteria = []
-            if "clarification_questions" in updates and updates["clarification_questions"] is not None:
-                model.clarification_questions = []
             # generated_prd / generated_diagrams are persisted verbatim — the
             # caller passes the FINAL merged document (e.g. the manual-edit
             # merge of "previous version + this edit", or the AI regeneration).
@@ -401,13 +370,7 @@ class RequirementStateRepository:
 
             # Save or update active Epic in epics table
             active_epic = await EpicRepository.get_active_by_project(str(project_id), session)
-            # AI/document merges preserve a locked epic instead of failing the
-            # whole otherwise-valid merge. Direct repository update/delete
-            # operations still reject with ArtifactLockError.
-            if active_epic and active_epic.get("is_locked"):
-                epic_rec = active_epic
-                logger.warning("[LOCK ENFORCEMENT] Preserving locked epic %s", epic_rec["id"])
-            elif epic_name_val:
+            if epic_name_val:
                 epic_rec = await EpicRepository.save_or_update_epic(str(project_id), epic_name_val, session, version=version_num)
             else:
                 epic_rec = active_epic or await EpicRepository.save_or_update_epic(str(project_id), "Untitled Epic", session, version=version_num)
@@ -537,16 +500,6 @@ class RequirementStateRepository:
                         so_that_changed = db_story.so_that != story.get("so_that", "")
                         was_archived = db_story.status != "active"
 
-                        # LOCK ENFORCEMENT: Skip modification of locked user stories
-                        if db_story.is_locked:
-                            logger.warning(
-                                f"[LOCK ENFORCEMENT] Skipping update of locked user story "
-                                f"{db_story.ticket_code} (locked_by={db_story.locked_by or 'unknown'}). "
-                                f"AI modification blocked."
-                            )
-                            touched_story_ids.append(db_story.id)
-                            continue
-
                         if rec_action == "UPDATE":
                             story_modified = True
                         elif rec_action == "NO_CHANGE":
@@ -615,19 +568,18 @@ class RequirementStateRepository:
                     for i, text_val in enumerate(incoming_ac_texts):
                         for db_ac in db_ac_list:
                             if db_ac.id not in matched_db_ac and db_ac.status == "active" and db_ac.criteria_text == text_val:
-                                if not db_ac.is_locked:
-                                    if story_content_changed:
-                                        # The criterion text was merely carried
-                                        # forward while its parent behaviour
-                                        # changed. Do not pretend it was
-                                        # validated: keep the content and flag
-                                        # it for an explicit downstream review.
-                                        if db_ac.change_type != "review_required":
-                                            db_ac.version = db_ac.version + 1
-                                        db_ac.change_type = "review_required"
-                                        db_ac.last_modified_by = "dependency_propagation"
-                                    elif db_ac.change_type != "review_required":
-                                        db_ac.change_type = "unchanged"
+                                if story_content_changed:
+                                    # The criterion text was merely carried
+                                    # forward while its parent behaviour
+                                    # changed. Do not pretend it was
+                                    # validated: keep the content and flag
+                                    # it for an explicit downstream review.
+                                    if db_ac.change_type != "review_required":
+                                        db_ac.version = db_ac.version + 1
+                                    db_ac.change_type = "review_required"
+                                    db_ac.last_modified_by = "dependency_propagation"
+                                elif db_ac.change_type != "review_required":
+                                    db_ac.change_type = "unchanged"
                                 matched_db_ac.add(db_ac.id)
                                 matched_incoming_indices.add(i)
                                 break
@@ -636,8 +588,6 @@ class RequirementStateRepository:
                         if i in matched_incoming_indices:
                             continue
                         for db_ac in db_ac_list:
-                            if db_ac.is_locked:
-                                continue
                             if db_ac.id not in matched_db_ac and db_ac.status == "archived" and db_ac.criteria_text == text_val:
                                 db_ac.status = "active"
                                 db_ac.change_type = "updated"
@@ -646,11 +596,9 @@ class RequirementStateRepository:
                                 matched_incoming_indices.add(i)
                                 break
 
-                    # Locked criteria may be read/matched but are never selected
-                    # as overwrite targets for a newly extracted/generated item.
                     unmatched_active_db_ac = [
                         ac for ac in db_ac_list
-                        if ac.id not in matched_db_ac and ac.status == "active" and not ac.is_locked
+                        if ac.id not in matched_db_ac and ac.status == "active"
                     ]
                     unmatched_incoming_indices_list = [i for i in range(len(incoming_ac_texts)) if i not in matched_incoming_indices]
 
@@ -677,12 +625,6 @@ class RequirementStateRepository:
 
                     for db_ac in db_ac_list:
                         if db_ac.id not in matched_db_ac and db_ac.status == "active":
-                            if db_ac.is_locked:
-                                logger.warning(
-                                    "[LOCK ENFORCEMENT] Preserving locked acceptance criteria %s",
-                                    db_ac.id,
-                                )
-                                continue
                             db_ac.status = "archived"
                             db_ac.change_type = "archived"
                             db_ac.version = db_ac.version + 1
@@ -692,14 +634,6 @@ class RequirementStateRepository:
                 # Archive any user stories in this requirement that are NOT in the current payload
                 for s_id, s_model in stories_by_id.items():
                     if s_id not in touched_story_ids and s_model.status == "active":
-                        # LOCK ENFORCEMENT: Never archive a locked user story
-                        if s_model.is_locked:
-                            logger.warning(
-                                f"[LOCK ENFORCEMENT] Skipping archive of locked user story "
-                                f"{s_model.ticket_code} (locked_by={s_model.locked_by or 'unknown'}). "
-                                f"AI removal blocked."
-                            )
-                            continue
                         s_model.status = "archived"
                         s_model.change_type = "archived"
                         s_model.version = s_model.version + 1
@@ -711,12 +645,6 @@ class RequirementStateRepository:
                         res_story_ac = await session.execute(stmt_story_ac)
                         story_ac_list = res_story_ac.scalars().all()
                         for db_ac in story_ac_list:
-                            if db_ac.is_locked:
-                                logger.warning(
-                                    "[LOCK ENFORCEMENT] Preserving locked acceptance criteria %s",
-                                    db_ac.id,
-                                )
-                                continue
                             db_ac.status = "archived"
                             db_ac.change_type = "archived"
                             db_ac.version = db_ac.version + 1
@@ -740,14 +668,6 @@ class RequirementStateRepository:
                     res_orphan_stories = await session.execute(stmt_orphan_stories)
                     for orphan_story in res_orphan_stories.scalars().all():
                         if orphan_story.status == "active":
-                            # LOCK ENFORCEMENT: Never archive a locked user story
-                            if orphan_story.is_locked:
-                                logger.warning(
-                                    f"[LOCK ENFORCEMENT] Skipping archive of locked user story "
-                                    f"{orphan_story.ticket_code} (locked_by={orphan_story.locked_by or 'unknown'}). "
-                                    f"AI removal blocked."
-                                )
-                                continue
                             orphan_story.status = "archived"
                             orphan_story.change_type = "archived"
                             orphan_story.version = orphan_story.version + 1
@@ -758,12 +678,6 @@ class RequirementStateRepository:
                             )
                             res_orphan_ac = await session.execute(stmt_orphan_ac)
                             for orphan_ac in res_orphan_ac.scalars().all():
-                                if orphan_ac.is_locked:
-                                    logger.warning(
-                                        "[LOCK ENFORCEMENT] Preserving locked acceptance criteria %s",
-                                        orphan_ac.id,
-                                    )
-                                    continue
                                 orphan_ac.status = "archived"
                                 orphan_ac.change_type = "archived"
                                 orphan_ac.version = orphan_ac.version + 1

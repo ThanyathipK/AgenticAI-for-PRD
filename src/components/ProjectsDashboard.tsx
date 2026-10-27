@@ -70,6 +70,18 @@ const STATUS_BADGE: Record<ProjectStatus, string> = {
 const normalizeStatus = (status: string | undefined): ProjectStatus =>
   (STATUS_OPTIONS.some((s) => s.value === status) ? (status as ProjectStatus) : 'draft');
 
+function ApprovalTime({ value }: { value: string | null | undefined }) {
+  if (!value) return null;
+  const approvedAt = new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value));
+
+  return (
+    <span className="mt-1 block text-[11px] text-on-surface-variant">Approved {approvedAt}</span>
+  );
+}
+
 // Tab pills: filter shortcuts over the same dimensions as the dropdowns.
 type TableTab = 'all' | ProjectStatus | 'flagged';
 
@@ -525,6 +537,12 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
                           <span className="font-bold text-[14px] text-on-surface block truncate" title={p.name}>
                             {p.name}
                           </span>
+                          {p.description && (
+                            <span className="mt-0.5 block truncate text-[12px] text-on-surface-variant" title={p.description}>
+                              {p.description}
+                            </span>
+                          )}
+                          <ApprovalTime value={p.last_approved_at} />
                         </td>
                         <td className="px-5 py-4 border-b border-outline">
                           <div className="relative" data-status-menu>
@@ -617,6 +635,8 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
                         </Tooltip>
                         <div className="min-w-0">
                           <span className="font-bold text-[14px] text-on-surface block break-words">{p.name}</span>
+                          {p.description && <span className="mt-0.5 block text-[12px] text-on-surface-variant break-words">{p.description}</span>}
+                          <ApprovalTime value={p.last_approved_at} />
                           <span className="text-[12px] text-on-surface-variant">
                             {formatRelativeUpdated(p.updated_at)}
                           </span>

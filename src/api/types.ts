@@ -170,10 +170,6 @@ export interface UserStoryPayload {
   version?: number;
   last_modified_by?: string | null;
   change_type?: string | null;
-  is_locked?: boolean;
-  locked_by?: string | null;
-  locked_at?: string | null;
-  lock_reason?: string | null;
 }
 
 // ----------------------------------------------------------------------------
@@ -192,7 +188,6 @@ export interface RequirementPayload {
   is_locked?: boolean;
   locked_by?: string | null;
   locked_at?: string | null;
-  lock_reason?: string | null;
   user_stories?: UserStoryPayload[];
 }
 
@@ -504,7 +499,6 @@ export interface ArtifactLockMetadata {
   is_locked: boolean;
   locked_by?: string | null;
   locked_at?: string | null;
-  lock_reason?: string | null;
 }
 
 export interface ArtifactLockResponse {
@@ -745,7 +739,6 @@ export interface TraceabilityStory {
   so_that?: string | null;
   acceptance_criteria: string[];
   criteria_needing_review: string[];
-  is_locked: boolean;
 }
 
 export interface TraceabilityRow {

@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.lock_service import LockService
 from app.models import AcceptanceCriteriaModel, RequirementModel, UserStoryModel
 from app.repositories.base import as_uuid, serialize_acceptance_criteria
 
@@ -24,17 +23,6 @@ class AcceptanceCriteriaRepository:
         story_id = data.get("user_story_id")
         if story_id and isinstance(story_id, str):
             story_id = uuid.UUID(story_id)
-        # LOCK ENFORCEMENT: Cannot add acceptance criteria to a locked user story
-        if story_id:
-            stmt_story = select(UserStoryModel).where(UserStoryModel.id == story_id)
-            res_story = await session.execute(stmt_story)
-            story = res_story.scalar_one_or_none()
-            if story:
-                LockService.raise_if_locked_model(
-                    "user_story",
-                    story,
-                    message=f"User Story {story.ticket_code} is locked by {story.locked_by or 'unknown'}. Unlock it before adding acceptance criteria."
-                )
         ac = AcceptanceCriteriaModel(
             user_story_id=story_id,
             criteria_text=data.get("criteria_text", ""),
@@ -138,12 +126,6 @@ class AcceptanceCriteriaRepository:
         result = await session.execute(stmt)
         ac = result.scalar_one_or_none()
         if ac:
-            # LOCK ENFORCEMENT: Cannot update a locked acceptance criteria
-            LockService.raise_if_locked_model(
-                "acceptance_criteria",
-                ac,
-                message=f"Acceptance Criteria is locked by {ac.locked_by or 'unknown'}. Unlock it before modifying."
-            )
             criteria_changed = "criteria_text" in updates and ac.criteria_text != updates["criteria_text"]
             if "criteria_text" in updates:
                 ac.criteria_text = updates["criteria_text"]
@@ -184,12 +166,6 @@ class AcceptanceCriteriaRepository:
         result = await session.execute(stmt)
         ac = result.scalar_one_or_none()
         if ac:
-            # LOCK ENFORCEMENT: Cannot delete a locked acceptance criteria
-            LockService.raise_if_locked_model(
-                "acceptance_criteria",
-                ac,
-                message=f"Acceptance Criteria is locked by {ac.locked_by or 'unknown'}. Unlock it before deleting."
-            )
             await session.delete(ac)
             await session.flush()
             return True

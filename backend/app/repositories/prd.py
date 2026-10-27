@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.lock_service import LockService
 from app.models import PRDDocumentModel, PRDVersionModel
 from app.repositories.base import as_uuid, serialize_prd_document, serialize_prd_version
 
@@ -96,12 +95,6 @@ class PRDDocumentRepository:
         result = await session.execute(stmt)
         prd = result.scalar_one_or_none()
         if prd:
-            # LOCK ENFORCEMENT: Cannot update a locked PRD document
-            LockService.raise_if_locked_model(
-                "prd_document",
-                prd,
-                message=f"PRD Document is locked by {prd.locked_by or 'unknown'}. Unlock it before modifying."
-            )
             if "version" in updates:
                 prd.version = updates["version"]
             if "prd_markdown" in updates:
@@ -121,12 +114,6 @@ class PRDDocumentRepository:
         result = await session.execute(stmt)
         prd = result.scalar_one_or_none()
         if prd:
-            # LOCK ENFORCEMENT: Cannot delete a locked PRD document
-            LockService.raise_if_locked_model(
-                "prd_document",
-                prd,
-                message=f"PRD Document is locked by {prd.locked_by or 'unknown'}. Unlock it before deleting."
-            )
             await session.delete(prd)
             await session.flush()
             return True
