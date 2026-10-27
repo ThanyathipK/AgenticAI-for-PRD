@@ -18,7 +18,6 @@ from app.routes import auth, chat, projects, requirements, lock, events, documen
 from app.routes import prd_sections
 from app.routes import traceability
 from app.routes import operational
-from app.routes import banking_knowledge
 from app.routes import generation_jobs
 from app.llm_client import check_lm_studio_health
 
@@ -143,10 +142,6 @@ openapi_tags = [
     {
         "name": "Operational Governance",
         "description": "Project health, audit history, dependency graphs, and scoped regeneration.",
-    },
-    {
-        "name": "Banking Knowledge",
-        "description": "Reusable approved banking guidance and relevance retrieval for audits.",
     },
 ]
 
@@ -275,7 +270,6 @@ app.include_router(prd_sections.router, tags=["PRD Sections"])
 # <-> PRD sections <-> diagrams)
 app.include_router(traceability.router, tags=["Traceability"])
 app.include_router(operational.router, tags=["Operational Governance"])
-app.include_router(banking_knowledge.router, tags=["Banking Knowledge"])
 app.include_router(generation_jobs.router, tags=["Background Generation Jobs"])
 
 

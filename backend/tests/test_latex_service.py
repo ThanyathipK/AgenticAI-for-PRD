@@ -22,6 +22,7 @@ Run from the ``backend`` directory::
 import io
 import re
 import zipfile
+from datetime import datetime
 
 import pytest
 import pytest_asyncio
@@ -46,6 +47,13 @@ from app.latex_service import (
 from app.prompt_loader import load_prd_latex_template, load_prd_template
 from app.prd_filler import fill_template_body
 from app.main import app as fastapi_app
+
+
+def test_export_timestamp_includes_unambiguous_meridiem():
+    from app.routes.projects import _timestamp_stamp
+
+    assert _timestamp_stamp(datetime(2026, 10, 27, 0, 5)) == "2026-10-27_1205_AM"
+    assert _timestamp_stamp(datetime(2026, 10, 27, 14, 30)) == "2026-10-27_0230_PM"
 
 
 # =====================================================================
@@ -866,9 +874,9 @@ class TestExportEndpoints:
         assert resp.headers["content-type"].startswith("application/pdf")
         assert resp.content.startswith(b"%PDF")
         # Download-name contract consumed by the frontend blob saver:
-        # PRD_<project>_V<version>_<YYYY-MM-DD>_<HHMM>.pdf (date/time is dynamic).
+        # PRD_<project>_V<version>_<YYYY-MM-DD>_<HHMM>_<AM/PM>.pdf.
         match = re.fullmatch(
-            r'attachment; filename="PRD_Export_Test_Project_V2_\d{4}-\d{2}-\d{2}_\d{4}\.pdf"',
+            r'attachment; filename="PRD_Export_Test_Project_V2_\d{4}-\d{2}-\d{2}_\d{4}_(?:AM|PM)\.pdf"',
             resp.headers["content-disposition"],
         )
         assert match, resp.headers["content-disposition"]
@@ -901,7 +909,7 @@ class TestExportEndpoints:
         assert resp.status_code == 200
         assert resp.headers["x-prd-semver"] == "2.3.1"
         assert re.fullmatch(
-            r'attachment; filename="PRD_Export_Test_Project_V2\.3\.1_\d{4}-\d{2}-\d{2}_\d{4}\.pdf"',
+            r'attachment; filename="PRD_Export_Test_Project_V2\.3\.1_\d{4}-\d{2}-\d{2}_\d{4}_(?:AM|PM)\.pdf"',
             resp.headers["content-disposition"],
         )
 

@@ -48,7 +48,6 @@ import type {
   DependencyGraphPayload,
   RegenerationPlanPayload,
   RegenerationResultPayload,
-  BankingKnowledgeDocumentPayload,
   GenerationJobPayload,
 } from './types';
 
@@ -503,30 +502,6 @@ export const api = {
       changed_artifacts: changedArtifacts,
       confirm: true,
     }),
-
-  // ---- Reusable banking knowledge -----------------------------------------
-  listBankingKnowledge: () =>
-    get<BankingKnowledgeDocumentPayload[]>('/api/banking-knowledge'),
-  getBankingKnowledge: (documentId: string) =>
-    get<BankingKnowledgeDocumentPayload>(`/api/banking-knowledge/${documentId}`),
-  uploadBankingKnowledge: (
-    file: File,
-    metadata: { title: string; document_type: string; jurisdiction: string; tags: string },
-  ) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('title', metadata.title);
-    formData.append('document_type', metadata.document_type);
-    formData.append('jurisdiction', metadata.jurisdiction);
-    formData.append('tags', metadata.tags);
-    return postFormData<BankingKnowledgeDocumentPayload>('/api/banking-knowledge/upload', formData);
-  },
-  clearBankingKnowledge: () =>
-    del<{ status: string; deleted: number }>('/api/banking-knowledge'),
-  approveBankingKnowledge: (documentId: string) =>
-    post<BankingKnowledgeDocumentPayload>(`/api/banking-knowledge/${documentId}/approve`),
-  retireBankingKnowledge: (documentId: string) =>
-    post<BankingKnowledgeDocumentPayload>(`/api/banking-knowledge/${documentId}/retire`),
 
   // ---- Health --------------------------------------------------------------
   // CHAT 6.3 — Readiness probe (GET /api/health → routes/chat.py get_health_status

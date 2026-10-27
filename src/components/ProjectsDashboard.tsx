@@ -25,7 +25,6 @@ import {
   ChevronRight,
   History,
   LayoutGrid,
-  BookOpenCheck,
   RotateCcw,
   Search,
   Star,
@@ -39,7 +38,6 @@ import { Tooltip } from './Tooltip';
 import { handleError } from './Toast';
 import { formatPrdVersionLabel } from '../utils/version';
 import { formatRelativeUpdated } from '../utils/time';
-import { BankingKnowledgeModal } from './BankingKnowledgeModal';
 
 // ----------------------------------------------------------------------------
 // Status metadata (kept in one place so tabs, dropdowns, and badges agree)
@@ -277,8 +275,6 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
   const [sortKey, setSortKey] = useState<SortKey>('updated');
   const [activeTab, setDashboardTab] = useState<TableTab>('all');
 
-  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
-
   // ---- KPI cards -------------------------------------------------------------
   const kpis = useMemo(() => {
     const inReview = projects.filter((p) => {
@@ -443,13 +439,6 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
                 { value: 'name' as const, label: 'Sort by: Name' },
               ]}
             />
-            <button
-              type="button"
-              onClick={() => setKnowledgeOpen(true)}
-              className="inline-flex h-11 items-center gap-2 rounded-[10px] border border-outline bg-surface px-3.5 text-xs font-semibold text-on-surface hover:bg-black/[0.03]"
-            >
-              <BookOpenCheck className="h-4 w-4 text-primary" /> Banking Knowledge
-            </button>
           </div>
 
           {/* KPI METRICS GRID */}
@@ -880,7 +869,6 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
           </div>
         </div>
       )}
-      <BankingKnowledgeModal open={knowledgeOpen} onClose={() => setKnowledgeOpen(false)} />
     </section>
   );
 }

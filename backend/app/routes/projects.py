@@ -955,9 +955,9 @@ class LatexExportPayload(BaseModel):
 
 
 def _timestamp_stamp(now: Optional[datetime] = None) -> str:
-    """``YYYY-MM-DD_HHMM`` wall-clock stamp used in exported PRD filenames."""
+    """``YYYY-MM-DD_HHMM_AM/PM`` wall-clock stamp used in PRD filenames."""
     now = now or datetime.now()
-    return now.strftime("%Y-%m-%d_%H%M")
+    return now.strftime("%Y-%m-%d_%I%M_%p")
 
 
 def _safe_filename_stem(
@@ -966,7 +966,7 @@ def _safe_filename_stem(
     now: Optional[datetime] = None,
     semver: Optional[str] = None,
 ) -> str:
-    """``PRD_<project>_V<version>_<YYYY-MM-DD>_<HHMM>`` default download name.
+    """``PRD_<project>_V<version>_<YYYY-MM-DD>_<HHMM>_<AM/PM>`` download name.
 
     Underscore-separated so the browser/default OS download name matches the
     shared ``PRD_projectname_version_date_time`` convention on both PDF and

@@ -288,8 +288,12 @@ class GenerationJobModel(Base):
     )
 
 
+# Legacy compatibility mappings only. The former cross-project Banking
+# Knowledge feature has no routes, UI, or retrieval path. Keeping these models
+# in metadata prevents a future Alembic autogeneration from proposing an
+# accidental destructive drop of installations that still contain old data.
 class BankingKnowledgeDocumentModel(Base):
-    """Reusable, owner-scoped banking guidance or compliance source."""
+    """Inactive legacy banking-knowledge document row."""
     __tablename__ = "banking_knowledge_documents"
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
@@ -316,7 +320,7 @@ class BankingKnowledgeDocumentModel(Base):
 
 
 class BankingKnowledgeChunkModel(Base):
-    """Searchable chunk belonging to a reusable banking document."""
+    """Inactive legacy banking-knowledge chunk row."""
     __tablename__ = "banking_knowledge_chunks"
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
@@ -335,7 +339,7 @@ class BankingKnowledgeChunkModel(Base):
 
 
 class BankingKnowledgeRetrievalModel(Base):
-    """Audit trail of banking knowledge retrieved for one project audit."""
+    """Inactive legacy retrieval audit row retained for data compatibility."""
     __tablename__ = "banking_knowledge_retrievals"
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4)

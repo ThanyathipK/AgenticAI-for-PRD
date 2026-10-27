@@ -42,12 +42,7 @@ def prepare_audit_documents(documents: list[dict[str, Any]]) -> list[dict[str, A
         prepared.append(
             {
                 **document,
-                "source_type": document.get("source_type")
-                or (
-                    "Knowledge base"
-                    if str(document.get("document_id", "")).startswith("banking:")
-                    else "Project file"
-                ),
+                "source_type": document.get("source_type") or "Project file",
                 "content_markdown": "\n".join(safe_lines),
                 "prompt_injection_redacted": suspicious,
             }

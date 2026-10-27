@@ -25,7 +25,7 @@ Agentic AI turns plain-English banking product briefs into **audited, versioned,
 - **Local-first inference** — OpenAI-compatible calls to `http://localhost:1234/v1`; no API keys, no cloud dependency
 - **Versioned banking compliance audit** — the Auditor evaluates a structured 12-rule checklist with stable rule IDs, evidence-aware applicability, actionable recommendations, and the exact checklist version persisted with every result; if a full model pass fails, it retries bounded checklist subsets and never treats unevaluated categories as passed
 - **Automated PRD + system flow diagrams** — the Architect synthesizes a full Product Requirements Document and an interactive project flowchart
-- **Document knowledge base & extraction** — upload DOCX / PDF / Markdown / TXT briefs (≤ `MAX_UPLOAD_MB`); they are converted to canonical markdown, then an explicit, user-triggered extraction strips embedded image bytes from the model input, feeds the text through the Gatherer (one pass, or token-bounded overlapping chunks), and preserves explicitly headed PRD narrative such as scope, metrics, risks, and technical constraints. The result is **one staged pending action** — nothing is written until you confirm. Progress streams over SSE (`chunk X/N`), and the shared Stop control cancels the active extraction without retaining partial results
+- **Document knowledge base & extraction** — upload DOCX / PDF / Markdown / TXT briefs (≤ `MAX_UPLOAD_MB`); they are converted to canonical markdown. General Chat retrieves only relevant, project-scoped chunks under a dedicated token budget and cites the source filename and section. Explicit, user-triggered extraction separately strips embedded image bytes from the model input, feeds the text through the Gatherer (one pass, or token-bounded overlapping chunks), and preserves explicitly headed PRD narrative such as scope, metrics, risks, and technical constraints. The result is **one staged pending action** — nothing is written until you confirm. Progress streams over SSE (`chunk X/N`), and the shared Stop control cancels the active extraction without retaining partial results
 - **Server-side PRD export** — the generated LaTeX PRD (`template-krungsrinimble.tex`) downloads as **DOCX** through the native `python-docx` renderer; PDF uses headless LibreOffice over that DOCX when available, with a Tectonic LaTeX fallback
 - **Clean repeatable PRD rendering** — export strips previously generated outline/FR/AC numbering before applying the template, omits empty sentence fragments, and renders missing optional content as blank cells instead of leaking `TBD` placeholders
 - **Version snapshot ledger** — every generated or manually edited PRD is an immutable snapshot (internal integer `version` + display `semver`); the first AI generation is recorded immediately as `1.0.0`, every version—including the first—has line-level details, and restores are append-only
@@ -45,7 +45,6 @@ Agentic AI turns plain-English banking product briefs into **audited, versioned,
 - **Semantic memory for the standalone chat API** — project-bound calls to `POST /api/chat` distil durable facts/decisions, embed them through `LM_STUDIO_EMBEDDING_MODEL`, and recall the top-k by blended cosine relevance + recency decay. This path is fail-open. The current SPA composer uses `/api/process-requirements`, so it does not yet consume this memory layer
 - **Requirement Traceability Matrix** — derived, read-only view linking Requirements ↔ User Stories ↔ Acceptance Criteria ↔ PRD sections ↔ diagrams, with a project-wide coverage/gap report
 - **Dependency-aware partial regeneration** — a persisted artifact graph links requirements → stories → criteria → PRD sections/diagrams; the Traceability tab previews the transitive blast radius and regenerates only affected, unlocked AI-owned targets while recording each scoped run
-- **Reusable Banking RAG** — each user has one shared guidance file reused across all of their projects. Uploading another file replaces the previous source and its chunks; the source remains draft until approved, can be cleared explicitly, and only relevant approved chunks are supplied to audits (with lexical fallback and an immutable retrieval trail)
 - **Impact analysis before you confirm** — `GET /api/pending-actions/{action_id}/impact` predicts what a staged change touches (stories, PRD sections, diagrams) so reviewers see *what changes* and *what is affected*, including `DANGLING` references to non-existent `REQ-`/`US-` codes
 - **Part-level PRD editing & versioning** — a PRD is stored as nine independently editable, lockable, versioned parts (`prd_sections` / `prd_section_versions`); human-owned sections (`ai_generatable=false`) and locked parts survive every AI regeneration untouched, and per-part reverts append a new version instead of rewriting history
 - **Consistent responsive navigation** — the project sidebar uses the same expanded/collapsed control on desktop and narrow layouts instead of switching to a separate mobile overlay drawer
@@ -188,7 +187,6 @@ agenticdia/
 │       ├── impact_service.py   # Downstream impact prediction for pending actions
 │       ├── project_health_service.py / audit_history_service.py # Health, audit history, waivers
 │       ├── dependency_graph_service.py / generation_job_service.py # Scoped/background regeneration
-│       ├── banking_knowledge_service.py # Shared approved guidance retrieval
 │       ├── review_service.py    # Review-transition primitives + automatic reopen support
 │       ├── document_processor.py # Upload → markdown routing + extraction chunk planning
 │       ├── prd_filler.py       # LaTeX template filling for PRD export
@@ -204,7 +202,7 @@ agenticdia/
 │       │                       # + template-krungsrinimble.tex (PRD template)
 │       └── routes/             # auth.py chat.py projects.py requirements.py documents.py
 │                               # lock.py events.py prd_sections.py traceability.py
-│                               # operational.py banking_knowledge.py generation_jobs.py
+│                               # operational.py generation_jobs.py
 ├── test-data/                  # Sample Markdown/TXT briefs for extraction checks
 └── venv/                       # Local Python virtual environment
 ```
@@ -431,9 +429,9 @@ All backend configuration lives in `backend/.env`. Unlisted keys such as `GEMINI
 | `MEMORY_RELEVANCE_WEIGHT` / `MEMORY_RECENCY_HALF_LIFE_DAYS` | `0.7` / `30.0` | Recall score = `weight · cosine + (1 − weight) · 0.5^(age_days / half_life)` |
 | `MEMORY_DEDUPE_SIMILARITY` | `0.92` | Cosine threshold above which a new fact refreshes the existing memory instead of inserting a near-duplicate |
 | `MEMORY_MAX_FACTS_PER_TURN` | `8` | Ceiling on facts stored from a single turn |
-| `BANKING_RAG_CHUNK_TOKENS` / `BANKING_RAG_CHUNK_OVERLAP` | `700` / `100` | Chunk size and overlap used when indexing reusable banking documents |
-| `BANKING_RAG_TOP_K` | `6` | Maximum approved banking-knowledge chunks retrieved for one audit |
-| `BANKING_RAG_MAX_CONTEXT_TOKENS` | `3500` | Hard token ceiling for reusable banking evidence added to one audit |
+| `PROJECT_RAG_CHUNK_TOKENS` / `PROJECT_RAG_CHUNK_OVERLAP` | `700` / `100` | Chunk size and overlap used when General Chat searches the current project's documents |
+| `PROJECT_RAG_TOP_K` | `5` | Maximum relevant project-document chunks supplied to one General Chat answer |
+| `PROJECT_RAG_MAX_CONTEXT_TOKENS` | `2500` | Hard token ceiling for project knowledge added to one General Chat answer |
 | `DEBUG` | `false` | Enables SQLAlchemy SQL echo. It also enables uvicorn reload only when starting with `python -m app.main`; the documented `npm run dev` command invokes uvicorn directly without `--reload` |
 | `APP_NAME` | `Enterprise Requirements Architecture Core` | Display name used in health/docs |
 
@@ -658,23 +656,12 @@ The backend is a FastAPI app; full interactive documentation (with request/respo
 | `POST` | `/api/projects/{project_id}/waivers` | Create a time-bounded waiver for a checklist rule or requirement target |
 | `POST` | `/api/projects/{project_id}/waivers/{waiver_id}/revoke` | Revoke an active waiver with a reason |
 
-### Reusable Banking Knowledge
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/banking-knowledge` | Read the signed-in owner's current shared banking-knowledge file (returned as a list for API compatibility) |
-| `POST` | `/api/banking-knowledge/upload` | Upload PDF, DOCX, Markdown, or text as the owner's single shared draft source; a successful upload replaces the previous file and indexed chunks |
-| `DELETE` | `/api/banking-knowledge` | Clear the owner's shared knowledge file and its indexed chunks |
-| `GET` | `/api/banking-knowledge/{document_id}` | Read one owner-scoped knowledge document |
-| `POST` | `/api/banking-knowledge/{document_id}/approve` | Approve a source so Banking RAG can retrieve it during audits |
-| `POST` | `/api/banking-knowledge/{document_id}/retire` | Retire a source from future retrieval without deleting its audit history |
-
 ### PRD & Versioning
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/prd/export/{project_id}` | Generate and persist a new immutable PRD version (LaTeX, following `template-krungsrinimble.tex`) |
-| `POST` | `/api/project/{project_id}/export/pdf` | Export the latest stored PRD as PDF. The server-provided filename uses the authoritative ledger SemVer (`PRD_<project>_V<semver>_<date>_<time>.pdf`) |
+| `POST` | `/api/project/{project_id}/export/pdf` | Export the latest stored PRD as PDF. The server-provided filename uses the authoritative ledger SemVer (`PRD_<project>_V<semver>_<date>_<HHMM>_<AM/PM>.pdf`) |
 | `POST` | `/api/project/{project_id}/export/docx` | Export the latest stored PRD as DOCX with the same SemVer filename contract |
 | `POST` | `/api/prd/convert` | Convert LaTeX PRD source → markdown preview (`{latex_source}`) |
 | `GET` | `/api/prd/template` | Authoritative PRD templates (`template_latex` + markdown preview skeleton) |
@@ -819,8 +806,6 @@ are allowlisted.
 | `pending_actions` | Human-in-the-loop staged changes (created by migrations) |
 | `conversation_messages` | Persistent chat history per project |
 | `uploaded_documents` | Project knowledge base: uploaded DOCX/PDF/MD/TXT briefs + their converted canonical markdown (created by migrations) |
-| `banking_knowledge_documents` / `banking_knowledge_chunks` | Owner-scoped singleton shared guidance source and its locally embedded/searchable chunks |
-| `banking_knowledge_retrievals` | Immutable record of the shared-knowledge chunks retrieved for each project audit |
 | `artifact_event_logs` | **Append-only** audit trail of `CREATE / UPDATE / DELETE / ARCHIVE / LOCK / UNLOCK` |
 
 > **Supabase note:** the engine targets the transaction pooler (port `6543`), uses minimal SQLAlchemy pooling, `pool_pre_ping`, and disables the statement cache for PgBouncer compatibility. On SQLite fallback, the GUID type degrades to `CHAR(36)`.

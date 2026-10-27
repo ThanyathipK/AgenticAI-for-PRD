@@ -864,26 +864,6 @@ export interface GenerationJobPayload<T = unknown> {
   cancelled?: boolean;
 }
 
-export interface BankingKnowledgeDocumentPayload {
-  id: string;
-  title: string;
-  original_filename: string;
-  original_format: string;
-  mime_type?: string | null;
-  document_type: string;
-  jurisdiction: string;
-  tags: string[];
-  version: number;
-  status: "draft" | "approved" | "retired" | string;
-  approved_by?: string | null;
-  approved_at?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-  content_markdown?: string;
-  chunk_count?: number;
-  embedding_status?: "ready" | "lexical_only";
-}
-
 // ----------------------------------------------------------------------------
 // Authentication (backend/app/routes/auth.py)
 // ----------------------------------------------------------------------------

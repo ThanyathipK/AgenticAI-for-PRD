@@ -2994,10 +2994,7 @@ async def auditor_node(state: AgentState) -> WorkflowNodeOutcome:
             refs = q.get("source_references") or []
             if refs:
                 ref = refs[0]
-                source_type = ref.get("source_type") or (
-                    "Knowledge base" if str(ref.get("document_id", "")).startswith("banking:")
-                    else "Project file"
-                )
+                source_type = ref.get("source_type") or "Project file"
                 q["provenance"] = {
                     "type": source_type,
                     "document": ref.get("document_name"),

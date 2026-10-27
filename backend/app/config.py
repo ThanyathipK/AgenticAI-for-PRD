@@ -289,12 +289,12 @@ class Settings(BaseSettings):
     # Cap on facts extracted from a single chat turn (token-budget hygiene).
     MEMORY_MAX_FACTS_PER_TURN: int = 8
 
-    # Reusable banking knowledge retrieval. Embeddings use the same local model
-    # as semantic memory; lexical scoring remains available while it is offline.
-    BANKING_RAG_CHUNK_TOKENS: int = 700
-    BANKING_RAG_CHUNK_OVERLAP: int = 100
-    BANKING_RAG_TOP_K: int = 6
-    BANKING_RAG_MAX_CONTEXT_TOKENS: int = 3500
+    # Project-document retrieval for the read-only General Chat branch. Source
+    # documents stay immutable; only the most relevant chunks enter a prompt.
+    PROJECT_RAG_CHUNK_TOKENS: int = 700
+    PROJECT_RAG_CHUNK_OVERLAP: int = 100
+    PROJECT_RAG_TOP_K: int = 5
+    PROJECT_RAG_MAX_CONTEXT_TOKENS: int = 2500
 
     # SSE pub/sub reliability (see app/event_manager.py).
 

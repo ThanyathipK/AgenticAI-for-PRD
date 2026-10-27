@@ -1175,6 +1175,21 @@ async def _process_requirements_pipeline(
                 ) from db_err
 
         # Generate response with full project context
+        knowledge_chunks = []
+        try:
+            from app.project_knowledge_service import retrieve_project_knowledge
+
+            knowledge_chunks = await retrieve_project_knowledge(
+                str(request.project_id), request.raw_input or "", session,
+            )
+        except Exception as retrieval_err:
+            # Knowledge retrieval enriches chat but must not make ordinary chat
+            # unavailable. Authorization already scoped the project before this
+            # branch; any storage/tokenization failure falls back to prior behavior.
+            logger.warning(
+                "[GENERAL_CHAT] Project knowledge retrieval unavailable; continuing without it: %s",
+                retrieval_err,
+            )
         try:
             # CHAT 2.3.2 — LLM generation (service layer, CHAT 2.3.2 in
             #             app/semantic_service.py): project context + history →
@@ -1182,7 +1197,8 @@ async def _process_requirements_pipeline(
             response_text = await generate_general_chat_response(
                 raw_input=request.raw_input or "",
                 project_context=req_state or {},
-                conversation_history=conv_history
+                conversation_history=conv_history,
+                knowledge_chunks=knowledge_chunks,
             )
         except Exception as llm_err:
             # Intentional graceful degradation: when the LLM call fails we log the
@@ -1235,6 +1251,15 @@ async def _process_requirements_pipeline(
             "status": "general_chat",
             "detected_intent": "GENERAL_CHAT",
             "message": response_text,
+            "knowledge_sources": [
+                {
+                    "document_id": chunk.get("document_id"),
+                    "filename": chunk.get("filename"),
+                    "section": chunk.get("section"),
+                    "retrieval_score": chunk.get("retrieval_score"),
+                }
+                for chunk in knowledge_chunks
+            ],
             "structured_requirements": {
                 "epic_name": req_state.get("epic_name") or (
                     req_state.get("requirements", [])[0].get("title", "")
@@ -1410,32 +1435,6 @@ async def _process_requirements_pipeline(
     knowledge_documents = []
     if request.target_agent == "auditor":
         knowledge_documents = await DocumentRepository.get_validation_context(request.project_id, session)
-        try:
-            from app.banking_knowledge_service import build_audit_retrieval_query, retrieve_banking_knowledge
-
-            banking_context = await retrieve_banking_knowledge(
-                current_user.id,
-                str(request.project_id),
-                build_audit_retrieval_query(req_state or {}),
-                session,
-            )
-            knowledge_documents.extend(banking_context)
-            logger.info(
-                "[BANKING RAG] Retrieved %d approved knowledge chunk(s) for project %s",
-                len(banking_context), request.project_id,
-            )
-        except Exception as rag_err:
-            # Project documents still provide the established audit evidence
-            # path if the reusable corpus or embedding service is unavailable.
-            logger.warning("[BANKING RAG] Retrieval unavailable; continuing without it: %s", rag_err)
-            log_event(
-                logger,
-                logging.WARNING,
-                "optional_feature.failed_open",
-                log_context,
-                feature="banking_rag",
-                error_type=type(rag_err).__name__,
-            )
 
     initial_state = {
         "project_id": request.project_id,
