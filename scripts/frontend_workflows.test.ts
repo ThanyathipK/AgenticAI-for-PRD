@@ -92,11 +92,20 @@ test("version diff creates readable paired rows with line positions and gaps", (
   ]);
   assert.deepEqual(rows, [
     { kind: "context", before: "# Scope", oldLine: 1, newLine: 1 },
-    { kind: "pair", before: "| **Status** | Draft<br>Review |", after: "| **Status** | Approved<br>Ready |", oldLine: 2, newLine: 2 },
+    {
+      kind: "pair",
+      before: "| **Status** | Draft<br>Review |",
+      after: "| **Status** | Approved<br>Ready |",
+      oldLine: 2,
+      newLine: 2,
+    },
     { kind: "skip", skipped: 4 },
     { kind: "context", before: "End", oldLine: 7, newLine: 7 },
   ]);
-  assert.equal(readableDiffLine("| **Status** | Draft<br>Review |"), "Status  |  Draft · Review");
+  assert.equal(
+    readableDiffLine("| **Status** | Draft<br>Review |"),
+    "Status  |  Draft · Review",
+  );
 });
 
 test("unfinished LLM generation shows only a compact PRD failure message", () => {
@@ -148,16 +157,37 @@ test("structured section editor separates headings, fields, lists, and narrative
   ]);
 
   assert.deepEqual(
-    blocks.map(({ kind, label, value, prefix }) => ({ kind, label, value, prefix })),
+    blocks.map(({ kind, label, value, prefix }) => ({
+      kind,
+      label,
+      value,
+      prefix,
+    })),
     [
       { kind: "heading", label: "Delivery plan", value: "", prefix: undefined },
-      { kind: "field", label: "Owner", value: "Product team", prefix: "**Owner:** " },
-      { kind: "list-item", label: "Item 1", value: "Pilot launch", prefix: "- " },
-      { kind: "list-item", label: "Item 2", value: "General release", prefix: "2. " },
+      {
+        kind: "field",
+        label: "Owner",
+        value: "Product team",
+        prefix: "**Owner:** ",
+      },
+      {
+        kind: "list-item",
+        label: "Item 1",
+        value: "Pilot launch",
+        prefix: "- ",
+      },
+      {
+        kind: "list-item",
+        label: "Item 2",
+        value: "General release",
+        prefix: "2. ",
+      },
       {
         kind: "paragraph",
         label: "Paragraph 1",
-        value: "Customers migrate in controlled waves.\nSupport remains available during rollout.",
+        value:
+          "Customers migrate in controlled waves.\nSupport remains available during rollout.",
         prefix: undefined,
       },
     ],
@@ -197,22 +227,65 @@ test("structured section editor exposes official-template lead fields without ex
 
 test("all nine PRD sections render structured edit layouts", () => {
   const fixtures: Array<[string, string, string]> = [
-    ["title", "<div class=\"flushright\">\n\nNimble by Krungsri\n\n</div>\n\n**KRUNGSRI NIMBLE**\\\n**Product Requirement Document**\\\n\n|                  |             |\n|:-----------------|:------------|\n| **PMO No:**      | PMO-28      |\n| **PMO Name:**    | Mobile Banking |", "Mobile Banking"],
-    ["stakeholders", "### Stakeholders\n| | |\n|:---|:---|\n| **Role** | **Name** |\n| Product Owner | Nina |", "Nina"],
-    ["version_history", "### Version History\n| | | | |\n|:---|:---|:---|:---|\n| **Version** | **Date** | **Author** | **Description** |\n|V1.0|2026-10-28|Nina|Initial|", "Initial"],
-    ["reviews", "### Reviews\n| | | | |\n|:---|:---|:---|:---|\n| **Role** | **Name** | **Signature** | **Date** |\n|Product Owner|Nina|Approved|2026-10-28|", "Approved"],
-    ["contents", "### Contents\n1. Business Overview\n2. Product Scope", "Business Overview"],
-    ["business_overview", "### 1. Business & Strategic Overview\n|Topic|Details|\n|---|---|\n|Introduction &<br>Executive Summary|Summary|\n|Problem Statement|Problem|", "Summary"],
-    ["product_scope", "### 2. Product Scope & Functional Requirements\n| | | | |\n|---|---|---|---|\n|Mapping & Functional Requirements|Epic Name: Payments|||\n||**User Story**|**Functional Requirement**|**Acceptance Criteria**|\n||Send money|Transfer funds|Given balance|", "Payments"],
-    ["tech_ops", "### 3. Technical & Operational Considerations\n|Consideration|Details|\n|---|---|\n|Non-Functional<br>Requirements|Availability|\n|Expected<br>TPS/Customer<br>volume|100 TPS|", "100 TPS"],
-    ["appendix", "### 4. Appendix\n|Appendix Item|Details|Reference|\n|---|---|---|\n|Open<br>Questions &<br>Risks|Fraud risk||\n|Glossary|**Term**|**Definition**|\n||OTP|One-time password|", "One-time password"],
+    [
+      "title",
+      '<div class="flushright">\n\nNimble by Krungsri\n\n</div>\n\n**KRUNGSRI NIMBLE**\\\n**Product Requirement Document**\\\n\n|                  |             |\n|:-----------------|:------------|\n| **PMO No:**      | PMO-28      |\n| **PMO Name:**    | Mobile Banking |',
+      "Mobile Banking",
+    ],
+    [
+      "stakeholders",
+      "### Stakeholders\n| | |\n|:---|:---|\n| **Role** | **Name** |\n| Product Owner | Nina |",
+      "Nina",
+    ],
+    [
+      "version_history",
+      "### Version History\n| | | | |\n|:---|:---|:---|:---|\n| **Version** | **Date** | **Author** | **Description** |\n|V1.0|2026-10-28|Nina|Initial|",
+      "Initial",
+    ],
+    [
+      "reviews",
+      "### Reviews\n| | | | |\n|:---|:---|:---|:---|\n| **Role** | **Name** | **Signature** | **Date** |\n|Product Owner|Nina|Approved|2026-10-28|",
+      "Approved",
+    ],
+    [
+      "contents",
+      "### Contents\n1. Business Overview\n2. Product Scope",
+      "Business Overview",
+    ],
+    [
+      "business_overview",
+      "### 1. Business & Strategic Overview\n|Topic|Details|\n|---|---|\n|Introduction &<br>Executive Summary|Summary|\n|Problem Statement|Problem|",
+      "Summary",
+    ],
+    [
+      "product_scope",
+      "### 2. Product Scope & Functional Requirements\n| | | | |\n|---|---|---|---|\n|Mapping & Functional Requirements|Epic Name: Payments|||\n||**User Story**|**Functional Requirement**|**Acceptance Criteria**|\n||Send money|Transfer funds|Given balance|",
+      "Payments",
+    ],
+    [
+      "tech_ops",
+      "### 3. Technical & Operational Considerations\n|Consideration|Details|\n|---|---|\n|Non-Functional<br>Requirements|Availability|\n|Expected<br>TPS/Customer<br>volume|100 TPS|",
+      "100 TPS",
+    ],
+    [
+      "appendix",
+      "### 4. Appendix\n|Appendix Item|Details|Reference|\n|---|---|---|\n|Open<br>Questions &<br>Risks|Fraud risk||\n|Glossary|**Term**|**Definition**|\n||OTP|One-time password|",
+      "One-time password",
+    ],
   ];
 
   for (const [sectionId, value, expected] of fixtures) {
     const markup = renderToStaticMarkup(
-      React.createElement(StructuredSectionEditor, { value, sectionId, onChange: () => {} }),
+      React.createElement(StructuredSectionEditor, {
+        value,
+        sectionId,
+        onChange: () => {},
+      }),
     );
-    assert.match(markup, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(
+      markup,
+      new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
     assert.doesNotMatch(markup, /\|---\|/);
   }
 
