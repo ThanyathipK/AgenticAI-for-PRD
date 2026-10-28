@@ -39,6 +39,7 @@ def route_on_demand(state: AgentState) -> str:
 # Calls: ROUTING 4.1 or ROUTING 4.2 according to the completed node.
 # Writes: NONE; both decisions return a graph destination or END.
 
+
 # ROUTING 4.1 — Dispatch the classifier result after the router node.
 # Trigger: ROUTING 2.0 completes and writes workflow_routing/target_agent.
 # Input: workflow classification and optional command target.
