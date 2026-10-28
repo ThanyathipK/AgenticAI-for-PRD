@@ -26,6 +26,16 @@ import {
   type TraceabilityRefreshState,
 } from "../src/components/RequirementTraceability";
 import type { TraceabilityRow } from "../src/api/types";
+import {
+  parseStructuredTextBlocks,
+  StructuredSectionEditor,
+} from "../src/components/StructuredSectionEditor";
+import {
+  buildDiffRows,
+  readableDiffLine,
+  resolveLoadedVersionSelection,
+} from "../src/components/VersionHistory";
+import { PRDGenerationFailure } from "../src/components/PRDGenerationFailure";
 
 class MemoryStorage {
   private values = new Map<string, string>();
@@ -70,6 +80,181 @@ test("agent errors distinguish abort, rate limit, payload size, and auth expiry"
     payloadTooLargeContent({ response: { data: { detail: "9000 tokens" } } }),
     /9000 tokens/,
   );
+});
+
+test("version diff creates readable paired rows with line positions and gaps", () => {
+  const rows = buildDiffRows([
+    ["context", "# Scope"],
+    ["del", "| **Status** | Draft<br>Review |"],
+    ["add", "| **Status** | Approved<br>Ready |"],
+    ["skip", "4"],
+    ["context", "End"],
+  ]);
+  assert.deepEqual(rows, [
+    { kind: "context", before: "# Scope", oldLine: 1, newLine: 1 },
+    { kind: "pair", before: "| **Status** | Draft<br>Review |", after: "| **Status** | Approved<br>Ready |", oldLine: 2, newLine: 2 },
+    { kind: "skip", skipped: 4 },
+    { kind: "context", before: "End", oldLine: 7, newLine: 7 },
+  ]);
+  assert.equal(readableDiffLine("| **Status** | Draft<br>Review |"), "Status  |  Draft · Review");
+});
+
+test("unfinished LLM generation shows only a compact PRD failure message", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(PRDGenerationFailure, { onRetry: async () => {} }),
+  );
+  assert.match(markup, /PRD generation failed/);
+  assert.match(markup, /LLM connection was lost before completion/);
+  assert.match(markup, /No partial document was saved/);
+  assert.match(markup, />Retry</);
+  assert.doesNotMatch(markup, /Generating PRD preview/);
+});
+
+test("failed regeneration explains that the previous PRD draft remains visible", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(PRDGenerationFailure, {
+      onRetry: async () => {},
+      previousDraftRetained: true,
+    }),
+  );
+  assert.match(markup, /previous draft shown below was not replaced/);
+});
+
+test("LLM interruption shows a generic incomplete-generation warning above the preview", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(PRDGenerationFailure, {
+      onRetry: async () => {},
+      previousDraftRetained: true,
+      diagramOnly: true,
+    }),
+  );
+  assert.match(markup, /Generation may be incomplete/);
+  assert.match(markup, /LLM became unavailable/);
+  assert.match(markup, /Review the preview carefully/);
+  assert.doesNotMatch(markup, /architecture flow/);
+});
+
+test("structured section editor separates headings, fields, lists, and narrative", () => {
+  const blocks = parseStructuredTextBlocks([
+    "### Delivery plan",
+    "**Owner:** Product team",
+    "",
+    "- Pilot launch",
+    "2. General release",
+    "",
+    "Customers migrate in controlled waves.",
+    "Support remains available during rollout.",
+    "\\newpage",
+  ]);
+
+  assert.deepEqual(
+    blocks.map(({ kind, label, value, prefix }) => ({ kind, label, value, prefix })),
+    [
+      { kind: "heading", label: "Delivery plan", value: "", prefix: undefined },
+      { kind: "field", label: "Owner", value: "Product team", prefix: "**Owner:** " },
+      { kind: "list-item", label: "Item 1", value: "Pilot launch", prefix: "- " },
+      { kind: "list-item", label: "Item 2", value: "General release", prefix: "2. " },
+      {
+        kind: "paragraph",
+        label: "Paragraph 1",
+        value: "Customers migrate in controlled waves.\nSupport remains available during rollout.",
+        prefix: undefined,
+      },
+    ],
+  );
+});
+
+test("structured section editor exposes official-template lead fields without exposing real headers", () => {
+  const business = renderToStaticMarkup(
+    React.createElement(StructuredSectionEditor, {
+      value: [
+        "### 1. Business & Strategic Overview",
+        "|Introduction &<br>Executive Summary|Customer onboarding summary|",
+        "|---|---|",
+        "|Problem Statement|Manual onboarding is slow|",
+      ].join("\n"),
+      onChange: () => {},
+    }),
+  );
+  assert.match(business, /Customer onboarding summary/);
+  assert.match(business, /Manual onboarding is slow/);
+
+  const stakeholders = renderToStaticMarkup(
+    React.createElement(StructuredSectionEditor, {
+      value: [
+        "### Stakeholders",
+        "|Role|Name|",
+        "|---|---|",
+        "|Product Owner|Nina|",
+      ].join("\n"),
+      onChange: () => {},
+    }),
+  );
+  assert.match(stakeholders, /Product Owner/);
+  assert.match(stakeholders, /Nina/);
+  assert.doesNotMatch(stakeholders, /value="Role"/);
+});
+
+test("all nine PRD sections render structured edit layouts", () => {
+  const fixtures: Array<[string, string, string]> = [
+    ["title", "<div class=\"flushright\">\n\nNimble by Krungsri\n\n</div>\n\n**KRUNGSRI NIMBLE**\\\n**Product Requirement Document**\\\n\n|                  |             |\n|:-----------------|:------------|\n| **PMO No:**      | PMO-28      |\n| **PMO Name:**    | Mobile Banking |", "Mobile Banking"],
+    ["stakeholders", "### Stakeholders\n| | |\n|:---|:---|\n| **Role** | **Name** |\n| Product Owner | Nina |", "Nina"],
+    ["version_history", "### Version History\n| | | | |\n|:---|:---|:---|:---|\n| **Version** | **Date** | **Author** | **Description** |\n|V1.0|2026-10-28|Nina|Initial|", "Initial"],
+    ["reviews", "### Reviews\n| | | | |\n|:---|:---|:---|:---|\n| **Role** | **Name** | **Signature** | **Date** |\n|Product Owner|Nina|Approved|2026-10-28|", "Approved"],
+    ["contents", "### Contents\n1. Business Overview\n2. Product Scope", "Business Overview"],
+    ["business_overview", "### 1. Business & Strategic Overview\n|Topic|Details|\n|---|---|\n|Introduction &<br>Executive Summary|Summary|\n|Problem Statement|Problem|", "Summary"],
+    ["product_scope", "### 2. Product Scope & Functional Requirements\n| | | | |\n|---|---|---|---|\n|Mapping & Functional Requirements|Epic Name: Payments|||\n||**User Story**|**Functional Requirement**|**Acceptance Criteria**|\n||Send money|Transfer funds|Given balance|", "Payments"],
+    ["tech_ops", "### 3. Technical & Operational Considerations\n|Consideration|Details|\n|---|---|\n|Non-Functional<br>Requirements|Availability|\n|Expected<br>TPS/Customer<br>volume|100 TPS|", "100 TPS"],
+    ["appendix", "### 4. Appendix\n|Appendix Item|Details|Reference|\n|---|---|---|\n|Open<br>Questions &<br>Risks|Fraud risk||\n|Glossary|**Term**|**Definition**|\n||OTP|One-time password|", "One-time password"],
+  ];
+
+  for (const [sectionId, value, expected] of fixtures) {
+    const markup = renderToStaticMarkup(
+      React.createElement(StructuredSectionEditor, { value, sectionId, onChange: () => {} }),
+    );
+    assert.match(markup, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(markup, /\|---\|/);
+  }
+
+  const contentsMarkup = renderToStaticMarkup(
+    React.createElement(StructuredSectionEditor, {
+      value: "### Contents\n1. Business Overview\n2. Product Scope",
+      sectionId: "contents",
+      onChange: () => {},
+    }),
+  );
+  assert.doesNotMatch(contentsMarkup, /<textarea/);
+});
+
+test("product scope keeps Scope In and Scope Out as separate editable fields", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(StructuredSectionEditor, {
+      sectionId: "product_scope",
+      value: [
+        "### 2. Product Scope & Functional Requirements",
+        "#### Scope Definition (In vs. Out)",
+        "| Scope In (Included) | Scope Out (Excluded) |",
+        "| --- | --- |",
+        "| Mobile application | Branch counter workflow |",
+      ].join("\n"),
+      onChange: () => {},
+    }),
+  );
+
+  assert.match(markup, /Scope In \(Included\)/);
+  assert.match(markup, /Scope Out \(Excluded\)/);
+  assert.match(markup, /Mobile application/);
+  assert.match(markup, /Branch counter workflow/);
+  assert.equal((markup.match(/<textarea/g) ?? []).length, 2);
+  assert.doesNotMatch(markup, /\| --- \|/);
+});
+
+test("version history preserves an older row selected by the user", () => {
+  const loaded = [7, 6, 5, 4];
+  assert.equal(resolveLoadedVersionSelection(loaded, 5, false), 5);
+  assert.equal(resolveLoadedVersionSelection(loaded, 0, false), 0);
+  assert.equal(resolveLoadedVersionSelection(loaded, 1, false), 7);
+  assert.equal(resolveLoadedVersionSelection(loaded, 5, true), 7);
 });
 
 test("project refresh rejects only older snapshots and accepts equal/new revisions", () => {

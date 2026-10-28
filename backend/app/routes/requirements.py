@@ -1917,6 +1917,10 @@ async def _process_requirements_pipeline(
             "audit_result": audit_out,
             "prd_markdown": req_state.get("generated_prd", ""),
             "mermaid_diagram": req_state.get("generated_diagrams", ""),
+            # The PRD may succeed while its LLM-backed diagram refresh fails.
+            # Do not drop this explicit false value: the SPA uses it to show
+            # the partial-success warning above the completed PRD preview.
+            "diagram_regenerated": final_state.get("diagram_regenerated"),
             "diagram_generated_at": final_state.get("diagram_generated_at") or req_state.get("diagram_generated_at"),
             "message": agent_message,
             "pending_merge": pending_action_id is not None,

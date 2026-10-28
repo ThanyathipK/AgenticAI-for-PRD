@@ -13,6 +13,7 @@ import type {
   UploadedDocumentPayload,
 } from '../api/types';
 import { handleError, handleWarning } from '../components/Toast';
+import { extractErrorDetail, isPayloadTooLargeError } from './chat/agentErrors';
 
 export interface DocumentExtractionProgress {
   documentId: string;
@@ -152,7 +153,17 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
       }
       await refreshDocuments();
     } catch (err) {
-      handleError('Document upload failed.', err);
+      if (isPayloadTooLargeError(err)) {
+        const serverDetail = extractErrorDetail(err);
+        handleError(
+          serverDetail
+            ? `Document is too large to upload. ${serverDetail}`
+            : 'Document is too large to upload. Choose a smaller file and try again.',
+          err,
+        );
+      } else {
+        handleError('Document upload failed.', err);
+      }
     } finally {
       uploadInFlightRef.current = false;
       setIsUploading(false);

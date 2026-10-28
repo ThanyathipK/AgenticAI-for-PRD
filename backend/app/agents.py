@@ -1035,22 +1035,25 @@ def _build_change_summary(merge_report: RequirementMergeReport) -> str:
         if action in buckets:
             buckets[action].append(str(key))
 
-    lines = ["Requirements gathered and updated."]
+    # This summary is shown while the merge is still awaiting explicit approval.
+    # Keep every line in proposal tense so a later Cancel cannot leave behind a
+    # transcript entry that falsely claims the draft was applied.
+    lines = ["Requirements update preview ready."]
     if buckets["created"]:
         lines.append(
-            f"Added {len(buckets['created'])} new user story(ies): {', '.join(sorted(buckets['created']))}"
+            f"Would add {len(buckets['created'])} new user story(ies): {', '.join(sorted(buckets['created']))}"
         )
     if buckets["updated"]:
         lines.append(
-            f"Updated {len(buckets['updated'])} user story(ies): {', '.join(sorted(buckets['updated']))}"
+            f"Would update {len(buckets['updated'])} user story(ies): {', '.join(sorted(buckets['updated']))}"
         )
     if buckets["archived"]:
         lines.append(
-            f"Archived {len(buckets['archived'])} user story(ies): {', '.join(sorted(buckets['archived']))}"
+            f"Would archive {len(buckets['archived'])} user story(ies): {', '.join(sorted(buckets['archived']))}"
         )
     if buckets["conflict"]:
         lines.append(
-            f"{len(buckets['conflict'])} locked story(ies) matched a removal request but stayed active: "
+            f"{len(buckets['conflict'])} locked story(ies) match the removal request and would stay active: "
             f"{', '.join(sorted(buckets['conflict']))}"
         )
     if len(lines) == 1:

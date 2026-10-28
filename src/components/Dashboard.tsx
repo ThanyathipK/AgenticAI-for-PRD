@@ -40,6 +40,7 @@ import type { ProjectIntake } from './NewProjectModal';
 import { WorkspaceNavigation } from './WorkspaceNavigation';
 import { MainArtifactPanel } from './MainArtifactPanel';
 import { PRDGenerationPreview } from './PRDGenerationPreview';
+import { PRDGenerationFailure } from './PRDGenerationFailure';
 import { HelpGuidelines } from './HelpGuidelines';
 import { formatPrdVersionLabel } from '../utils/version';
 
@@ -162,8 +163,6 @@ export default function Dashboard() {
     setPendingActions,
     loadProjectState,
     setMessages,
-    currentVersion,
-    versionHistory,
     isDraggingSplit,
     setIsDraggingSplit,
     splitContainerRef,
@@ -180,6 +179,9 @@ export default function Dashboard() {
     lockableRequirements,
     refreshLockableRequirements,
     handleGeneratePRD,
+    prdGenerationFailed,
+    prdDiagramGenerationFailed,
+    clearPrdGenerationNotices,
   } = state;
 
   // ---- Sidebar project search (pure presentation state) --------------------
@@ -209,6 +211,9 @@ export default function Dashboard() {
   const hasPrdGenerationPreview =
     activeTab === 'prd' &&
     pendingActions.some(action => action.action_type === 'GENERATE_PRD');
+  const hasPrdGenerationFailed =
+    activeTab === 'prd' &&
+    prdGenerationFailed;
 
   useEffect(() => {
     if (isSearchOpen) {
@@ -720,27 +725,38 @@ export default function Dashboard() {
                             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                         }]);
                     }}
-                    onCancel={() => {
+                    onCancel={async () => {
                         setPendingActions(prev => prev.filter(a => a.id !== action.id));
                         // Re-fetch authoritative project state after Discard. The
                         // proposal was never applied; for document extraction, only
                         // the source document status may have changed in CONFIRM 3.4.
-                        if(projectId) loadProjectState(projectId);
-                        setMessages(prev => [...prev, {
-                            id: `merge-cancelled-${Date.now()}`,
-                            role: 'system',
-                            content: `Merge discarded. Rolled back to the previous PRD version (${formatPrdVersionLabel(versionHistory.find(version => version.version === currentVersion)?.semVersion, currentVersion)}). Nothing was saved.`,
-                            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        }]);
+                        // The backend persists the cancellation acknowledgement, so
+                        // reload it instead of adding a temporary duplicate locally.
+                        if(projectId) await loadProjectState(projectId);
                     }}
                 />
             ))}
+
+            {hasPrdGenerationFailed && (
+              <PRDGenerationFailure
+                onRetry={handleGeneratePRD}
+                previousDraftRetained={hasPrdGenerationPreview}
+              />
+            )}
+            {!hasPrdGenerationFailed && activeTab === 'prd' && prdDiagramGenerationFailed && (
+              <PRDGenerationFailure
+                onRetry={handleGeneratePRD}
+                previousDraftRetained={hasPrdGenerationPreview}
+                diagramOnly
+              />
+            )}
 
             {activeTab === 'prd' && pendingActions.filter(action => action.action_type === 'GENERATE_PRD').map(action => (
               <PRDGenerationPreview
                 key={action.id}
                 action={action}
                 onApproved={(result) => {
+                  clearPrdGenerationNotices();
                   setPendingActions(prev => prev.filter(item => item.id !== action.id));
                   if (projectId) void loadProjectState(projectId);
                   setMessages(prev => [...prev, {
@@ -751,6 +767,7 @@ export default function Dashboard() {
                   }]);
                 }}
                 onDiscarded={() => {
+                  clearPrdGenerationNotices();
                   setPendingActions(prev => prev.filter(item => item.id !== action.id));
                   setMessages(prev => [...prev, {
                     id: `prd-discarded-${Date.now()}`,

@@ -80,11 +80,19 @@ test('PRD clarity is high only with specific, measurable, and operational detail
   assert.equal(result.level, 'High');
 });
 
-test('PRD clarity does not mark ordinary specific content as high', () => {
+test('PRD clarity marks specific content with one measurable target as high', () => {
   const result = assessPrdClarity(`
     The PromptPay Payment API must let customers submit payments.
     Given a valid request, when the customer submits it, then the system records it within 500 ms.
     Retry a failed request before returning an error.
+  `);
+
+  assert.equal(result.level, 'High');
+});
+
+test('PRD clarity marks core project specificity without full flow detail as medium', () => {
+  const result = assessPrdClarity(`
+    The lending domain must support controlled application processing.
   `);
 
   assert.equal(result.level, 'Medium');

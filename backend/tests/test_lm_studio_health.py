@@ -158,13 +158,24 @@ async def test_probe_result_is_ttl_cached():
     await llm_client.check_lm_studio_health(client_factory=factory)
     assert calls["n"] == 2
 
+
+@pytest.mark.asyncio
+async def test_forced_probe_bypasses_recent_online_cache():
+    online = {"data": [{"id": llm_client.settings.LM_STUDIO_MODEL_FALLBACK}]}
+    factory, calls = _factory(result=_FakeResponse(online))
+    await llm_client.check_lm_studio_health(client_factory=factory)
+
+    await llm_client.check_lm_studio_health(client_factory=factory, force=True)
+
+    assert calls["n"] == 2
+
 # ==========================================================
 # GET /api/health endpoint
 # ==========================================================
 def _fake_probe_offline():
     model = llm_client.settings.LM_STUDIO_MODEL_FALLBACK
 
-    async def _probe(client_factory=None):
+    async def _probe(client_factory=None, *, force=False):
         return {
             "online": False,
             "latency_ms": None,
@@ -180,7 +191,7 @@ def _fake_probe_offline():
 def _fake_probe_online():
     model = llm_client.settings.LM_STUDIO_MODEL_FALLBACK
 
-    async def _probe(client_factory=None):
+    async def _probe(client_factory=None, *, force=False):
         return {
             "online": True,
             "latency_ms": 12.3,

@@ -27,6 +27,7 @@ import { api } from '../api/client';
 import { toChatMessages } from '../api/transforms';
 
 const CHAT_INPUT_MAX_LENGTH = 4000;
+const OLDER_MESSAGE_PAGE_SIZE = 10;
 
 const sourceNames = (
   references: AuditSourceReferencePayload[] | undefined,
@@ -519,6 +520,8 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [hasOlderMessages, setHasOlderMessages] = useState(true);
   const loadingOlderRef = useRef(false);
+  const olderMessagesSentinelRef = useRef<HTMLDivElement>(null);
+  const loadOlderMessagesRef = useRef<() => Promise<void>>(async () => {});
   const activeProjectRef = useRef(projectId);
   activeProjectRef.current = projectId;
 
@@ -536,10 +539,13 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
     setIsLoadingOlder(true);
     const previousHeight = container.scrollHeight;
     try {
-      const rows = await api.listConversationMessages(projectId, { limit: 5, before: oldestId });
+      const rows = await api.listConversationMessages(projectId, {
+        limit: OLDER_MESSAGE_PAGE_SIZE,
+        before: oldestId,
+      });
       if (activeProjectRef.current !== projectId) return;
       const older = toChatMessages({ conversation_history: rows }, false);
-      if (rows.length < 5) setHasOlderMessages(false);
+      if (rows.length < OLDER_MESSAGE_PAGE_SIZE) setHasOlderMessages(false);
       if (older.length > 0) {
         state.setMessages(current => {
           const existingIds = new Set(current.map(message => message.id));
@@ -560,6 +566,26 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
       setIsLoadingOlder(false);
     }
   };
+  loadOlderMessagesRef.current = loadOlderMessages;
+
+  // Observe a real element at the top of the scroll viewport instead of
+  // depending exclusively on an exact scrollTop value. This also works when
+  // the first page is too short to create a scrollbar.
+  useEffect(() => {
+    const root = chatScrollRef.current;
+    const target = olderMessagesSentinelRef.current;
+    if (!root || !target || !projectId || !hasOlderMessages) return;
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          void loadOlderMessagesRef.current();
+        }
+      },
+      { root, rootMargin: '120px 0px 0px 0px', threshold: 0.01 },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [projectId, hasOlderMessages]);
 
   const handleChatScroll = (): void => {
     const container = chatScrollRef.current;
@@ -612,11 +638,23 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
       {/* Chat Logs scroll list — extra bottom padding on <sm screens because
           the action buttons stack into two rows and the composer grows taller. */}
       <div ref={chatScrollRef} onScroll={handleChatScroll} className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-5 custom-scrollbar pb-44 sm:pb-32 bg-white">
-        {isLoadingOlder && (
-          <div className="flex items-center justify-center gap-1.5 text-[10px] text-on-surface-variant">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading earlier messages…
-          </div>
-        )}
+        <div ref={olderMessagesSentinelRef} className="flex min-h-6 items-center justify-center">
+          {isLoadingOlder ? (
+            <div className="flex items-center justify-center gap-1.5 text-[10px] text-on-surface-variant">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading earlier messages…
+            </div>
+          ) : hasOlderMessages && messages.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => void loadOlderMessages()}
+              className="rounded-full border border-outline bg-white px-3 py-1 text-[10px] font-semibold text-on-surface-variant transition-colors hover:border-primary/40 hover:text-primary"
+            >
+              Load 10 earlier messages
+            </button>
+          ) : !hasOlderMessages && messages.length > 0 ? (
+            <span className="text-[10px] text-on-surface-variant/70">Beginning of conversation</span>
+          ) : null}
+        </div>
         <AnimatePresence initial={false}>
           {messages.map((msg, msgIndex) => {
             const isUser = msg.role === 'user';

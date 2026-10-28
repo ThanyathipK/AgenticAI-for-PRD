@@ -854,7 +854,7 @@ async def test_removed_story_archives_and_empties_its_requirement_group(monkeypa
     assert result["current_version"] == 5
     assert result["requirement_state"]["requirements_revision"] == 6
     # Summary message mentions the removal
-    assert saved and "Archived" in saved[0]["message"] and "US-003" in saved[0]["message"]
+    assert saved and "Would archive" in saved[0]["message"] and "US-003" in saved[0]["message"]
 
 
 
@@ -1055,9 +1055,10 @@ def test_build_change_summary_lists_ticket_codes():
         "US-002": {"action": "unchanged"},
     }
     msg = agents._build_change_summary(report)
-    assert "US-006" in msg and "Added" in msg
-    assert "US-001" in msg and "Updated" in msg
-    assert "US-003" in msg and "Archived" in msg
+    assert msg.startswith("Requirements update preview ready.")
+    assert "US-006" in msg and "Would add" in msg
+    assert "US-001" in msg and "Would update" in msg
+    assert "US-003" in msg and "Would archive" in msg
     assert "US-002" not in msg  # unchanged stories are not noise
 
 

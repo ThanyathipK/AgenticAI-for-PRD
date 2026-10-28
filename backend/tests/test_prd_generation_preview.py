@@ -115,6 +115,7 @@ async def test_architect_endpoint_stages_without_replacing_saved_prd(
             "requirement_state": generated_state,
             "prd_markdown": generated_state["generated_prd"],
             "mermaid_diagram": generated_state["generated_diagrams"],
+            "diagram_regenerated": False,
             "workflow_routing": {},
             "agent_message": "Preview ready.",
         }
@@ -138,6 +139,7 @@ async def test_architect_endpoint_stages_without_replacing_saved_prd(
     assert body["pending_merge"] is True
     assert body["pending_action_type"] == "GENERATE_PRD"
     assert body["pending_action_id"]
+    assert body["diagram_regenerated"] is False
     persisted = await RequirementStateRepository.get_by_project_id(seeded_project, db_session)
     assert persisted["generated_prd"] == _doc_v1()
     assert persisted["generated_diagrams"] == "flowchart LR\nA --> B"

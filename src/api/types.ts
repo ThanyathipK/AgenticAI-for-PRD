@@ -477,6 +477,8 @@ export interface ProcessRequirementsResponse {
   audit_result?: AuditResultPayload | null;
   prd_markdown?: string | null;
   mermaid_diagram?: string | null;
+  /** False when PRD assembly succeeded but the LLM-backed flow refresh failed. */
+  diagram_regenerated?: boolean | null;
   diagram_generated_at?: string | null;
   message?: string | null;
   pending_merge?: boolean | null;

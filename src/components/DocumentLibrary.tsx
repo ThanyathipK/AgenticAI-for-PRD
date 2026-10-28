@@ -20,6 +20,7 @@ import type {
 import { parseAndRenderMarkdown } from './MarkdownRenderer';
 import { handleError } from './Toast';
 import { ConfirmModal } from './ConfirmModal';
+import { Tooltip } from './Tooltip';
 import type { UseDocumentsResult } from '../hooks/useDocuments';
 
 interface DocumentLibraryProps {
@@ -111,13 +112,17 @@ export const DocumentLibrary: React.FC<DocumentLibraryProps> = ({ projectId, doc
                   <FileText className="w-4 h-4" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <button
-                    onClick={() => void openPreview(doc)}
-                    className="text-sm font-semibold text-on-surface hover:text-primary transition-colors truncate block max-w-full cursor-pointer text-left"
-                    title="View stored markdown"
-                  >
-                    {doc.original_filename}
-                  </button>
+                  <Tooltip label="Click to preview document" side="bottom" align="start" className="max-w-full">
+                    <button
+                      onClick={() => void openPreview(doc)}
+                      className="group/preview block max-w-full cursor-pointer rounded text-left text-sm font-semibold text-on-surface transition-colors hover:text-primary focus-visible:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      aria-label={`Preview ${doc.original_filename}`}
+                    >
+                      <span className="truncate group-hover/preview:underline group-focus-visible/preview:underline">
+                        {doc.original_filename}
+                      </span>
+                    </button>
+                  </Tooltip>
                   <p className="text-[10px] font-mono text-on-surface-variant mt-0.5">
                     {doc.original_format.toUpperCase()}, {formatBytes(doc.file_size_bytes)}, ~{doc.token_count} tokens, status {doc.status}
                   </p>

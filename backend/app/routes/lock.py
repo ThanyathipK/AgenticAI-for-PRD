@@ -12,6 +12,7 @@ from app.database import get_db
 from app.event_manager import event_manager
 from app.models import PendingActionModel
 from app.repositories import (
+    ConversationMessageRepository,
     DocumentRepository,
     PendingActionRepository,
     RequirementStateRepository,
@@ -822,6 +823,17 @@ async def cancel_action(
         )
 
     await PendingActionRepository.delete(action_id, project_id, session)
+    # Persist the discard acknowledgement so an authoritative project reload (or
+    # another tab receiving the event below) does not erase the message that the
+    # frontend just displayed locally.
+    await ConversationMessageRepository.save_message(
+        project_id=project_id,
+        role="system",
+        message="Requirements update cancelled. No requirement changes were saved.",
+        session=session,
+        workflow_state="gatherer_node",
+        intent="CANCEL_REQUIREMENT_UPDATE",
+    )
     await event_manager.publish(project_id, "action_cancelled", {
         "project_id": project_id,
         "action_id": action_id,

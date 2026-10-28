@@ -32,7 +32,7 @@ router = APIRouter()
 # Failure: always returns HTTP 200 when the backend can answer; gateway failure is
 #          represented in the response body.
 @router.get("/api/health", response_model=HealthResponse, status_code=status.HTTP_200_OK)
-async def get_health_status() -> HealthResponse:
+async def get_health_status(force: bool = False) -> HealthResponse:
     """
     Readiness probe combining app liveness with a real LM Studio check (Finding #40).
 
@@ -47,7 +47,7 @@ async def get_health_status() -> HealthResponse:
         context-window budget, plus live LM Studio readiness information.
     """
     # CHAT 6.2 — LM Studio probe (TTL-cached server-side, see llm_client).
-    lm_health = await check_lm_studio_health()
+    lm_health = await check_lm_studio_health(force=force)
     return {
         "status": "online",
         "app_name": settings.APP_NAME,

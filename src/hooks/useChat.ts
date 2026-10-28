@@ -65,6 +65,9 @@ export interface UseChatResult {
   isLoading: boolean;
   currentAgentNode: string | null;
   syncStatus: string;
+  prdGenerationFailed: boolean;
+  prdDiagramGenerationFailed: boolean;
+  clearPrdGenerationNotices: () => void;
   chatEndRef: RequirementStore["chatEndRef"];
   clarificationAnswers: Record<string, string>;
   handleSendMessage: (
@@ -118,6 +121,12 @@ export function useChat(
   deps: ChatDeps,
 ): UseChatResult {
   const [rawInput, setRawInput] = useState<string>("");
+  const [prdGenerationFailed, setPrdGenerationFailed] = useState(false);
+  const [prdDiagramGenerationFailed, setPrdDiagramGenerationFailed] = useState(false);
+  const clearPrdGenerationNotices = () => {
+    setPrdGenerationFailed(false);
+    setPrdDiagramGenerationFailed(false);
+  };
   const persistingMessageIdsRef = useRef<Set<string>>(new Set());
   const durableMessageIdsRef = useRef<Map<string, string>>(new Map());
   const clarificationSubmitInFlightRef = useRef(false);
@@ -125,6 +134,8 @@ export function useChat(
   useEffect(() => {
     persistingMessageIdsRef.current.clear();
     durableMessageIdsRef.current.clear();
+    setPrdGenerationFailed(false);
+    setPrdDiagramGenerationFailed(false);
   }, [deps.projectId]);
 
   // Persist every locally-created non-user bubble in display order, then swap
@@ -528,6 +539,8 @@ export function useChat(
     }
     // prepare the UI for the audit run / clear any prior audit state
     const projectId = deps.projectId;
+    setPrdGenerationFailed(false);
+    setPrdDiagramGenerationFailed(false);
     store.setIsLoading(true);
     store.setIsProcessing(true);
     store.setSyncStatus("Running Technical Audit...");
@@ -872,6 +885,23 @@ export function useChat(
       if (!data.pending_action_id || !generatedPrd) {
         throw new Error("The architect did not return a reviewable PRD preview.");
       }
+      // PRD assembly is deterministic, while the architecture-flow refresh is
+      // the LLM-backed step. The backend deliberately keeps a valid PRD preview
+      // when that secondary call fails; surface the partial success explicitly.
+      let lmUnavailableAtCompletion = false;
+      try {
+        // Force a fresh probe: LM Studio may finish the diagram call and then
+        // close while the backend is still staging the PRD preview.
+        const liveHealth = await api.fetchHealth(true);
+        lmUnavailableAtCompletion =
+          !liveHealth.lm_studio_online || !liveHealth.lm_studio_model_loaded;
+      } catch {
+        // Keep the generation result as the source of truth if health probing
+        // itself cannot reach the backend.
+      }
+      setPrdDiagramGenerationFailed(
+        data.diagram_regenerated === false || lmUnavailableAtCompletion,
+      );
       const preservedSections = data.skipped_locked_prd_sections || [];
       // Re-read the server-owned draft instead of reconstructing it locally;
       // this carries the exact source revision and next ledger version used by
@@ -995,6 +1025,10 @@ export function useChat(
         return;
       }
       handleError("PRD generation did not complete.", err);
+      setPrdGenerationFailed(true);
+      // Surface the compact failure message above the unchanged saved PRD.
+      // Normal in-progress feedback remains in chat; no partial preview is shown.
+      deps.setActiveTab("prd");
       store.setMessages((prev) => [
         ...prev,
         {
@@ -1202,6 +1236,9 @@ export function useChat(
     isLoading: store.isLoading,
     currentAgentNode: store.currentAgentNode,
     syncStatus: store.syncStatus,
+    prdGenerationFailed,
+    prdDiagramGenerationFailed,
+    clearPrdGenerationNotices,
     chatEndRef: store.chatEndRef,
     clarificationAnswers: store.clarificationAnswers,
     handleSendMessage,

@@ -216,7 +216,11 @@ def reset_lm_studio_health_cache() -> None:
 # Writes: in-process readiness cache only.
 # Failure: never raises; returns online=false plus error details.
 # Next: CHAT 6.2.1 response → CHAT 6.3.1/6.3.2 frontend path.
-async def check_lm_studio_health(client_factory: Any = None) -> Dict[str, Any]:
+async def check_lm_studio_health(
+    client_factory: Any = None,
+    *,
+    force: bool = False,
+) -> Dict[str, Any]:
     """
     Probe LM Studio's OpenAI-compatible ``GET /models`` endpoint.
 
@@ -243,7 +247,7 @@ async def check_lm_studio_health(client_factory: Any = None) -> Dict[str, Any]:
     global _health_cache, _health_cache_ts
 
     now = time.monotonic()
-    if _health_cache and (now - _health_cache_ts) < LM_STUDIO_HEALTH_CACHE_TTL_SECONDS:
+    if not force and _health_cache and (now - _health_cache_ts) < LM_STUDIO_HEALTH_CACHE_TTL_SECONDS:
         return dict(_health_cache)
 
     target_model = settings.LM_STUDIO_MODEL_FALLBACK

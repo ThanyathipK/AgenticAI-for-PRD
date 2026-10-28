@@ -233,6 +233,17 @@ class TestRecordPrdVersion:
 # diff_versions (real SQLite)
 # =====================================================================
 class TestDiffVersions:
+    def test_line_diff_marks_omitted_unchanged_lines(self):
+        from app.version_service import _line_diff
+
+        before = "\n".join(["start", "old", "one", "two", "three", "four", "five", "end"])
+        after = "\n".join(["start", "new", "one", "two", "three", "four", "five", "finish"])
+        result = _line_diff(before, after, max_context=1)
+
+        assert ["skip", "3"] in result["diff_lines"]
+        assert result["added"] == 2
+        assert result["removed"] == 2
+
     @pytest.mark.asyncio
     async def test_diff_between_versions_returns_section_lines(self, db_session):
         session, project_id = db_session

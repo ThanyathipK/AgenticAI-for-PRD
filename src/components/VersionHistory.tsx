@@ -1,6 +1,6 @@
 // VersionHistory
 // Renders the immutable change ledger timeline and diff viewer.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Minus, Lock, FileText, RotateCcw } from "lucide-react";
 import { ProjectState } from "../hooks/useProjectState";
 import { api } from "../api/client";
@@ -10,29 +10,136 @@ import { displayVersionAuthor, extractProjectAuthor } from "../utils/actorName";
 import { formatPrdVersionLabel } from "../utils/version";
 import { formatDateTime } from "../utils/time";
 
+const VERSION_HISTORY_PAGE_SIZE = 10;
+
 // VERSION 1.3 — Diff-line renderer: paints the add/del/context tuples returned by
 //               6.7. It does not calculate or validate the comparison.
 /** Renders diff lines: green for additions, red for deletions, grey for context. */
-function DiffLines({ diffLines }: { diffLines: [string, string][] }) {
+type DiffRow = {
+  kind: 'pair' | 'context' | 'skip';
+  before?: string;
+  after?: string;
+  oldLine?: number;
+  newLine?: number;
+  skipped?: number;
+};
+
+export function readableDiffLine(line: string): string {
+  if (/^\s*\|?(?:\s*:?-{1,}:?\s*\|)+\s*$/.test(line)) return 'Table divider';
+  let value = line
+    .replace(/<br\s*\/?>/gi, ' · ')
+    .replace(/\\([*_`])/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/, '');
+  if (value.trim().startsWith('|') && value.trim().endsWith('|')) {
+    value = value.trim().slice(1, -1).split('|').map(cell => cell.trim()).join('  |  ');
+  }
+  return value;
+}
+
+export function buildDiffRows(diffLines: [string, string][]): DiffRow[] {
+  const rows: DiffRow[] = [];
+  let oldLine = 1;
+  let newLine = 1;
+  for (let index = 0; index < diffLines.length;) {
+    const [tag, line] = diffLines[index];
+    if (tag === 'skip') {
+      const skipped = Math.max(0, Number.parseInt(line, 10) || 0);
+      rows.push({ kind: 'skip', skipped });
+      oldLine += skipped;
+      newLine += skipped;
+      index += 1;
+      continue;
+    }
+    if (tag === 'context') {
+      rows.push({ kind: 'context', before: line, oldLine, newLine });
+      oldLine += 1;
+      newLine += 1;
+      index += 1;
+      continue;
+    }
+    const removed: { text: string; line: number }[] = [];
+    const added: { text: string; line: number }[] = [];
+    while (diffLines[index]?.[0] === 'del') {
+      removed.push({ text: diffLines[index][1], line: oldLine++ });
+      index += 1;
+    }
+    while (diffLines[index]?.[0] === 'add') {
+      added.push({ text: diffLines[index][1], line: newLine++ });
+      index += 1;
+    }
+    if (removed.length === 0 && tag === 'add') {
+      while (diffLines[index]?.[0] === 'add') {
+        added.push({ text: diffLines[index][1], line: newLine++ });
+        index += 1;
+      }
+    }
+    const count = Math.max(removed.length, added.length);
+    for (let rowIndex = 0; rowIndex < count; rowIndex += 1) {
+      rows.push({
+        kind: 'pair',
+        before: removed[rowIndex]?.text,
+        after: added[rowIndex]?.text,
+        oldLine: removed[rowIndex]?.line,
+        newLine: added[rowIndex]?.line,
+      });
+    }
+  }
+  return rows;
+}
+
+function ChangedWords({ before = '', after = '', side, raw }: {
+  before?: string;
+  after?: string;
+  side: 'before' | 'after';
+  raw: boolean;
+}) {
+  const source = raw ? (side === 'before' ? before : after) : readableDiffLine(side === 'before' ? before : after);
+  const other = raw ? (side === 'before' ? after : before) : readableDiffLine(side === 'before' ? after : before);
+  const otherWords = new Set(other.split(/\s+/).filter(Boolean));
+  return <>{source.split(/(\s+)/).map((word, index) => {
+    const changed = word.trim() !== '' && !otherWords.has(word);
+    return changed ? <mark key={index} className={side === 'before' ? 'bg-red-200 text-inherit' : 'bg-emerald-200 text-inherit'}>{word}</mark> : word;
+  })}</>;
+}
+
+export function DiffLines({ diffLines }: { diffLines: [string, string][] }) {
+  const [showRaw, setShowRaw] = useState(false);
   if (diffLines.length === 0) {
     return <span className="text-slate-400 italic text-xs">(no line changes)</span>;
   }
+  const rows = buildDiffRows(diffLines);
   return (
-    <div className="font-mono text-xs leading-relaxed whitespace-pre-wrap break-all">
-      {diffLines.map(([tag, line], idx) => {
-        let cls = 'px-2 py-0.5 rounded-md border-l-2 flex';
-        if (tag === 'add') cls += ' bg-emerald-50 text-emerald-800 border-emerald-400';
-        else if (tag === 'del') cls += ' bg-red-50 text-red-800 border-red-400';
-        else cls += ' text-slate-600 border-slate-200';
-        const prefix = tag === 'add' ? '+' : tag === 'del' ? '-' : ' ';
-        const lineCls = tag === 'add' ? 'text-emerald-700 font-semibold' : tag === 'del' ? 'text-red-700 font-semibold' : 'text-slate-500';
-        return (
-          <div key={idx} className={cls}>
-            <span className="inline-block w-5 mr-2 text-center select-none font-bold">{prefix}</span>
-            <span className={lineCls}>{line}</span>
-          </div>
-        );
-      })}
+    <div className="text-xs leading-relaxed">
+      <div className="mb-2 flex justify-end">
+        <button type="button" onClick={() => setShowRaw(value => !value)} className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-50">
+          {showRaw ? 'Show readable diff' : 'Show raw Markdown'}
+        </button>
+      </div>
+      <div className="space-y-1 font-mono whitespace-pre-wrap break-words">
+        {rows.map((row, idx) => {
+          if (row.kind === 'skip') return <div key={idx} className="py-1 text-center text-[10px] italic text-slate-400">… {row.skipped} unchanged lines …</div>;
+          if (row.kind === 'context') return (
+            <div key={idx} className="grid grid-cols-[2rem_1fr] rounded-md border-l-2 border-slate-200 px-2 py-1 text-slate-500">
+              <span className="select-none text-right text-slate-400">{row.oldLine}</span>
+              <span className="pl-3">{showRaw ? row.before : readableDiffLine(row.before ?? '')}</span>
+            </div>
+          );
+          return (
+            <div key={idx} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+              {row.before !== undefined && <div className="grid grid-cols-[3.5rem_2rem_1fr] bg-red-50 px-2 py-1.5 text-red-800">
+                <span className="font-sans text-[10px] font-bold uppercase">Before</span><span className="select-none text-right text-red-400">{row.oldLine}</span>
+                <span className="pl-3"><ChangedWords before={row.before} after={row.after} side="before" raw={showRaw} /></span>
+              </div>}
+              {row.after !== undefined && <div className="grid grid-cols-[3.5rem_2rem_1fr] bg-emerald-50 px-2 py-1.5 text-emerald-800">
+                <span className="font-sans text-[10px] font-bold uppercase">After</span><span className="select-none text-right text-emerald-500">{row.newLine}</span>
+                <span className="pl-3"><ChangedWords before={row.before} after={row.after} side="after" raw={showRaw} /></span>
+              </div>}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -99,9 +206,10 @@ function SectionDiffCard({ section }: {
         <div className="mt-2"><DiffLines diffLines={section.diff_lines} /></div>
       )}
       {section.change_kind === 'locked_preserved' && (
-        <p className="text-xs text-amber-700 mt-1">
-          The section was locked - content preserved despite AI regeneration.
-        </p>
+        <div className="mt-1">
+          <p className="text-xs text-amber-700">This section is currently locked. Its version differences are shown below.</p>
+          {section.diff_lines.length > 0 && <div className="mt-2 border-t border-amber-200 pt-2"><DiffLines diffLines={section.diff_lines} /></div>}
+        </div>
       )}
       {section.change_kind === 'unchanged' && section.diff_lines.length === 0 && (
         <p className="text-xs text-slate-400 mt-1">No changes to this section.</p>
@@ -117,6 +225,17 @@ function ChangeTypeBadge({ changeType }: { changeType: string | undefined }) {
       {changeType === 'ai' ? 'AI' : 'Manual'}
     </span>
   );
+}
+
+export function resolveLoadedVersionSelection(
+  versions: number[],
+  selected: number,
+  selectLatest: boolean,
+): number {
+  if (versions.length === 0) return selected;
+  if (selectLatest) return versions[0];
+  if (selected === 0 || versions.includes(selected)) return selected;
+  return versions[0];
 }
 
 // VERSION 1.0 — Versions tab coordinator:
@@ -142,6 +261,7 @@ export function VersionHistory({ state }: { state: ProjectState }) {
   const [restoreTarget, setRestoreTarget] = useState<number | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [hasOlderVersions, setHasOlderVersions] = useState(true);
+  const selectionProjectRef = useRef<string | null>(null);
 
   // The full ledger is intentionally lazy: project opening fetches only the
   // latest SemVer row, while mounting this tab fetches the first metadata page.
@@ -149,9 +269,9 @@ export function VersionHistory({ state }: { state: ProjectState }) {
     if (!projectId) return;
     let active = true;
     setHistoryLoading(true);
-    void loadVersionHistory(projectId, { limit: 20 }).then((count) => {
+    void loadVersionHistory(projectId, { limit: VERSION_HISTORY_PAGE_SIZE }).then((count) => {
       if (!active) return;
-      setHasOlderVersions(count === 20);
+      setHasOlderVersions(count === VERSION_HISTORY_PAGE_SIZE);
       setHistoryLoading(false);
     });
     return () => {
@@ -163,16 +283,21 @@ export function VersionHistory({ state }: { state: ProjectState }) {
   // restoring it would be a no-op, hence no Restore button on the first entry.
   const latestVersion = versionHistory[0]?.version ?? null;
 
-  // VERSION 1.1.1 — Keep selecting the loaded head. Because selectedHistVersion
-  //                 is itself a dependency, choosing an older row also reruns this
-  //                 effect and is reset to latest; appending a page does the same.
+  // Select the newest row once when a project's ledger first loads. Afterwards,
+  // preserve an explicit row selection (including an older version or collapsed
+  // state). The previous implementation selected the head on every selection
+  // change, making older rows impossible to open.
   useEffect(() => {
-    if (versionHistory.length > 0) {
-      const latest = versionHistory[0].version; // newest first
-      console.log('[Diff] Auto-selected latest version:', latest, '(history:', versionHistory.length, 'versions)');
-      if (selectedHistVersion !== latest) setSelectedHistVersion(latest);
-    }
-  }, [versionHistory, selectedHistVersion, setSelectedHistVersion]);
+    if (!projectId || versionHistory.length === 0) return;
+    const projectChanged = selectionProjectRef.current !== projectId;
+    const next = resolveLoadedVersionSelection(
+      versionHistory.map(version => version.version),
+      selectedHistVersion,
+      projectChanged,
+    );
+    selectionProjectRef.current = projectId;
+    if (next !== selectedHistVersion) setSelectedHistVersion(next);
+  }, [projectId, versionHistory, selectedHistVersion, setSelectedHistVersion]);
 
   // VERSION 1.2.1 — Choose the selected row's preceding LOADED row. If pagination
   //                 has not loaded it, null delegates predecessor lookup to 6.8.
@@ -310,9 +435,9 @@ export function VersionHistory({ state }: { state: ProjectState }) {
               const count = await loadVersionHistory(projectId, {
                 append: true,
                 beforeVersion: oldest,
-                limit: 20,
+                limit: VERSION_HISTORY_PAGE_SIZE,
               });
-              setHasOlderVersions(count === 20);
+              setHasOlderVersions(count === VERSION_HISTORY_PAGE_SIZE);
               setHistoryLoading(false);
             }}
           >

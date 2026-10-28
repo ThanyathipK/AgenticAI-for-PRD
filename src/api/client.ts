@@ -526,7 +526,7 @@ export const api = {
   // Calls: CHAT 6.2.1 GET /api/health → CHAT 6.2 gateway probe.
   // Writes: NONE; returns the structured readiness payload.
   // Failure: transport errors propagate so the hook can mark the backend offline.
-  fetchHealth: () => get<HealthPayload>('/api/health'),
+  fetchHealth: (force = false) => get<HealthPayload>('/api/health', force ? { force: true } : undefined),
 
   // ---- Authentication (backend/app/routes/auth.py) -------------------------
   // AUTH 1.4 — Send login credentials to the authentication route.

@@ -1,8 +1,8 @@
 // PRDEditor — PRD Document tab extracted from the former Dashboard.tsx.
 // Renders the compiled PRD as editable markdown sections with lock/unlock and
 // inline section editing.
-import { useRef } from 'react';
-import { FileText, Pencil, Save, Lock, Unlock } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { FileText, Pencil, Save, Lock, Unlock, LoaderCircle } from 'lucide-react';
 import { ProjectState } from '../hooks/useProjectState';
 import { getSafeSectionTitle, getSafeSectionContent } from '../utils/markdown';
 import { parseAndRenderMarkdown } from './MarkdownRenderer';
@@ -42,6 +42,17 @@ export function PRDEditor({ state }: { state: ProjectState }) {
   // `base_content` so the server can three-way merge the save onto the
   // latest stored section ("last version + this edit").
   const editBaseRef = useRef<string>('');
+  const [savingSectionId, setSavingSectionId] = useState<string | null>(null);
+
+  const saveSection = async (sectionId: string) => {
+    if (savingSectionId !== null) return;
+    setSavingSectionId(sectionId);
+    try {
+      await handleSaveSection(sectionId, editBuffer, editBaseRef.current);
+    } finally {
+      setSavingSectionId(null);
+    }
+  };
 
   return (
     <div className="space-y-3 animate-fadeIn">
@@ -66,6 +77,7 @@ export function PRDEditor({ state }: { state: ProjectState }) {
           <div className="space-y-0">
             {sections.map((section, sectionIdx) => {
               const isEditing = editingSectionId === section.id;
+              const isSaving = savingSectionId === section.id;
               const safeTitle = getSafeSectionTitle(section.title);
               const safeContent = getSafeSectionContent(section.content);
               
@@ -139,6 +151,7 @@ export function PRDEditor({ state }: { state: ProjectState }) {
                       <StructuredSectionEditor
                         value={editBuffer}
                         onChange={setEditBuffer}
+                        sectionId={section.id}
                       />
                       <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100 mt-2">
                         <p className="text-[11px] text-slate-500 italic min-w-0">
@@ -155,11 +168,21 @@ export function PRDEditor({ state }: { state: ProjectState }) {
                             Cancel
                           </button>
                           <button
-                            onClick={() => handleSaveSection(section.id, editBuffer, editBaseRef.current)}
-                            className="px-4 py-1.5 rounded-xl bg-primary text-on-primary hover:brightness-110 text-xs font-semibold shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+                            onClick={() => void saveSection(section.id)}
+                            disabled={savingSectionId !== null}
+                            aria-busy={isSaving}
+                            className={`min-w-[124px] justify-center px-4 py-1.5 rounded-xl text-white text-xs font-semibold shadow-md transition-all flex items-center gap-1.5 ${
+                              isSaving
+                                ? 'bg-[#81736c] cursor-wait shadow-none'
+                                : 'bg-primary hover:brightness-110 cursor-pointer disabled:bg-[#81736c] disabled:cursor-wait'
+                            }`}
                           >
-                            <Save className="w-3.5 h-3.5" />
-                            <span>Save Changes</span>
+                            {isSaving ? (
+                              <LoaderCircle className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Save className="w-3.5 h-3.5" />
+                            )}
+                            <span>{isSaving ? 'Saving…' : 'Save Changes'}</span>
                           </button>
                         </div>
                       </div>

@@ -120,6 +120,11 @@ export interface ProjectState {
   isLoading: boolean;
   currentAgentNode: string | null;
   syncStatus: string;
+  /** True when the most recent PRD generation ended before a complete preview existed. */
+  prdGenerationFailed: boolean;
+  /** True when PRD preview succeeded but its LLM-backed flow refresh did not. */
+  prdDiagramGenerationFailed: boolean;
+  clearPrdGenerationNotices: () => void;
   diagramGeneratedAt: string | null;
   // Finding #40: LM Studio connectivity health (polled via GET /api/health)
   backendOnline: boolean | null;
@@ -587,6 +592,9 @@ export function useProjectState(
     isLoading: chat.isLoading,
     currentAgentNode: chat.currentAgentNode,
     syncStatus: chat.syncStatus,
+    prdGenerationFailed: chat.prdGenerationFailed,
+    prdDiagramGenerationFailed: chat.prdDiagramGenerationFailed,
+    clearPrdGenerationNotices: chat.clearPrdGenerationNotices,
     chatEndRef: chat.chatEndRef,
     handleSendMessage: chat.handleSendMessage,
     handleValidateRequirements: chat.handleValidateRequirements,

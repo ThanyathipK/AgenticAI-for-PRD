@@ -34,7 +34,7 @@ Agentic AI turns plain-English banking product briefs into **audited, versioned,
 - **Project review status and revision tracking** — the dashboard lets owners directly select Draft, HPO Review, PO Review, Approved, or Revised. Governed content changes automatically move an approved project to Revised and append a review-history event; the stricter transition/approval service exists for internal use and tests but is not called by the status API
 - **Operational project health** — dashboard health separates fully traced requirements from story, acceptance-criteria, PRD-reference, and diagram-reference coverage, then rolls in audit freshness/findings, unresolved questions, PRD review state, approval evidence, and active waivers
 - **Persistent background generation** — Architect and scoped-regeneration jobs continue after a browser disconnect, are requeued after a server restart, and can be cancelled explicitly; partial work is rolled back
-- **Generic artifact locking** — lock/unlock projects, epics, requirements, user stories, acceptance criteria, clarification questions, PRD documents, and individual PRD sections; optimistic UI with automatic rollback
+- **Scoped artifact locking** — lock/unlock authoritative requirements and individual PRD sections through the generic lock API; optimistic UI rolls back failed lock changes, locked requirements reject governed mutations, and locked PRD sections are preserved during editing, restore, and AI regeneration
 - **Real-time updates** — Server-Sent Events push state changes to the dashboard instead of polling
 - **Bounded project loading** — project switches abort obsolete state requests, reject older snapshots, load only the newest five chat messages, and fetch only the latest lightweight PRD SemVer row until the Version History tab is opened
 - **Paginated version history** — the Version History tab loads metadata newest-first in cursor-based chunks of 20; full snapshot bodies and diffs remain on-demand
@@ -126,8 +126,12 @@ agenticdia/
 ├── package.json                # npm scripts: dev / build / preview / lint / test / schema:* / inventory:tests
 ├── vite.config.ts              # React + Tailwind plugins, /api proxy → :8000
 ├── tsconfig.json
+├── docs/
+│   ├── FLOW_INDEX.md            # End-to-end flow registry and numbered-comment conventions
+│   └── adr/                     # Architecture decisions and preserved invariants
 ├── scripts/
 │   ├── parse_check.ts          # tsx harness inspecting the parsed init.sql DDL
+│   ├── check_bundle_budget.mjs # Production bundle-size budget check
 │   ├── generate_untested_inventory.py # Refreshes the test-coverage inventory
 │   └── *.test.ts              # Frontend/auth/locking/workflow node:test suites
 ├── src/
@@ -156,7 +160,9 @@ agenticdia/
 │       ├── MarkdownRenderer.tsx / ArchitectureFlows.tsx / Toast.tsx / Tooltip.tsx
 ├── backend/
 │   ├── .env.example            # ← copy to backend/.env
-│   ├── requirements.txt        # Python dependencies
+│   ├── requirements.txt        # Python runtime dependencies
+│   ├── requirements-dev.txt    # Test, lint, and coverage dependencies
+│   ├── pyproject.toml           # pytest, coverage, and Ruff configuration
 │   ├── alembic.ini
 │   ├── alembic/                # Legacy/in-place database upgrade history
 │   ├── init.sql                # Complete canonical PostgreSQL DDL for fresh databases
@@ -206,6 +212,12 @@ agenticdia/
 ├── test-data/                  # Sample Markdown/TXT briefs for extraction checks
 └── venv/                       # Local Python virtual environment
 ```
+
+For implementation-level navigation, [`docs/FLOW_INDEX.md`](docs/FLOW_INDEX.md)
+maps each major user flow across UI components, hooks, the typed API client,
+FastAPI routes, application/domain services, repositories, persistence, and SSE.
+Its numbered flow comments are documentation aids; the code and tests remain the
+source of truth for behavior.
 
 ---
 
@@ -545,7 +557,7 @@ Two implementation notes worth knowing when touching this area:
 5. Alternatively, upload an existing brief (DOCX / PDF / MD / TXT) in the **Document Library** and select **Extract Requirements**. The Gatherer reports progress and outcome in chat and creates one staged pending action. While it runs, the chat composer’s **Stop** control cancels extraction and discards partial results. Review and save or cancel any pending requirement change before **Generate PRD** becomes available.
 6. Review the result in the **ConfirmationPanel** — a compact *merge window* that shows only what matters: **What changes** (requirements / user stories / acceptance criteria deltas) and **What is affected** (PRD sections and diagrams referencing the affected `REQ-`/`US-` codes, with `DANGLING` and `locked` flags). Then accept (`confirm`) or reject (`cancel`).
 7. Inspect the **Traceability** tab for the Requirements ↔ Stories ↔ Acceptance Criteria ↔ PRD ↔ diagrams matrix and its coverage/gap report, and the **Version History** tab for the immutable PRD ledger (SemVer, detailed line changes—including the first version—and append-only restore).
-8. Use the **lock** buttons on any artifact — including individual PRD sections — to freeze it; locked and human-owned parts are never rewritten by the agents.
+8. Use the **lock** controls on requirements or individual PRD sections to freeze them. Locked requirements reject governed changes; locked and human-owned PRD parts are never rewritten by the agents.
 
 When the Matcher cannot safely identify the intended story, it adds a clarification question without opening an empty merge preview. Submitted answers are saved as audit evidence; a confirmation appears only when the Gatherer proposes a material requirement change. Answered questions are not silently replaced with model-generated follow-ups—run **Validate** when you want the Auditor to create any new questions.
 
@@ -553,7 +565,7 @@ When the Matcher cannot safely identify the intended story, it adds a clarificat
 
 - **Pending actions:** AI-proposed requirement changes are persisted as `pending_actions` rows with `status = WAITING_CONFIRMATION`. They are not applied until confirmation. Architect generation is artifact-only: it records the PRD and diagram immediately while leaving the saved requirements unchanged.
 - **Confirm / cancel:** `POST /api/confirm-action/{action_id}` applies the staged `proposed_changes` to `requirement_states` and deletes the action; `POST /api/cancel-action/{action_id}` discards it.
-- **Generic locks:** any supported artifact (`project`, `epic`, `requirement`, `user_story`, `acceptance_criteria`, `clarification_question`, `prd_document`, `prd_section`) can be locked/unlocked via the generic endpoints. `LockedBy` is recorded and mutation attempts on a locked artifact fail with `409 Conflict`. The UI applies **optimistic** lock updates with automatic rollback if the API call fails.
+- **Scoped generic locks:** the generic endpoints accept `requirement` and `prd_section`. `locked_by` and `locked_at` are recorded; incompatible mutations return `409 Conflict`. The UI applies optimistic lock updates with automatic rollback if the API call fails. Clarification questions have a separate lock-aware write path, but are not targets of the generic lock API.
 
 ## Real-Time Updates (SSE)
 
@@ -790,7 +802,7 @@ exists on only one side. Every modeled application table must be present in
 | Table | Purpose |
 |-------|---------|
 | `users` | Stakeholders, product owners, analysts, auditor; bcrypt `password_hash`, seeded system user on startup |
-| `projects` | Banking systems / products under review; owner (`user_id`), status workflow, pin/flag + lock metadata |
+| `projects` | Banking systems / products under review; owner (`user_id`), status workflow, pin and dashboard flag |
 | `project_review_events` | Append-only review/reopen events; direct dashboard status selections are not added here |
 | `epics` | High-level functional domains per project |
 | `requirements` | Individual requirement records (lock metadata incl. `is_locked`) |

@@ -60,13 +60,12 @@ export function assessPrdClarity(markdown: string): PrdClarityAssessment {
     ...(operationalCategories < 3 ? ['at least three distinct operational control areas'] : []),
     ...(!constraints ? ['explicit rules and constraints'] : []),
   ];
-  const isHigh = namedTechnology && namedDomain && actorsAndFlows
-    && measurementCount >= 2 && operationalCategories >= 3 && constraints;
-  const isMedium = (namedTechnology || namedDomain) && actorsAndFlows && constraints
+  const isHigh = namedDomain && actorsAndFlows && constraints
     && (measurementCount >= 1 || operationalCategories >= 2);
+  const isMedium = (namedTechnology || namedDomain) && (actorsAndFlows || constraints);
   const level: PrdClarityLevel = isHigh ? 'High' : isMedium ? 'Medium' : 'Low';
   const summary = level === 'High'
-    ? 'The PRD has named technology and domain context, clear flows, multiple measurable targets, and broad operational coverage.'
+    ? 'The PRD has specific domain context, clear actors and flows, explicit constraints, and measurable or operational detail.'
     : `The PRD still needs ${missing.slice(0, 3).join(', ')}.`;
 
   return { level, score, summary, missing };

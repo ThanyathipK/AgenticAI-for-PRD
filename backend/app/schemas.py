@@ -867,6 +867,7 @@ class ProcessRequirementsResponse(BaseModel):
     audit_result: Optional[AuditResultDetail] = Field(None, description="Compliance audit result.")
     prd_markdown: Optional[str] = Field(None, description="Generated PRD markdown, if produced.")
     mermaid_diagram: Optional[str] = Field(None, description="Generated Mermaid diagram source, if produced.")
+    diagram_regenerated: Optional[bool] = Field(None, description="True only when this run produced a fresh valid Mermaid diagram.")
     diagram_generated_at: Optional[str] = Field(None, description="ISO8601 timestamp of the latest successful diagram generation.")
     message: Optional[str] = Field(None, description="Assistant/agent message text.")
     pending_merge: Optional[bool] = Field(None, description="True when a pending merge action awaits confirmation.")

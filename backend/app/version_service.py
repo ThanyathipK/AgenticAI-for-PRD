@@ -264,12 +264,12 @@ async def record_prd_version(
     )
     return version
 # VERSION 6.7 — Line-level diff engine (difflib SequenceMatcher) used by 6.8: returns
-#             [["add"|"del"|"context", line], …] with a bounded context window plus
+#             [["add"|"del"|"context"|"skip", line], …] with a bounded context window plus
 #             added/removed counters for the UI diff cards (1.3/1.4).
 def _line_diff(was: Optional[str], now: Optional[str], max_context: int = 2) -> Dict[str, Any]:
     """Compact line-level diff between two section contents.
 
-    Returns ``{diff_lines: [["add"|"del"|"context", line], ...],
+    Returns ``{diff_lines: [["add"|"del"|"context"|"skip", line], ...],
     added, removed}``. ``max_context`` context lines surround each change hunk.
     """
     import difflib
@@ -282,11 +282,13 @@ def _line_diff(was: Optional[str], now: Optional[str], max_context: int = 2) -> 
     added = removed = 0
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
-            idx = 0
-            for line in a[i1:i2]:
-                if idx < max_context or (i2 - i1 - idx) <= max_context:
-                    lines.append(["context", line])
-                idx += 1
+            equal_lines = a[i1:i2]
+            if len(equal_lines) <= max_context * 2:
+                lines.extend(["context", line] for line in equal_lines)
+            else:
+                lines.extend(["context", line] for line in equal_lines[:max_context])
+                lines.append(["skip", str(len(equal_lines) - max_context * 2)])
+                lines.extend(["context", line] for line in equal_lines[-max_context:])
         elif tag == "replace":
             removed += (i2 - i1)
             added += (j2 - j1)
