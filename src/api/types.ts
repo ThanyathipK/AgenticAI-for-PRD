@@ -713,7 +713,7 @@ export interface PrdVersionRestorePayload {
 }
 
 // ============================================================================
-// Requirement Traceability Matrix (derived, read-only)
+// TRACEABILITY response contracts (derived, read-only; intentionally unnumbered DTOs)
 // GET /api/project/{id}/traceability — links Requirements <-> User Stories
 // <-> Acceptance Criteria <-> PRD sections <-> diagrams via FKs + REQ-/US- code
 // references inside section content and mermaid source. See

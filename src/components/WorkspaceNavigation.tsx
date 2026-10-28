@@ -36,6 +36,9 @@ export function WorkspaceNavigation({
   onDownloadDocx,
   onPrintPdf,
 }: WorkspaceNavigationProps) {
+  // PRD-EXPORT 1.0 — Export menu UI. DOCX (1.1) and PDF (1.2) close the menu
+  // before delegating to the shared coordinator 2.0; no document conversion
+  // or filename construction happens in this component.
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
   useEffect(() => {

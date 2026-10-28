@@ -77,7 +77,7 @@ async def _ensure_sections_for_write(project_id: str, session: AsyncSession) -> 
     )
 
 
-# PRD-SECTION 2.1 — READ: all nine parts in document order (PRD-SECTION 1.1). Auth:
+# PRD-SECTION 4.1 — GET all nine parts in document order (UI 1.0 → hook 2.1 → client 3.1). Auth:
 #             AUTH 7.5. This endpoint is strictly read-only: when no stored parts
 #             exist it returns deterministic preview rows without inserting them.
 @router.get("/api/project/{project_id}/prd/sections", response_model=PrdSectionListResponse, status_code=status.HTTP_200_OK)
@@ -106,27 +106,12 @@ async def list_prd_sections(
     return {"project_id": project_id, "sections": sections}
 
 
-# PRD-SECTION 2.2 — WRITE: edit ONE part (PRD-SECTION 1.3). The most guarded write in
-#             the app, in this order:
-#               2.2.0 lock: section only, enforced in repository 4.4. Generic
-#                     LOCK supports no project/document artifact types.
-#               2.2.1 review_status validation → 422 (PRD-SECTION 3.1.1)
-#               2.2.2 section lookup → 404
-#               2.2.3 reconcile with the latest document (so the merge base is the
-#                     current version, never a stale/blank template part)
-#               2.2.4 THREE-WAY merge (PRD-SECTION 3.5) so a concurrent AI change is
-#                     not clobbered by the manual save
-#               2.2.5 repository update_content (4.4: appends a prd_section_versions
-#                     row FIRST, then updates the materialized content + OWNERSHIP;
-#                     lock-gated). A manual save marks the part human-owned
-#                     (ai_generatable=false) so "Generate PRD" preserves it.
-#               2.2.6 artifact_event_logs append (fail-soft)
-#               2.2.7 re-stitch the whole document (PRD-SECTION 3.7)
-#               2.2.8 VERSION 3.6 ledger row FIRST (so version_number advances), then
-#                     PROJECT 8.2.2 persists the document — ORDER MATTERS: recording the
-#                     version first makes the state write create a NEW prd_documents row
-#                     for version N+1 instead of overwriting version N's row
-#               2.2.9 SSE "prd_section_updated"
+# PRD-SECTION 4.2 — PATCH one part (UI 1.0 → handler 2.2 → client 3.2).
+# Input: edited content, optional edit base/review status/ownership flag.
+# Calls: orchestration 5.1–5.2 → domain merge/stitch 6.5/6.6 → repository 7.4.
+# Writes: append-only section history, materialized part, VERSION ledger, full PRD state.
+# Failure: invalid review 422, missing part 404, section lock 409.
+# Next: publish prd_section_updated at 8.1 for downstream refresh.
 @router.patch("/api/project/{project_id}/prd/sections/{section_key}", response_model=PrdSectionUpdateResponse, status_code=status.HTTP_200_OK)
 async def update_prd_section(
     project_id: str,
@@ -183,7 +168,7 @@ async def update_prd_section(
     # concurrent changes outside the edit window, so a manual save always
     # produces "last version + this edit" instead of overwriting. Legacy
     # clients without ``base_content`` fall back to verbatim storage.
-    # PRD-SECTION 2.2.3 — Three-way merge with the CURRENT stored text (3.5): keeps the
+    # PRD-SECTION 5.1 — Reconcile latest PRD, then three-way merge with current text (6.5):
     #                 user's touched lines and preserves concurrent AI changes; legacy
     #                 clients without base_content are stored verbatim.
     edited_content = merge_edited_section(
@@ -206,7 +191,7 @@ async def update_prd_section(
     )
 
     try:
-        # PRD-SECTION 2.2.4 — Repository write (4.4): append the previous content as a
+        # PRD-SECTION 5.2 — Repository write (7.4): append the previous content as a
         #                 prd_section_versions row, then materialize the new content.
         #                 ArtifactLockError surfaces here as 409.
         # A manual save makes the part HUMAN-OWNED (content_source='human',
@@ -244,7 +229,7 @@ async def update_prd_section(
     except Exception as log_err:  # never block an edit on event logging
         logger.warning(f"[PRD SECTIONS] Failed to log update event: {log_err}")
 
-    # PRD-SECTION 2.2.6 — Re-stitch ALL parts (3.7): the parts table is the single
+    # PRD-SECTION 5.2.1 — Re-stitch ALL parts (6.6): the parts table is the single
     #                 source of truth for the full document.
     document_markdown = await assemble_document_markdown(project_id, session)
 
@@ -270,6 +255,8 @@ async def update_prd_section(
         "generated_prd": document_markdown,
     }, session)
 
+    # PRD-SECTION 8.1 — Notify subscribers after edit orchestration has persisted
+    # the part and reassembled document; clients use this as a refresh signal.
     await event_manager.publish(project_id, "prd_section_updated", {
         "project_id": project_id,
         "section_key": section_key,
@@ -279,12 +266,11 @@ async def update_prd_section(
     return {"section": updated, "document_markdown": document_markdown}
 
 
-# PRD-SECTION 2.7 — READ the per-part history (repository 4.5). Callers: this module's
-#             revert path (2.3) resolves its target here; the route itself is reached only
+# PRD-SECTION 4.7 — GET per-part history (repository 7.5). The route is reached only
 #             by API clients/tests — verified: src/api/client.ts defines no
 #             getPrdSectionVersions helper and nothing in src/ calls `/versions`, so there
 #             is NO section-version viewer in the SPA today (per-part history is inspected
-#             through the whole-document VERSION 2.1/2.2 views instead).
+#             through the whole-document VERSION 4.1/4.2 views instead).
 @router.get("/api/project/{project_id}/prd/sections/{section_key}/versions", response_model=list[PrdSectionVersionResponse], status_code=status.HTTP_200_OK)
 async def list_prd_section_versions(
     project_id: str,
@@ -298,15 +284,15 @@ async def list_prd_section_versions(
     return await PRDSectionVersionRepository.get_by_section(section["id"], session)
 
 
-# PRD-SECTION 2.3 — WRITE: revert ONE part to an older version. APPEND-ONLY: the old
+# PRD-SECTION 4.3 — POST revert ONE part to an older version. APPEND-ONLY: the old
 #             content becomes a NEW prd_section_versions row — history is never rewritten.
-#             Same lock order as 2.2 (project → document → section in 4.4), then the 3.7
-#             re-stitch → VERSION 3.6 ledger → PROJECT 8.2.2 document write (same
+#             Same lock order as edit (project → document → section in 7.4), then the 6.6
+#             re-stitch → VERSION 6.6 ledger → PROJECT 8.2.2 document write (same
 #             ORDER-MATTERS rationale as 2.2.7) → SSE.
 #             DISCREPANCY (documented, not changed): UNREACHABLE FROM THE UI — verified
 #             src/api/client.ts exposes no revert helper and nothing in src/ targets
 #             `/revert`, so per-part rollback is API/test-only; users restore through the
-#             whole-document path instead (VERSION 2.5).
+#             whole-document path instead (VERSION 4.5).
 @router.post("/api/project/{project_id}/prd/sections/{section_key}/revert/{version_number}", response_model=PrdSectionRevertResponse, status_code=status.HTTP_200_OK)
 async def revert_prd_section(
     project_id: str,
@@ -335,7 +321,7 @@ async def revert_prd_section(
             detail=f"Version {version_number} of PRD section '{section_key}' not found",
         )
 
-    # PRD-SECTION 2.3.1 — Repository write (4.4) with the OLD version's content: appends
+    # PRD-SECTION 5.3 — Repository write (7.4) with the OLD version's content: appends
     #                 a new prd_section_versions row (append-only revert) and updates the
     #                 materialized part; lock-gated like any other write.
     updated = await PRDSectionRepository.update_content(
@@ -343,8 +329,8 @@ async def revert_prd_section(
         changed_by=updated_by or "user",
         change_summary=f"Reverted to version {version_number}.",
     )
-    # PRD-SECTION 2.3.2 — Re-stitch all parts with the restored part applied (3.7), then
-    #                 the same ORDER-MATTERS ledger → state sequence as 2.2.7.
+    # PRD-SECTION 5.3.1 — Re-stitch all parts with the restored part applied (6.6), then
+    #                 the same order-sensitive ledger → state sequence as edit 5.2.
     document_markdown = await assemble_document_markdown(project_id, session)
 
     # ORDER MATTERS: record the version first (advances requirement_states
@@ -367,6 +353,8 @@ async def revert_prd_section(
         "generated_prd": document_markdown,
     }, session)
 
+    # PRD-SECTION 8.2 — Notify subscribers after the append-only revert and full
+    # document propagation have completed.
     await event_manager.publish(project_id, "prd_section_reverted", {
         "project_id": project_id,
         "section_key": section_key,
@@ -380,7 +368,7 @@ async def revert_prd_section(
     }
 
 
-# LOCK 4.6 / PRD-SECTION 2.4 — Per-part LOCK (PRD-SECTION 1.4): blocks 2.2/2.3 AND excludes the part
+# LOCK 4.6 / PRD-SECTION 4.4 — Per-part LOCK (handler 2.4/client 3.3): blocks edit/revert AND excludes the part
 #             from AI regeneration (ARCHITECT 5.1's sync). Auth: AUTH 7.5; branches: 400
 #             UUID → 404 section → 409 already locked → SSE "artifact_locked".
 @router.post("/api/project/{project_id}/prd/sections/{section_key}/lock", response_model=Dict, status_code=status.HTTP_200_OK)
@@ -419,7 +407,7 @@ async def lock_prd_section(
     return {"status": "locked", "artifact": lock_info}
 
 
-# LOCK 4.7 / PRD-SECTION 2.5 — Per-part UNLOCK: re-enables editing and AI regeneration. Branches:
+# LOCK 4.7 / PRD-SECTION 4.5 — Per-part UNLOCK: re-enables editing and AI regeneration. Branches:
 #             403 when the caller may not release the lock (PermissionError from the lock
 #             service), 404 section → SSE "artifact_unlocked".
 @router.post("/api/project/{project_id}/prd/sections/{section_key}/unlock", response_model=Dict, status_code=status.HTTP_200_OK)
@@ -458,7 +446,7 @@ async def unlock_prd_section(
     return {"status": "unlocked", "artifact": lock_info}
 
 
-# PRD-SECTION 2.6 — READ one part incl. its lock + review metadata.
+# PRD-SECTION 4.6 — GET one part including lock + review metadata.
 @router.get("/api/project/{project_id}/prd/sections/{section_key}", response_model=PrdSectionResponse, status_code=status.HTTP_200_OK)
 async def get_prd_section(
     project_id: str,

@@ -1,4 +1,6 @@
-// A concise, read-only hierarchy for finding the item a user wants to change.
+// TRACEABILITY 1.0 — Read-only matrix/hierarchy UI. It renders requirement →
+// story → criterion rows plus PRD/diagram references and coverage gaps; it
+// never mutates an artifact.
 import React, { useCallback, useEffect, useState } from "react";
 import {
   Loader2,
@@ -150,10 +152,14 @@ export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
 export const RequirementTraceability: React.FC<
   RequirementTraceabilityProps
 > = ({ projectId, refreshToken }) => {
+  // TRACEABILITY 2.0 — Colocated frontend state/load coordinator. Project or
+  // derived-artifact token changes trigger 2.1; explicit Refresh reuses it.
   const [matrix, setMatrix] = useState<TraceabilityPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // TRACEABILITY 2.1 — Load client 3.1, replace matrix state atomically, and
+  // expose decoded read failures without retaining stale rows.
   const loadHierarchy = useCallback(async (id: string): Promise<void> => {
     setIsLoading(true);
     setLoadError(null);

@@ -46,7 +46,7 @@ from app.workflow_orchestration.prd_narrative import extract_headed_narrative
 
 logger = logging.getLogger("app.document_processor")
 
-# DOC-UPLOAD 6.0 — Pure extraction/proposal helpers behind route 2.5. They sanitize
+# DOC-UPLOAD 6.2–6.7 — Pure extraction/proposal helpers behind route 4.5. They sanitize
 # only the LLM copy, choose full/chunked mode, gather structured output, de-duplicate
 # chunks, and build a revision-guarded proposal. Nothing in this module persists.
 
@@ -79,8 +79,8 @@ _GATHERER_INPUT_VARIABLES = [
 
 # Traceability marker stored inside a draft's ``proposed_changes`` so the
 # confirm-action flow can audit-log which document produced the merge.
-# DOC-UPLOAD 6.6 — Draft traceability markers, shared between 6.5 (which stamps them
-#             into ``proposed_changes``) and DOC-UPLOAD 2.4.2 (which matches on them when
+# DOC-UPLOAD 6.7 — Draft traceability markers, shared with 6.6 (which stamps them
+#             into ``proposed_changes``) and DOC-UPLOAD 5.2 (which matches on them when
 #             evicting the drafts of a deleted document). Keep both in sync.
 DRAFT_DOCUMENT_REF_KEY = "_document_ref"
 DRAFT_ACTION_TYPE = "INSERT_CHUNKED_REQUIREMENTS"
@@ -97,7 +97,7 @@ class DocumentRouting:
 
 
 def prepare_document_for_extraction(markdown: str) -> str:
-    """DOC-UPLOAD 6.1 — Remove embedded image bytes from the LLM-only copy.
+    """DOC-UPLOAD 6.2 — Remove embedded image bytes from the LLM-only copy.
 
     Mammoth intentionally preserves DOCX images as base64 data URIs in the
     canonical markdown.  That is useful for preview/storage but meaningless to
@@ -121,7 +121,7 @@ def prepare_document_for_extraction(markdown: str) -> str:
 
 
 def document_budget() -> int:
-    """DOC-UPLOAD 6.2 — Return the safe input budget for one Gatherer pass.
+    """DOC-UPLOAD 6.3 — Return the safe input budget for one Gatherer pass.
 
     A fraction of ``MAX_CONTEXT_TOKENS`` so the system prompt + gatherer
     instructions + tool schema + output slack still fit when the chunk joins
@@ -131,7 +131,7 @@ def document_budget() -> int:
 
 
 def decide_document_mode(token_count: int) -> str:
-    """DOC-UPLOAD 6.2.1 — Select one full pass or chunked passes.
+    """DOC-UPLOAD 6.3.1 — Select one full pass or chunked passes.
 
     The DOCUMENT_BUDGET boundary (``DOCUMENT_BUDGET_FRACTION * MAX_CONTEXT_TOKENS``)
     separates the two modes — a document at or below the budget always runs in
@@ -141,7 +141,7 @@ def decide_document_mode(token_count: int) -> str:
 
 
 def route_document_tokens(token_count: int) -> DocumentRouting:
-    """DOC-UPLOAD 6.2.2 — Describe mode and predicted chunk count.
+    """DOC-UPLOAD 6.3.2 — Describe mode and predicted chunk count.
 
     Pure decision helper used by the process route and by tests at the
     DOCUMENT_BUDGET boundary. ``chunk_count`` is the number of gatherer passes
@@ -257,7 +257,7 @@ def split_markdown_into_chunks(
     overlap: Optional[int] = None,
     token_count: Optional[int] = None,
 ) -> List[str]:
-    """DOC-UPLOAD 6.3 — Split text into ordered token-budgeted chunks with overlap.
+    """DOC-UPLOAD 6.4 — Split text into ordered token-budgeted chunks with overlap.
 
     Behavior
     --------
@@ -335,7 +335,7 @@ def split_markdown_into_chunks(
 
 
 def accumulate_document_draft(chunk_results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """DOC-UPLOAD 6.4 — Collapse chunk outputs into one de-duplicated draft.
+    """DOC-UPLOAD 6.5 — Collapse chunk outputs into one de-duplicated draft.
 
     Chunk overlap means the same story can appear in consecutive chunk results
     with the same ticket code or title; duplicates are collapsed here across the
@@ -423,7 +423,7 @@ def build_merge_preview(
     document_id: str,
     document_filename: str,
 ) -> Dict[str, Any]:
-    """DOC-UPLOAD 6.5 — Build one revision-guarded full-state merge proposal.
+    """DOC-UPLOAD 6.6 — Build one revision-guarded full-state merge proposal.
 
     This is the payload stored in ``pending_action.proposed_changes``. It
     preserves every existing requirement and related state (so a confirm never
@@ -533,7 +533,7 @@ async def extract_requirements_from_text(
     chunk_index: int = 1,
     chunk_count: int = 1,
 ) -> Dict[str, Any]:
-    """DOC-UPLOAD 6.3.1 — Run the Gatherer over one extraction chunk.
+    """DOC-UPLOAD 6.4.1 — Run the Gatherer over one extraction chunk.
 
     Mirrors ``agents.gatherer_node``'s LLM invocation (same prompt file, same
     ``GatheredRequirements`` schema, same ``with_structured_output`` strategy)

@@ -22,6 +22,10 @@ logger = logging.getLogger("app.routes.traceability")
 router = APIRouter()
 
 
+# TRACEABILITY 4.1 — GET matrix. Trigger: UI 1.0 → loader 2.1 → client 3.1.
+# Input: owner-authorized project UUID. Calls: project existence read 7.4, then
+# matrix orchestration 5.1. Failure: invalid UUID 400; missing project 404.
+# Writes/effects: none—the response is derived from current authoritative rows.
 @router.get(
     "/api/project/{project_id}/traceability",
     response_model=TraceabilityResponse,
@@ -52,6 +56,7 @@ async def get_traceability(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project_id format")
 
+    # TRACEABILITY 7.4 — Confirm the authoritative project exists before deriving rows.
     project = await ProjectRepository.get_by_id(project_id, session)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")

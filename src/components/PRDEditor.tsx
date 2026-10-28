@@ -19,6 +19,10 @@ const isHeadingOnlySection = (content: string) => {
 };
 
 export function PRDEditor({ state }: { state: ProjectState }) {
+  // PRD-SECTION 1.0 — Nine-part editor UI. It renders ordered section state from
+  // hook layer 2.x, owns the local edit buffer, and delegates Save/lock actions
+  // to handlers 2.2/2.4. Part history and revert have no SPA controls because
+  // client methods for routes 4.7/4.3 do not exist.
   const {
     prdMarkdown,
     sections,

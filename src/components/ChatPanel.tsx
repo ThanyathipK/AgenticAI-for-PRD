@@ -411,8 +411,8 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
   // Clip-icon attach: uploads straight into the project knowledge base
   // (same KNOWLEDGE-ONLY contract as the DocumentLibrary upload control).
   // DOC-UPLOAD 1.1 — Upload ENTRY POINT of the whole flow: the paperclip is the ONLY way a
-  //             document enters a project. It calls 1.2 directly; extraction stays a
-  //             separate, explicit action (DOC-UPLOAD 1.7 → 2.5).
+  //             document enters a project. It calls hook 2.3 directly; extraction stays a
+  //             separate, explicit action (DOC-UPLOAD 1.4 → 2.4 → 4.5).
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // DOC-UPLOAD 1.1.1 — Guarded click: no project ⇒ no upload (the button is also disabled
@@ -423,8 +423,8 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
   };
 
   // DOC-UPLOAD 1.1.2 — Pick handler: clears the input first so the SAME file can be attached
-  //                 again later, then hands the File to 1.2 (which owns the POST + status
-  //                 branching). No local state is mutated here — the list reload in 1.3 is
+  //                 again later, then hands the File to 2.3 (which owns the POST + status
+  //                 branching). No local state is mutated here — the list reload in 2.2 is
   //                 what makes the new row appear.
   const handleFilePicked = async (
     event: ChangeEvent<HTMLInputElement>,
@@ -807,7 +807,7 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
               )}
             </button>
           </Tooltip>
-          {/* DOC-UPLOAD 1.1 — hidden file input; `accept` mirrors the backend allow-list (3.1) */}
+          {/* DOC-UPLOAD 1.1 — hidden file input; `accept` mirrors domain allow-list 6.1. */}
           <input
             ref={fileInputRef}
             type="file"

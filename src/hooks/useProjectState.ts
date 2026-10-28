@@ -412,7 +412,10 @@ export function useProjectState(
     agentActionsBlockedReason,
   });
 
-  // Shared plumbing for the two file exports. The generated PRD is LaTeX
+  // PRD-EXPORT 2.0 — Shared PDF/DOCX export coordinator. Trigger: menu 1.x.
+  // It selects the project/current fallback source, calls client 3.1/3.2,
+  // creates the browser download at 2.1, and decodes Blob failures at 2.2.
+  // The generated PRD is LaTeX
   // (template-krungsrinimble.tex), so the finished PDF/DOCX is COMPILED
   // server-side (Tectonic / Pandoc) — the browser never re-parses it as
   // markdown, which is what previously made exports follow template.md.
@@ -458,6 +461,8 @@ export function useProjectState(
         .replace(/[^A-Za-z0-9._-]+/g, "_")
         .slice(0, 48)
         .replace(/^_+|_+$/g, "")}`;
+      // PRD-EXPORT 2.1 — Browser download effect. Prefer the authoritative
+      // Content-Disposition filename; construct a legacy fallback only when absent.
       const link = document.createElement("a");
       link.href = URL.createObjectURL(download.blob);
       const latestSemVer = store.versionHistory[0]?.semVersion;
@@ -476,6 +481,8 @@ export function useProjectState(
           : "PRD Word Document (.docx) exported from the .tex template.",
       );
     } catch (err) {
+      // PRD-EXPORT 2.2 — Binary endpoints return error JSON inside a Blob;
+      // decode it before falling back to format-specific generic messaging.
       const detail = await detailFromBlobError(err);
       if (detail) {
         handleError(detail, err);
@@ -589,6 +596,8 @@ export function useProjectState(
     isCascadeGenerating: Boolean(activeCascadeJobId),
     handleStopGeneration: () => {
       if (documents.processingDocId) {
+        // JOB 2.3 — Global Stop prioritizes the active document-extraction
+        // coordinator; other durable/direct generation uses JOB 2.2.
         void documents.handleStopDocumentExtraction();
         return;
       }

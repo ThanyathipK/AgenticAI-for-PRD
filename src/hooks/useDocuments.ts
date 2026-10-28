@@ -1,7 +1,7 @@
 // useDocuments — uploaded-document (knowledge base) state + handlers.
 //
-// DOC-UPLOAD 1.0 — Frontend document lifecycle (backend 2.x, repository 4.x).
-// Upload adds knowledge only. Explicit extraction (1.7 → 2.5) stages a pending
+// DOC-UPLOAD 2.0 — Frontend document state and action coordinator (API client 3.x).
+// Upload adds knowledge only. Explicit extraction (2.4 → 3.4) stages a pending
 // merge for CONFIRM; it never applies proposed requirement changes directly.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
@@ -53,7 +53,7 @@ export interface UseDocumentsResult {
 }
 
 export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
-  // DOC-UPLOAD 1.4 — Documents state rendered by DocumentLibrary. Note that backend
+  // DOC-UPLOAD 2.1 — Documents state rendered by DocumentLibrary. Note that backend
   //               `extraction_pending` covers both a running extraction and a staged
   //               draft; the row's processing state distinguishes the live run locally.
   const [documents, setDocuments] = useState<UploadedDocumentPayload[]>([]);
@@ -66,7 +66,7 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
   const uploadInFlightRef = useRef(false);
   const extractionAbortRef = useRef<AbortController | null>(null);
 
-  // DOC-UPLOAD 1.3 — Knowledge-base list load (DOC-UPLOAD 2.2). Runs on project switch and
+  // DOC-UPLOAD 2.2 — Knowledge-base list load (DOC-UPLOAD 3.2 → 4.2). Runs on project switch and
   //             is the reconciliation point after upload / extraction / delete.
   const refreshDocuments = useCallback(async () => {
     if (!deps.projectId) {
@@ -89,7 +89,7 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
     void refreshDocuments();
   }, [refreshDocuments]);
 
-  // DOC-UPLOAD 1.7.1 — SSE live-progress bridge. `useProjectState` wires a stable setter here that
+  // DOC-UPLOAD 2.4.1 — SSE live-progress bridge. `useProjectState` wires a stable setter here that
   // `useProjectSync`'s SSE handler drives with document_extraction_progress
   // frames, so the DocumentLibrary's "chunk X/N" readout advances in real time
   // (the old optimist placeholder stayed at 0/N for the whole run).
@@ -100,7 +100,7 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deps.registerLiveProgress]);
 
-  // DOC-UPLOAD 1.8 — Draft-resolution refresh: when the pending list SHRINKS (the extraction
+  // DOC-UPLOAD 2.7 — Draft-resolution refresh: when the pending list SHRINKS (the extraction
   //             draft was confirmed or cancelled — CONFIRM/CANCELLATION flows), re-read the
   //             documents so each row's extraction_status chip stays truthful.
   useEffect(() => {
@@ -112,8 +112,8 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deps.pendingActions.length]);
 
-  // DOC-UPLOAD 1.2 — Upload handler. POSTs the file (DOC-UPLOAD 2.1), then branches on the
-  //             returned status: `failed` (e.g. the 2.1.5 needs-OCR record) surfaces the
+  // DOC-UPLOAD 2.3 — Upload handler. POSTs the file (DOC-UPLOAD 3.1 → 4.1), then branches on the
+  //             returned status: `failed` (e.g. the OCR-only branch) surfaces the
   //             server message as an amber notice and the row stays visible with status
   //             'failed'. On success the backend appends one simple upload confirmation
   //             to the durable chat transcript, so SSE refresh restores it after reload.
@@ -161,7 +161,7 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deps.projectId, deps.setMessages, refreshDocuments]);
 
-  // DOC-UPLOAD 1.7 — Explicit extraction handler: start backend 2.5, display SSE
+  // DOC-UPLOAD 2.4 — Explicit extraction handler: start backend 4.5, display SSE
   //               progress, and mirror its pending-action id into CONFIRM UI state.
   //               The stored knowledge document remains available throughout.
   const handleProcessDocument = useCallback(async (doc: UploadedDocumentPayload) => {
@@ -228,8 +228,9 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
     }
   }, [deps, processingDocId, refreshDocuments]);
 
-  // DOC-UPLOAD 1.7.2 — Stop handler: signal backend 2.6, then abort this browser
-  //                 wait. The process route owns status reset and cancellation log.
+  // DOC-UPLOAD 2.5 / JOB 2.3 — Extraction Stop coordinator: call JOB 3.5,
+  // which signals JOB 4.6, then abort this browser wait. The process route owns
+  // status reset and the cancellation transcript.
   const handleStopDocumentExtraction = useCallback(async () => {
     if (!deps.projectId || !processingDocId) return;
     deps.setSyncStatus('Stopping document extraction…');
@@ -243,8 +244,8 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
     }
   }, [deps, processingDocId]);
 
-  // DOC-UPLOAD 1.6 — Remove handler (DOC-UPLOAD 2.4). Currently staged drafts from
-  //             this document are discarded server-side (2.4.2); the pending
+  // DOC-UPLOAD 2.6 — Remove handler (DOC-UPLOAD 3.6 → 4.4). Currently staged drafts from
+  //             this document are discarded server-side (5.2); the pending
   //             panel evicts it on the next SSE sync / project refresh — this only
   //             re-reads the knowledge list. Returns a boolean so the ConfirmModal can
   //             stay open on failure.

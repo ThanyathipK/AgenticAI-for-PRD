@@ -181,6 +181,7 @@ def _previous_version_rows(history_context: Optional[str]) -> List[tuple[str, st
     return rows
 
 
+# PRD-EXPORT 6.6 — Stamp resolved SemVer into the filled export document.
 def stamp_version_label(document: str, label: str) -> str:
     """Replace every :data:`PENDING_VERSION_LABEL` marker in ``document`` with
     ``label`` (LaTeX-escaped), returning the stamped document.
@@ -1177,8 +1178,8 @@ def _fill_glossary_rows(body: str, narrative: Optional[Dict[str, Any]]) -> str:
 
 
 
-# ARCHITECT 3.1 — Deterministic template filler (the ARCHITECT 3.3 fill path, and the
-#             same helper used by the PROJECT PRD-export endpoint): fills the official
+# ARCHITECT 3.1 / PRD-EXPORT 6.6.1 — Deterministic template filler (the ARCHITECT
+#             fill path and snapshot-producing export): fills the official
 #             LaTeX template BODY's blanks from the project dataset — cover,
 #             stakeholders, version history, reviews, business overview, scope tables
 #             (in/out), technical appendix and glossary. No LLM text enters the

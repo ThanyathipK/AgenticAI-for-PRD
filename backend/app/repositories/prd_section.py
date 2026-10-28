@@ -19,19 +19,19 @@ from app.repositories.base import as_uuid, serialize_prd_section, serialize_prd_
 logger = logging.getLogger(__name__)
 
 
-# PRD-SECTION 4.x — prd_sections + prd_section_versions persistence.
-#   4.1 get_by_project        ← PRD-SECTION 2.1, 3.6, 3.7, VERSION 3.1/3.8
-#   4.2 get_by_key            ← PRD-SECTION 2.2/2.3/2.4/2.5/2.6 (route lookups)
-#   4.3 create                ← PRD-SECTION 3.6 seeding and ARCHITECT 5.1 sync
-#   4.4 update_content        ← PRD-SECTION 2.2.4 / 2.3.1 (APPEND-ONLY + lock-gated)
-#   4.5 get_by_section / get_by_version_number ← PRD-SECTION 2.7 / 2.3
+# PRD-SECTION 7.x — prd_sections + prd_section_versions persistence.
+#   7.1 get_by_project         ← route 4.1, domain 6.6/6.7, VERSION 6.1/6.8
+#   7.2 get_by_key             ← route lookups 4.2–4.6
+#   7.3 create                 ← domain seeding 6.7 and ARCHITECT 5.1 sync
+#   7.4 update_content         ← orchestration 5.2/5.3 (append-only + lock-gated)
+#   7.5 version-history reads  ← routes 4.7/4.3
 # The per-part history table is append-only: there is no update/delete for
 # prd_section_versions.
 class PRDSectionRepository:
     """Handles the editable / lockable PARTS of a project's PRD document."""
 
     @staticmethod
-    # PRD-SECTION 4.1 — SELECT the project's parts in document order (the order 3.4
+    # PRD-SECTION 7.1 — SELECT the project's parts in document order (the order 6.4
     #             stitching depends on, so this ordering is a document contract).
     async def get_by_project(project_id: str, session: AsyncSession) -> List[Dict[str, Any]]:
         """List all sections of the project in document order, with their
@@ -119,7 +119,7 @@ class PRDSectionRepository:
         return serialize_prd_section(section, current_version=1)
 
     @staticmethod
-    # PRD-SECTION 4.4 — THE part-content write. APPEND-ONLY guarantee: the previous
+    # PRD-SECTION 7.4 — THE part-content write. APPEND-ONLY guarantee: the previous
     #             content is snapshotted as a prd_section_versions row BEFORE the
     #             materialized `content` is replaced, so nothing is silently overwritten.
     #             Lock enforcement (the finest gate) refuses a locked part, and the
@@ -300,9 +300,9 @@ class PRDSectionVersionRepository:
         return serialize_prd_section_version(version)
 
     @staticmethod
-    # PRD-SECTION 4.5 — Per-part history reads: all versions of one part (PRD-SECTION
-    #             2.7 — currently API/test-only, no SPA caller) and one specific version
-    #             (the revert target of 2.3, also UI-unreachable). Both still back the
+    # PRD-SECTION 7.5 — Per-part history reads: all versions of one part (route 4.7,
+    #             API/test-only) and one specific version (the revert target of 4.3,
+    #             also UI-unreachable). Both still back the
     #             append-only guarantee: the rows they read are what 4.4 appends.
     async def get_by_section(section_id: str, session: AsyncSession) -> List[Dict[str, Any]]:
         """List the version history of one section, newest first."""

@@ -530,7 +530,7 @@ export function useProjectSync(
         // process-local replay buffer; a later mutation/manual load is required.
         if (message.event === "connected") return;
 
-        // DOC-UPLOAD 1.7.1 — High-frequency extraction frames: forward them to the
+        // DOC-UPLOAD 8.4 — High-frequency extraction frames: forward them to the
         // DocumentLibrary so users see live chunk progress (chunk X/N) on big
         // documents, and do NOT trigger a full project-state GET. A many-chunk
         // extraction would otherwise fire one heavy state download (PRD markdown

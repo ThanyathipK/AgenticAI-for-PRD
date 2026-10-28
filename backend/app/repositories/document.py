@@ -20,22 +20,22 @@ from app.repositories.base import as_uuid, serialize_document
 logger = logging.getLogger(__name__)
 
 
-# DOC-UPLOAD 4.0 — uploaded_documents persistence. Canonical content has no update
-# path; extraction status is mutable and 4.4 permanently deletes the entire row.
-#   4.1 create                  ← DOC-UPLOAD 2.1.7 (the only INSERT path)
-#   4.2 get_by_project          ← DOC-UPLOAD 2.2 + the delete-time draft scan context
-#   4.3 get_by_id               ← DOC-UPLOAD 2.3 and 2.5.1 (with markdown)
-#   4.4 delete                  ← DOC-UPLOAD 2.4.1 (hard delete, project-scoped)
-#   4.5 update_extraction_status ← DOC-UPLOAD 2.5 and CONFIRM 3.3.7/3.4
+# DOC-UPLOAD 7.0 — uploaded_documents persistence. Canonical content has no update
+# path; extraction status is mutable and 7.4 permanently deletes the entire row.
+#   7.1 create                   ← route 4.1 (the only INSERT path)
+#   7.2 get_by_project           ← route 4.2 + delete-time draft scan context
+#   7.3 get_by_id                ← routes 4.3 and 4.5 (with Markdown)
+#   7.4 delete                   ← route 4.4 (hard delete, project-scoped)
+#   7.5 update_extraction_status ← route 4.5 and CONFIRM
 # Nothing here mutates requirements/user_stories/acceptance_criteria.
 class DocumentRepository:
     """CRUD operations for uploaded project documents."""
 
     @staticmethod
     async def create(project_id: str, data: Dict[str, Any], session: AsyncSession) -> Dict[str, Any]:
-        # DOC-UPLOAD 4.1 — The only INSERT into uploaded_documents (2.1.7): stores the FULL
+        # DOC-UPLOAD 7.1 — The only INSERT into uploaded_documents (route 4.1): stores the FULL
         #             converted markdown with its metadata; status defaults to 'processed' and
-        #             extraction_status to 'not_extracted' (extraction is opt-in, 2.5).
+        #             extraction_status to 'not_extracted' (extraction is opt-in, route 4.5).
         """Persist a new document record with its full canonical markdown."""
         doc = DocumentModel(
             project_id=as_uuid(project_id),
@@ -56,8 +56,8 @@ class DocumentRepository:
 
     @staticmethod
     async def get_by_project(project_id: str, session: AsyncSession) -> List[Dict[str, Any]]:
-        # DOC-UPLOAD 4.2 — List metadata, newest first (feeds 2.2; serialization omits the
-        #             markdown body, which is why the UI must call 4.3 to preview).
+        # DOC-UPLOAD 7.2 — List metadata, newest first (feeds route 4.2; serialization omits the
+        #             Markdown body, so the UI calls route 4.3 to preview).
         """List every uploaded document for a project, newest first."""
         pid = as_uuid(project_id)
         stmt = (
@@ -73,7 +73,7 @@ class DocumentRepository:
     async def get_validation_context(
         project_id: str, session: AsyncSession
     ) -> List[Dict[str, Any]]:
-        """DOC-UPLOAD 4.2.1 — Return usable canonical text to the AUDIT flow.
+        """DOC-UPLOAD 7.2.1 — Return usable canonical text to the AUDIT flow.
 
         Unlike the lightweight document-list query, this deliberately includes
         the canonical markdown. Failed conversions (for example OCR-only PDFs)
@@ -102,8 +102,7 @@ class DocumentRepository:
 
     @staticmethod
     async def get_by_id(document_id: str, project_id: str, session: AsyncSession) -> Optional[Dict[str, Any]]:
-        # DOC-UPLOAD 4.3 — Single record WITH markdown (include_markdown=True) for 2.3 and for
-        #             2.5's process path, which re-reads the stored text.
+        # DOC-UPLOAD 7.3 — Single record WITH Markdown for routes 4.3 and 4.5.
         """Fetch a single document by id, scoped to the project."""
         did = as_uuid(document_id)
         pid = as_uuid(project_id)
@@ -124,7 +123,7 @@ class DocumentRepository:
         extraction_status: str,
         session: AsyncSession,
     ) -> Optional[Dict[str, Any]]:
-        # DOC-UPLOAD 4.5 — Extraction tracking: `extraction_pending` during/after 2.5,
+        # DOC-UPLOAD 7.5 — Extraction tracking: `extraction_pending` during/after route 4.5,
         #             `not_extracted` on cancellation/failure/Discard, and
         #             `extraction_applied` after CONFIRM. Upload begins not_extracted.
         """Update a document's extraction-status tracking flag."""
@@ -145,9 +144,9 @@ class DocumentRepository:
 
     @staticmethod
     async def delete(document_id: str, project_id: str, session: AsyncSession) -> Optional[Dict[str, Any]]:
-        # DOC-UPLOAD 4.4 — Hard delete, project-scoped (2.4.1). Returns the removed record for
+        # DOC-UPLOAD 7.4 — Hard delete, project-scoped (route 4.4). Returns the removed record for
         #             logging/audit or None when absent. Any DRAFT preview staged from this
-        #             document is discarded by the ROUTE (2.4.2), not here.
+        #             document is discarded by application step 5.2, not here.
         """Hard-delete an uploaded document, scoped to the owning project.
 
         Returns the removed record (for logging/audit) or ``None`` when the

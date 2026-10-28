@@ -827,6 +827,7 @@ def _new_document() -> Document:
     return doc
 
 
+# PRD-EXPORT 6.2.1 — Native template-faithful DOCX renderer.
 def latex_to_docx_native(latex_source: str) -> bytes:
     """Render the Krungsri PRD LaTeX into DOCX bytes - merged cells, shaded
     header rows and fixed column widths, mirroring the compiled PDF."""

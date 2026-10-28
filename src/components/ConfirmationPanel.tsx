@@ -69,9 +69,9 @@ function ChangeBadge({ kind, label }: { kind: string; label?: string }) {
  * (requirements / user stories / acceptance criteria) and what is affected (PRD
  * sections and diagrams that reference the affected `REQ-`/`US-` codes).
  */
-// CONFIRM 1.6 — Impact renderer (consumed by the panel body): shows the change
+// IMPACT 1.0 — Impact panel: shows the change
 //              counters, per-item changes and impacted PRD sections/diagrams from
-//              CONFIRM 2.2 / 4.0, with `state` distinguishing loading / ready / error
+//              result from IMPACT 2.x–7.x, with `state` distinguishing loading / ready / error
 //              and `draft` providing the fallback counts when the preview is
 //              unavailable. Presentational only — nothing here writes.
 function ImpactAnalysisSection({
@@ -253,7 +253,7 @@ function ImpactAnalysisSection({
 
   // CONFIRM 1.0 — Confirmation panel = the UI of the human-in-the-loop gate. It
   //              renders ONE staged action (CONFIRM 1.7) with: Save (1.2 → 2.3),
-  //              Cancel (1.4 → 2.4) and the read-only impact preview (1.5 → 1.6).
+  //              Cancel (1.4 → 2.4) and the read-only IMPACT preview (IMPACT 1.0).
   //              The pending-action row is already persisted, but its proposed project
   //              changes are not authoritative until Save succeeds.
   // CONFIRM 1.1 — Component entry: `action` is the staged draft (proposed_changes =
@@ -322,8 +322,8 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
     }
   };
 
-  // CONFIRM 1.5 — Impact prefetch (once per action, non-blocking): the read-only diff
-  //              (CONFIRM 2.2 → 3.2 → 4.0). A failure merely switches the section to
+  // IMPACT 2.0 — Preview handler (once per action, non-blocking): client 3.1 →
+  //              route 4.1 → orchestration/domain/reads 5.x–7.x. A failure switches to
   //              its fallback summary (draft counts) — Save/Cancel stay usable.
   // ---- Requirement Impact Analysis (READ-ONLY) -------------------------------
   // What this merge changes and which downstream artifacts are affected.
@@ -335,7 +335,8 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
     let cancelled = false;
     setImpact(null);
     setImpactState('loading');
-    // CONFIRM 2.2 — API boundary: GET /api/pending-actions/{id}/impact?project_id=…
+    // IMPACT 2.1 — Start the project-scoped preview request and ignore stale completion
+    // after unmount/action change.
     api.getActionImpact(action.id, action.project_id)
       .then(result => {
         if (!cancelled) {
@@ -345,8 +346,8 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
           // occur for legacy pending actions created before the backend's
           // no-op staging guard existed. Discard it automatically so it cannot
           // block the next real requirement update.
-          // CONFIRM 1.5.1 — Legacy no-op cleanup: use the normal Cancel path (2.4 →
-          //                 3.4), then notify the parent to remove the closed card.
+          // IMPACT 2.1 / CONFIRM 1.4 cross-reference — A zero-diff result uses the
+          // normal Cancel path (CONFIRM 2.4 → 3.4), then removes the closed card.
           if (!result.has_changes && autoDismissedAction.current !== action.id) {
             autoDismissedAction.current = action.id;
             void api.cancelAction(action.id, action.project_id)

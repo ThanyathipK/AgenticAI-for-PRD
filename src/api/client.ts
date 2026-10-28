@@ -133,8 +133,8 @@ export interface BlobDownload {
   filename?: string;
 }
 
-// Binary download helper — preserve the server's authoritative filename as
-// well as the body. PRD exports encode the snapshot SemVer in that header.
+// PRD-EXPORT 3.0 — Binary client boundary: preserve the server's authoritative
+// filename and body. PRD exports encode snapshot SemVer in that header.
 async function postBlob(url: string, body?: unknown): Promise<BlobDownload> {
   const resp = await axios.post<Blob>(url, body ?? null, { responseType: 'blob' });
   const disposition = resp.headers['content-disposition'];
@@ -147,7 +147,7 @@ async function postBlob(url: string, body?: unknown): Promise<BlobDownload> {
   };
 }
 
-// Error bodies from binary endpoints arrive as a Blob too, so the FastAPI
+// PRD-EXPORT 3.0.1 — Error bodies from binary endpoints arrive as a Blob, so the FastAPI
 // {"detail": ...} payload has to be decoded before it can be surfaced.
 export async function detailFromBlobError(err: unknown): Promise<string | null> {
   if (!axios.isAxiosError(err) || !(err.response?.data instanceof Blob)) return null;
@@ -183,16 +183,16 @@ export const api = {
   // ---- PRD sections (part-level editing / locking / versioning) ------------
   // The PRD is stored as NINE editable parts; each part is independently
   // edited, locked, and versioned (append-only history).
+  // PRD-SECTION 3.1 — List ordered parts (route 4.1), optionally materializing them.
   getPrdSections: (projectId: string, materialize = false) =>
     get<PrdSectionListPayload>(`/api/project/${projectId}/prd/sections`, { materialize }),
   // ---- PRD sections (parts) ----------------------------------------------
-  // PRD-SECTION 1.x — frontend side of the nine-part document. Backend:
-  // routes 2.1–2.7, service 3.1–3.7, repository 4.1–4.5.
-  // NOT present in this client (verified): a per-part revert helper (PRD-SECTION 2.3) and
-  // a section-version helper (PRD-SECTION 2.7) — both endpoints are UI-unreachable.
-  // PRD-SECTION 1.3 — part save (PRD-SECTION 2.2): `baseContent` is the text the editor
+  // PRD-SECTION 3.0 — Client boundary for the nine-part document (routes 4.x).
+  // NOT present (verified): per-part revert and section-history methods for routes
+  // 4.3/4.7. Those endpoints remain API/test-only and are unreachable from the SPA.
+  // PRD-SECTION 3.2 — Part save (route 4.2): `baseContent` is the text the editor
   //               started from, which is what enables the server-side three-way merge
-  //               (3.5) instead of a blind overwrite.
+  //               (6.5) instead of a blind overwrite.
   updatePrdSection: (
     projectId: string,
     sectionKey: string,
@@ -209,18 +209,17 @@ export const api = {
       ai_generatable: options?.ai_generatable,
       updated_by: options?.updated_by ?? 'user',
     }),
-  // PRD-SECTION 1.4 — per-part lock (PRD-SECTION 2.4); `lockedBy` is the lock owner label.
+  // PRD-SECTION 3.3 — Per-part lock (route 4.4); `lockedBy` is the lock owner label.
   lockPrdSection: (projectId: string, sectionKey: string, lockedBy = 'user') =>
     post(`/api/project/${projectId}/prd/sections/${sectionKey}/lock`, { locked_by: lockedBy }),
-  // PRD-SECTION 1.4 — per-part unlock (PRD-SECTION 2.5): re-enables editing and AI
+  // PRD-SECTION 3.4 — Per-part unlock (route 4.5): re-enables editing and AI
   //               regeneration for that part.
   unlockPrdSection: (projectId: string, sectionKey: string, lockedBy = 'user') =>
     post(`/api/project/${projectId}/prd/sections/${sectionKey}/unlock`, { locked_by: lockedBy }),
 
   // ---- PRD version ledger ------------------------------------------------
-  // VERSION 1.0 — frontend entry points for the PRD snapshot ledger
-  //               (routes 2.x → service 3.x → repository 4.x).
-  // VERSION 1.1 — paged metadata read, newest first (2.1). Project opening asks
+  // VERSION 3.0 — API client boundary for the PRD snapshot ledger (routes 4.x).
+  // VERSION 3.1 — Paged metadata read, newest first (route 4.1). Project opening asks
   //               for one row; the Versions tab asks for 20 and uses
   //               beforeVersion to append older pages. The backend deliberately
   //               blanks generated_prd in this response; toVersionHistoryList
@@ -235,15 +234,15 @@ export const api = {
       null,
       options?.signal,
     ),
-  // VERSION 1.2 — diff read (2.2): the panel automatically supplies the preceding
+  // VERSION 3.2 — Diff read (route 4.2): the panel automatically supplies the preceding
   //               loaded version. If that row is not loaded, omission makes the
-  //               backend resolve the true preceding ledger row (3.8/4.2).
+  //               backend resolve the true preceding ledger row (6.8/7.2).
   getPrdVersionDiff: (projectId: string, versionNumber: number, baseVersion?: number) =>
     get<PrdVersionDiffPayload>(
       `/api/project/${projectId}/prd-versions/${versionNumber}/diff`,
       baseVersion ? { base_version: baseVersion } : undefined,
     ),
-  // VERSION 1.5 — restore request (2.5). The route copies target sections that
+  // VERSION 3.3 — Restore request (route 4.5). The route copies target sections that
   //               exist and are currently unlocked, preserves locked/current-only
   //               sections, and normally appends a new ledger row. Ledger-record
   //               failure is caught by the route, so new_version_number can fall
@@ -344,10 +343,8 @@ export const api = {
   //               its proposal. Document-extraction drafts also reset source status.
   cancelAction: (actionId: string, projectId: string) =>
     post<ActionStatusResponse>(`/api/cancel-action/${actionId}`, null, { project_id: projectId }),
-  // CONFIRM 2.2 — Impact preview read (CONFIRM 1.5 → 3.2 → 4.0): what the draft
-  //               changes and which downstream artifacts are affected.
-  // READ-ONLY Requirement Impact Analysis for one pending merge action:
-  // what the merge changes + which downstream artifacts are impacted.
+  // IMPACT 3.1 — GET one pending action's predicted changes and downstream references
+  // from route 4.1. Successful analysis is read-only.
   getActionImpact: (actionId: string, projectId: string) =>
     get<ImpactAnalysisPayload>(`/api/pending-actions/${actionId}/impact`, { project_id: projectId }),
 
@@ -438,9 +435,9 @@ export const api = {
     }),
 
   // ---- Uploaded documents (knowledge base) ---------------------------------
-  // DOC-UPLOAD 1.0.1 — HTTP client boundary for backend routes 2.1–2.6. Upload stores
+  // DOC-UPLOAD 3.0 — HTTP client boundary for backend routes 4.1–4.6. Upload stores
   //               converted knowledge; processDocument explicitly stages a draft.
-  // DOC-UPLOAD 1.2 — the upload call itself (DOC-UPLOAD 2.1); multipart FormData is the
+  // DOC-UPLOAD 3.1 — Upload (DOC-UPLOAD 4.1); multipart FormData is the
   //               only request in this client that does not send JSON.
   uploadDocument: (projectId: string, file: File) => {
     const formData = new FormData();
@@ -450,13 +447,13 @@ export const api = {
       formData,
     );
   },
-  // DOC-UPLOAD 1.3 — list load (DOC-UPLOAD 2.2): metadata only.
+  // DOC-UPLOAD 3.2 — List (DOC-UPLOAD 4.2): metadata only.
   listDocuments: (projectId: string) =>
     get<UploadedDocumentPayload[]>(`/api/project/${projectId}/documents`),
-  // DOC-UPLOAD 1.5 — full stored markdown for the preview (DOC-UPLOAD 2.3).
+  // DOC-UPLOAD 3.3 — Detail (DOC-UPLOAD 4.3): full stored markdown for preview.
   getDocumentMarkdown: (projectId: string, documentId: string) =>
     get<DocumentMarkdownPayload>(`/api/project/${projectId}/documents/${documentId}`),
-  // DOC-UPLOAD 1.7 / 2.5 — Explicit extraction. It updates extraction tracking and
+  // DOC-UPLOAD 3.4 — Explicit extraction (DOC-UPLOAD 4.5). It updates extraction tracking and
   //               transcript state, then returns a pending requirement proposal.
   processDocument: (projectId: string, documentId: string, signal?: AbortSignal) =>
     post<ProcessDocumentResponse>(
@@ -465,19 +462,21 @@ export const api = {
       undefined,
       signal,
     ),
-  // DOC-UPLOAD 1.7.2 / 2.6 — Signal cancellation of a currently registered run.
+  // DOC-UPLOAD 3.5 / JOB 3.5 — Signal extraction cancellation through JOB 4.6.
   cancelDocumentExtraction: (projectId: string, documentId: string) =>
     post<{ project_id: string; document_id: string; cancelled: boolean }>(
       `/api/project/${projectId}/documents/${documentId}/process/cancel`,
     ),
-  // DOC-UPLOAD 1.6 — permanent removal (DOC-UPLOAD 2.4), which also discards that
-  //               document's staged DRAFT server-side (2.4.2).
+  // DOC-UPLOAD 3.6 — Permanent removal (DOC-UPLOAD 4.4), which also discards that
+  //               document's staged DRAFT server-side (5.2).
   deleteDocument: (projectId: string, documentId: string) =>
     del<DocumentDeleteResponse>(
       `/api/project/${projectId}/documents/${documentId}`,
     ),
 
   // ---- PRD file export (LaTeX -> PDF / DOCX) --------------------------------
+  // POST fallback source/filename metadata and receive completed file bytes.
+  // PRD-EXPORT 3.1 — PDF Blob client → route 4.1.
   // The generated PRD is LaTeX following template-krungsrinimble.tex, so both
   // exports are COMPILED server-side (PDF via the same Word build, DOCX via
   // the native renderer). The posted source is only a fallback: the backend
@@ -491,6 +490,7 @@ export const api = {
       version,
       project_name: projectName,
     }),
+  // PRD-EXPORT 3.2 — DOCX Blob client → route 4.2.
   exportPrdDocx: (projectId: string, latexSource: string, version?: number, projectName?: string) =>
     postBlob(`/api/project/${projectId}/export/docx`, {
       latex_source: latexSource,
@@ -499,8 +499,8 @@ export const api = {
     }),
 
   // ---- Requirement Traceability Matrix --------------------------------------
-  // Derived (read-only) matrix linking Requirements <-> User Stories <-> Acceptance
-  // Criteria <-> PRD sections <-> diagrams. See backend/app/traceability_service.py.
+  // TRACEABILITY 3.1 — GET the derived, read-only matrix from route 4.1.
+  // Links Requirements ↔ Stories ↔ Criteria ↔ PRD sections ↔ diagrams.
   getTraceability: (projectId: string) =>
     get<TraceabilityPayload>(`/api/project/${projectId}/traceability`),
   getDependencyGraph: (projectId: string) =>

@@ -491,7 +491,7 @@ class RequirementLockResponse(BaseModel):
     """Payload returned when locking/unlocking a requirement."""
     status: str = Field(..., description="'locked' or 'unlocked'.")
     requirement: RequirementDetail = Field(..., description="The affected requirement record.")
-# VERSION 5.1 — Persisted section summary emitted by 3.1/3.6. Its lock label
+# VERSION persisted section-summary contract emitted by domain 6.1/6.6. Its lock label
 #               describes the lock set used when the snapshot was calculated.
 class PRDVersionChangedSection(BaseModel):
     """One per-section change record attached to a PRD version snapshot."""
@@ -503,7 +503,7 @@ class PRDVersionChangedSection(BaseModel):
     changed: bool = Field(False, description="True when the snapshot actually changed (or protected) this part.")
 
 
-# VERSION 5.2 — Ledger-row contract for list/latest/by-number. Route 2.1
+# VERSION ledger-row contract for list/latest/by-number. Route 4.1
 #               deliberately returns generated_prd as an empty string.
 class PRDVersionResponse(BaseModel):
     """Immutable PRD version record."""
@@ -525,7 +525,7 @@ class PRDVersionResponse(BaseModel):
     created_at: str = Field("", description="ISO8601 creation timestamp.")
 
 
-# VERSION 5.3 — View-time section diff from 3.8. Unlike 5.1, change_kind is
+# VERSION view-time section diff from domain 6.8. Unlike persisted summaries, change_kind is
 #               recomputed with current locks whenever a diff is requested.
 class PrdVersionDiffSection(BaseModel):
     """Line-level diff of ONE section between two PRD versions."""
@@ -543,7 +543,7 @@ class PrdVersionDiffSection(BaseModel):
     )
 
 
-# VERSION 5.4 — Diff envelope; base_version is synthetic 0 for the first row.
+# VERSION diff envelope; base_version is synthetic 0 for the first row.
 class PrdVersionDiffResponse(BaseModel):
     """Diff between two PRD versions, section by section."""
     model_config = ConfigDict(extra="allow")
@@ -692,6 +692,8 @@ class AuditRespondResponse(BaseModel):
     message: str = Field(..., description="Human-readable confirmation message.")
     resolved_at: str = Field(..., description="ISO8601 timestamp of the resolution.")
     is_resolved: bool = Field(..., description="True once the question is resolved.")
+# EVENT history response DTOs are intentionally unnumbered: they describe the
+# persisted query boundary but execute no flow step.
 class EventLogEntry(BaseModel):
     """A single append-only artifact event-log record."""
     event_id: str = Field(..., description="Event UUID string.")
@@ -880,10 +882,10 @@ class ProcessRequirementsResponse(BaseModel):
 # The full converted markdown is ALWAYS persisted; token limits apply solely to
 # the explicit, user-confirmed extraction path (see routes/documents.py).
 
-# DOC-UPLOAD 5.0 — Public response contracts for document routes 2.1–2.5.
-# DOC-UPLOAD 5.1 — Upload/list response shape (2.1, 2.2). extra="allow" is what lets the
-#             route append the 3.3 needs-OCR `message` onto a `failed` record without a
-#             second schema.
+# Public response contracts for DOC-UPLOAD routes 4.1–4.5. DTOs are intentionally
+# unnumbered because they describe boundaries rather than execute flow steps.
+# The upload/list shape allows route 4.1 to append the OCR-only `message` to a
+# `failed` record without a second schema.
 class UploadedDocumentResponse(BaseModel):
     """A single uploaded-document record, as serialized by ``serialize_document``.
 
@@ -907,7 +909,7 @@ class UploadedDocumentResponse(BaseModel):
     updated_at: str = Field("", description="ISO8601 last-update timestamp.")
 
 
-# DOC-UPLOAD 5.2 — Preview response shape (2.3): the FULL markdown plus metadata.
+# DOC-UPLOAD preview response: full Markdown plus metadata.
 class DocumentMarkdownResponse(BaseModel):
     """Full canonical markdown + metadata returned by the detail/markdown endpoint."""
     model_config = ConfigDict(extra="allow")
@@ -923,7 +925,7 @@ class DocumentMarkdownResponse(BaseModel):
 
 
 class DocumentProcessResponse(BaseModel):
-    # DOC-UPLOAD 5.3 — Extraction handoff shape for 2.5, including cancellation.
+    # DOC-UPLOAD extraction handoff response, including cancellation.
     """Payload returned by ``POST .../documents/{document_id}/process``.
 
     The extraction is DRAFT-ONLY: nothing is written to the requirements,
@@ -941,7 +943,7 @@ class DocumentProcessResponse(BaseModel):
     document_id: str = Field(..., description="Source document UUID string.")
 
 
-# DOC-UPLOAD 5.4 — Delete confirmation shape (2.4). Requirements already extracted and
+# DOC-UPLOAD delete confirmation. Requirements already extracted and
 #             confirmed from the removed document are NOT affected.
 class DocumentDeleteResponse(BaseModel):
     """Confirmation returned by ``DELETE .../documents/{document_id}``.
@@ -1037,8 +1039,8 @@ class PrdSectionRevertResponse(BaseModel):
     restored_from_version: int = Field(..., description="Version number the content was restored from.")
 
 
-# VERSION 5.5 — Restore response consumed by 1.5. Usually reports a new ledger
-#               row; after caught 3.6 failure it reports source number/blank semver
+# VERSION restore response consumed by hook 2.2. Usually reports a new ledger
+#               row; after caught 6.6 failure it reports source number/blank semver
 #               while still returning the persisted stitched document.
 class PrdVersionRestoreResponse(BaseModel):
     """Result of restoring available target sections into the current PRD."""

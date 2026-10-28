@@ -94,7 +94,7 @@ class ArtifactEventLogRepository:
         offset: int = 0,
         user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Retrieve all events for a specific artifact, newest first."""
+        """EVENT 7.2 — Read one artifact's owner-scoped history, newest first."""
         stmt = (
             select(ArtifactEventLogModel)
             .where(
@@ -118,7 +118,8 @@ class ArtifactEventLogRepository:
         limit: int = 100,
         offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """
+        """EVENT 7.4 — Read project history with optional artifact/action filters.
+
         Retrieve all events for a project, optionally filtered by artifact_type
         and/or action.
 
@@ -152,7 +153,7 @@ class ArtifactEventLogRepository:
         offset: int = 0,
         user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Retrieve all events for a specific action type (e.g. all CREATE events)."""
+        """EVENT 7.3 — Read owner-scoped history for one action, newest first."""
         action_upper = action.upper()
         stmt = (
             select(ArtifactEventLogModel)
@@ -172,7 +173,7 @@ class ArtifactEventLogRepository:
         offset: int = 0,
         user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Retrieve the most recent events across all artifacts."""
+        """EVENT 7.1 — Read recent owner-scoped history across artifacts."""
         stmt = (
             select(ArtifactEventLogModel)
         )

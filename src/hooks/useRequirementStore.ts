@@ -201,7 +201,7 @@ export function useRequirementStore(
   const [prdMarkdown, setPrdMarkdown] = useState<string>(INITIAL_PRD_MARKDOWN);
   const [prdMarkdownDisplay, setPrdMarkdownDisplay] =
     useState<string>(INITIAL_PRD_MARKDOWN);
-  // PRD-SECTION 1.1 — Parts load (trigger: project open via useProjectSync). The response
+  // PRD-SECTION 2.1 — Parts load (trigger: project open via useProjectSync). The response
   //             carries the nine parts in document order; `editingSectionId` (declared
   //             just below) is what stops an incoming SSE-driven document from
   //             overwriting the part the user is currently typing in (EVENTS flow).
@@ -357,9 +357,9 @@ export function useRequirementStore(
 
   // (Chat auto-scroll moved into ChatPanel — see the note in useChat.ts.)
 
-  // PRD-SECTION 1.3 — Part save handler. Optimistically replaces the part locally, then
+  // PRD-SECTION 2.2 — Part save handler. Optimistically replaces the part locally, then
   //             PATCHes ONLY that part with the edit base so the server can three-way
-  //             merge (PRD-SECTION 3.5).
+  //             merge (PRD-SECTION 6.5).
   const handleSaveSection = async (
     sectionId: string,
     newContent: string,
@@ -438,9 +438,9 @@ export function useRequirementStore(
     setEditingSectionId(null);
   };
 
-  // PRD-SECTION 1.2 — Part metadata load (locks + review status + ownership flags +
-  //             per-part version). Reads the SAME list endpoint as 1.1 (PRD-SECTION
-  //             2.1); purely cosmetic bookkeeping, so a failure is ignored and never
+  // PRD-SECTION 2.3 — Part metadata load (locks + review status + ownership flags +
+  //             per-part version). Reads the SAME list endpoint as 2.1 (route 4.1);
+  //             cosmetic bookkeeping, so a failure is ignored and never
   //             blocks project loading.
   const loadSectionLocks = async (projId: string) => {
     try {
@@ -463,7 +463,7 @@ export function useRequirementStore(
     }
   };
 
-  // VERSION 1.1 — Paged ledger load. A replacement load keeps only the returned
+  // VERSION 2.1 — Paged ledger load. A replacement load keeps only the returned
   //               page; append mode deduplicates by numeric version and restores
   //               newest-first order. Stale project responses are discarded and
   //               failures are non-fatal, leaving the existing timeline untouched.
@@ -498,7 +498,7 @@ export function useRequirementStore(
     }
   }, []);
 
-  // VERSION 1.5 — Restore coordinator (2.5). On an HTTP success it accepts the
+  // VERSION 2.2 — Restore coordinator (route 4.5). On an HTTP success it accepts the
   //               route's stitched document and reported version, then reloads
   //               ledger metadata and section state in parallel. The route may
   //               report the source number/blank semver when its caught ledger
@@ -532,10 +532,10 @@ export function useRequirementStore(
     }
   };
 
-  // PRD-SECTION 1.4 — Lock toggle. Optimistic: the local lock flag flips first, then
-  //             the server lock/unlock call reconciles (PRD-SECTION 2.4/2.5) and a
+  // PRD-SECTION 2.4 — Lock toggle. Optimistic: the local lock flag flips first, then
+  //             the server lock/unlock call reconciles (PRD-SECTION 4.4/4.5) and a
   //             failure rolls the flip back. Locking a part is what excludes it from
-  //             AI regeneration (ARCHITECT 5.1) and from part edits (4.4).
+  //             AI regeneration (ARCHITECT 5.1) and from repository writes (7.4).
   const handleToggleSectionLock = async (sectionId: string) => {
     if (!projectId) return;
     const current = sectionLocks[sectionId];
@@ -583,7 +583,7 @@ export function useRequirementStore(
     }
   };
 
-  // PRD-SECTION 1.6 — Hand a MANUAL part back to the AI. A manual save marks the
+  // PRD-SECTION 2.5 — Hand a MANUAL part back to the AI. A manual save marks the
   //             part human-owned so "Generate PRD" preserves it; this action
   //             flips that flag back (content unchanged) so the Architect may
   //             regenerate the part again on the next run.

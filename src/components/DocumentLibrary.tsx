@@ -1,11 +1,11 @@
 // DocumentLibrary — uploaded-document knowledge base panel.
 //
-// DOC-UPLOAD 1.4–1.7 — Knowledge-base UI (state lives in useDocuments):
+// DOC-UPLOAD 1.2–1.5 — Knowledge-base UI (state lives in useDocuments 2.x):
 // - Explicit extraction shows mode/chunk progress and, when ready, hands the merged
 //   proposal to CONFIRM. Tracking status/transcript/draft writes happen before approval;
 //   proposed requirement fields do not.
 // - Per-document "Remove" action permanently deletes the stored document (and
-//   any DRAFT merge-preview staged from it, server-side 2.4.2) after a destructive-style
+//   any DRAFT merge-preview staged from it, application step 5.2) after a destructive-style
 //   confirm.
 // - Markdown preview uses the shared MarkdownRenderer.
 // - Note: new documents are uploaded from the ChatPanel paperclip attach (1.1) — this
@@ -34,7 +34,7 @@ const formatBytes = (bytes: number): string => {
   return `${(bytes / Math.pow(1024, idx)).toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
 };
 
-// DOC-UPLOAD 1.4 — Extraction chip maps repository 4.5 status. `extraction_pending`
+// DOC-UPLOAD 1.2 — Extraction chip maps repository 7.5 status. `extraction_pending`
 //             means either processing is active or a draft awaits CONFIRM; this UI uses
 //             `processingDocId` separately to show the active Extracting state.
 const extractionChip = (status: string): { label: string; className: string } => {
@@ -52,9 +52,9 @@ export const DocumentLibrary: React.FC<DocumentLibraryProps> = ({ projectId, doc
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<UploadedDocumentPayload | null>(null);
 
-  // DOC-UPLOAD 1.5 — Preview handler: reads the FULL stored markdown (DOC-UPLOAD 2.3) and
+  // DOC-UPLOAD 1.3 — Preview handler: reads the FULL stored markdown (DOC-UPLOAD 3.3 → 4.3) and
   //             renders it with the shared MarkdownRenderer. This is the only way to see a
-  //             document's converted content — the list response omits the body (4.2/3.7).
+  //             document's converted content — the list response omits the body (7.2/7.6).
   const openPreview = async (doc: UploadedDocumentPayload): Promise<void> => {
     if (!projectId) return;
     setIsLoadingPreview(true);
@@ -90,10 +90,10 @@ export const DocumentLibrary: React.FC<DocumentLibraryProps> = ({ projectId, doc
         </div>
       </section>
 
-      {/* DOCUMENT LIST — DOC-UPLOAD 1.4: filename opens the markdown preview (1.5), the chip
+      {/* DOCUMENT LIST — DOC-UPLOAD 1.2: filename opens the markdown preview (1.3), the chip
           shows extraction state, and the Process button is disabled unless the document is
           `processed` (a needs-OCR `failed` row can never be extracted — matches the backend
-          guard in DOC-UPLOAD 2.5.1). */}
+          guard in DOC-UPLOAD 4.5). */}
       <section className="space-y-2">
         {!docs.isLoadingDocuments && docs.documents.length === 0 && (
           <p className="text-xs text-on-surface-variant px-1">No documents uploaded yet.</p>
@@ -150,7 +150,7 @@ export const DocumentLibrary: React.FC<DocumentLibraryProps> = ({ projectId, doc
                 </button>
               </div>
 
-              {/* DOC-UPLOAD 1.7 — Extraction progress. The user-facing “nothing is
+              {/* DOC-UPLOAD 1.4 — Extraction action/progress. The user-facing “nothing is
                   saved” wording means no proposed requirement fields are applied;
                   tracking status and transcript milestones are persisted separately. */}
               {isProcessing && docs.extractionProgress && (
@@ -196,10 +196,10 @@ export const DocumentLibrary: React.FC<DocumentLibraryProps> = ({ projectId, doc
       )}
 
       {/* REMOVE CONFIRMATION — destructive, requires explicit confirmation.
-          DOC-UPLOAD 1.6 — Remove goes through ConfirmModal; on success the local markdown
+          DOC-UPLOAD 1.5 — Remove goes through ConfirmModal; on success the local markdown
           preview is dropped too (the stored body is gone with the document). Requirements
           already extracted from it are explicitly NOT affected — stated in the modal copy,
-          matching the backend contract at DOC-UPLOAD 2.4. */}
+          matching the backend contract at DOC-UPLOAD 4.4. */}
       <ConfirmModal
         isOpen={deleteTarget !== null}
         title="Remove document?"

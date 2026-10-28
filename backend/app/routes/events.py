@@ -111,6 +111,14 @@ async def stream_project_events(
     )
 
 
+# ==========================================
+# EVENT — PERSISTED HISTORY QUERIES
+# The routes below read artifact_event_logs. They do not subscribe to the
+# process-local SSE bus above and do not drive workspace refresh behavior.
+# ==========================================
+
+# EVENT 4.1 — GET recent owner-scoped history across projects, newest first.
+# Input: limit/offset. Calls: repository 7.1. Writes/effects: none.
 @router.get("/api/events", response_model=EventListResponse, status_code=status.HTTP_200_OK)
 async def get_recent_events(
     limit: int = 50,
@@ -140,6 +148,7 @@ async def get_recent_events(
     }
 
 
+# EVENT 4.2 — GET owner-scoped history for one artifact identity (repository 7.2).
 @router.get("/api/events/{artifact_type}/{artifact_id}", response_model=ArtifactEventListResponse, status_code=status.HTTP_200_OK)
 async def get_artifact_events(
     artifact_type: str,
@@ -176,6 +185,9 @@ async def get_artifact_events(
     }
 
 
+# EVENT 4.3 — GET owner-scoped history filtered by validated action (repository 7.3).
+# Route-order discrepancy: the earlier dynamic 4.2 route may match
+# `/api/events/action/{action}` first; documented here, not changed in this pass.
 @router.get("/api/events/action/{action}", response_model=ActionEventListResponse, status_code=status.HTTP_200_OK)
 async def get_events_by_action(
     action: str,
@@ -217,6 +229,8 @@ async def get_events_by_action(
     }
 
 
+# EVENT 4.4 — GET owner-authorized project history with optional artifact/action
+# filters (repository 7.4). Invalid UUID/action → 400. Writes/effects: none.
 @router.get("/api/project/{project_id}/events", response_model=ProjectEventListResponse, status_code=status.HTTP_200_OK)
 async def get_project_events(
     project_id: str,

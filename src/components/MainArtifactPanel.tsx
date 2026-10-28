@@ -55,6 +55,8 @@ export function MainArtifactPanel({ state }: MainArtifactPanelProps) {
               Requirement hierarchy
             </summary>
             <div className="border-t border-outline p-3">
+              {/* TRACEABILITY 1.1 — Mount the derived matrix inside the Requirements
+                  workspace; artifact changes alter the refresh token, not matrix state. */}
               <RequirementTraceability
                 projectId={projectId}
                 refreshToken={traceabilityToken}

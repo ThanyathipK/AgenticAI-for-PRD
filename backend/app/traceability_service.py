@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 CODE_PATTERN = re.compile(r"\b(REQ-\d{1,4}|US-\d{1,4})\b", re.IGNORECASE)
 
 
+# TRACEABILITY 6.1 — Extract normalized REQ/US references from PRD/diagram text.
 def extract_codes(text: Optional[str]) -> Set[str]:
     """Extract normalized artifact codes (uppercased) from free text."""
     if not text:
@@ -46,10 +47,16 @@ class TraceabilityService:
 
     @staticmethod
     async def build_traceability(project_id: str, session: AsyncSession) -> Dict[str, Any]:
+        """TRACEABILITY 5.1 — Load authoritative artifacts and assemble one matrix.
+
+        Calls read layer 7.x, then domain indexing/coverage 6.2–6.3. It has no
+        writes, commits, publications, or downstream effects.
+        """
         pid = as_uuid(project_id)
 
         # ------------------------------------------------------------------
-        # 1. Load every artifact of the project with a handful of queries.
+        # TRACEABILITY 7.1 — Read requirements, epics, active stories, and active
+        # criteria directly from their authoritative relational tables.
         # ------------------------------------------------------------------
         req_res = await session.execute(
             select(RequirementModel).where(RequirementModel.project_id == pid)
@@ -82,6 +89,8 @@ class TraceabilityService:
                 if (ac.status or "active") == "active":
                     ac_by_story.setdefault(story_id, []).append(ac)
 
+        # TRACEABILITY 7.2/7.3 — Read authoritative PRD sections and versioned
+        # diagram documents through their repositories.
         sections = await PRDSectionRepository.get_by_project(project_id, session)
         prds = await PRDDocumentRepository.get_by_project(project_id, session)
         return _assemble(
@@ -104,7 +113,7 @@ def _assemble(
     sections: List[Dict[str, Any]],
     prds: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Assemble the traceability matrix + coverage gaps from loaded artifacts."""
+    """TRACEABILITY 6.2–6.3 — Index references, assemble rows, and derive gaps."""
     requirement_codes = {(r.requirement_code or "").upper(): r for r in requirements}
     all_story_codes = {(s.ticket_code or "").upper() for s in stories if s.ticket_code}
 
@@ -112,7 +121,7 @@ def _assemble(
     for story in stories:
         stories_by_requirement.setdefault(story.requirement_id, []).append(story)
 
-    # -- Index PRD sections by the codes they reference ------------------------
+    # TRACEABILITY 6.2 — Index valid and stale references in sections/diagrams.
     section_links: Dict[str, Set[str]] = {}
     stale_section_refs: Dict[str, Set[str]] = {}
     for section in sections:
@@ -219,6 +228,7 @@ def _assemble(
         )
 
 
+    # TRACEABILITY 6.3 — Derive coverage/gap lists from assembled relationships.
     coverage = {
         "total_requirements": len(rows),
         "total_user_stories": len(stories),

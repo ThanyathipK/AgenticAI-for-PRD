@@ -384,6 +384,7 @@ def _repair_missing_row_terminators(text: str) -> str:
     return _TABULAR_BLOCK_RE.sub(_fix_block, text)
 
 
+# PRD-EXPORT 6.1 — Repair deterministic generated-LaTeX artifacts before compilation.
 def sanitize_generated_latex(latex_source: str) -> str:
     r"""Repair common LLM escaping mistakes in a generated LaTeX document.
 
@@ -467,6 +468,7 @@ def _load_template_preamble_and_footer() -> tuple[str, str]:
     return preamble, footer
 
 
+# PRD-EXPORT 6.1.1 — Wrap content in the authoritative template document.
 def ensure_full_document(latex_source: str) -> str:
     r"""Return a compilable standalone LaTeX document.
 
@@ -887,6 +889,7 @@ def _run(cmd: list[str], workdir: Path, label: str) -> None:
         )
 
 
+# PRD-EXPORT 6.5 — Direct Tectonic PDF compiler used as the PDF fallback.
 def compile_latex_to_pdf(latex_source: str) -> bytes:
     """Compile a LaTeX PRD to PDF bytes via Tectonic."""
     # Repair LLM escaping artifacts (literal \\n/\\r/\\t tokens and unescaped $)
@@ -941,6 +944,7 @@ def convert_markdown_to_pdf(markdown: str) -> bytes:
         return pdf_path.read_bytes()
 
 
+# PRD-EXPORT 6.2 — LaTeX-to-DOCX entry through native renderer/Pandoc fallback.
 def convert_latex_to_docx(latex_source: str) -> bytes:
     """Convert a LaTeX PRD to DOCX bytes.
 
@@ -956,6 +960,7 @@ def convert_markdown_to_docx(markdown: str) -> bytes:
     return convert_to_docx(markdown)
 
 
+# PRD-EXPORT 6.3 — Shared DOCX compiler selection and Pandoc fallback.
 def convert_to_docx(source: str) -> bytes:
     """Shared DOCX pipeline.
 
@@ -1029,6 +1034,7 @@ def soffice_available() -> bool:
         return False
 
 
+# PRD-EXPORT 6.4 — Primary PDF renderer: native DOCX through LibreOffice.
 def docx_to_pdf(docx_bytes: bytes) -> bytes:
     """Render DOCX bytes to PDF bytes via headless LibreOffice.
 

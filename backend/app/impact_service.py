@@ -58,8 +58,8 @@ def _as_story_list(value: Any) -> List[Dict[str, Any]]:
     return [s for s in value if isinstance(s, dict)] if isinstance(value, list) else []
 
 
-# CONFIRM 4.5 — Shape helper: flattens a state payload (persisted OR draft) into
-#             {requirement_code: {…stories…}} so 4.2/4.3 can diff like-for-like
+# IMPACT 6.1 — Shape helper: flatten persisted/draft state by requirement code so
+#             6.2/6.3 can compare nested and legacy-flat story shapes alike.
 #             regardless of whether the story list is nested per requirement or flat.
 def _flatten_state_requirements(state: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """{requirement_code: requirement-dict} from a requirement-state shape.
@@ -88,9 +88,9 @@ def _flatten_state_requirements(state: Dict[str, Any]) -> Dict[str, Dict[str, An
     return requirements
 
 
-# CONFIRM 4.2 — Requirement-level diff (current vs proposed): created / updated /
+# IMPACT 6.2 — Requirement-level diff (current vs proposed): created / updated /
 #             removed groups with the fields that changed; returns the affected
-#             REQ-codes used by 4.4.
+#             REQ-codes used by 6.4.
 def diff_requirements(
     current: Dict[str, Dict[str, Any]],
     proposed: Dict[str, Dict[str, Any]],
@@ -140,9 +140,9 @@ def diff_requirements(
     return changes, affected
 
 
-# CONFIRM 4.3 — Story-level diff: created / updated / removed user stories with their
+# IMPACT 6.3 — Story-level diff: created / updated / removed user stories with their
 #             acceptance-criteria deltas (criteria_added / criteria_removed); returns
-#             the affected US-codes used by 4.4.
+#             the affected US-codes used by 6.4.
 def diff_stories(
     current: Dict[str, Dict[str, Any]],
     proposed: Dict[str, Dict[str, Any]],
@@ -264,7 +264,7 @@ def build_change_preview(
     current_state: Dict[str, Any],
     proposed_state: Dict[str, Any],
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """Build the fast, database-free part of the confirmation preview.
+    """IMPACT 6.5 — Build the fast, database-free part of the preview.
 
     Pending actions store this alongside the proposed state so the browser can
     render changed requirements and stories immediately.  The impact endpoint
@@ -285,7 +285,7 @@ def build_change_preview(
     }
 
 
-# CONFIRM 4.4 — Downstream impact (DB READ ONLY): scans the stored prd_sections and
+# IMPACT 6.4 — Downstream impact (DB READ ONLY): scan stored PRD sections and
 #             prd_documents for the affected codes, flags locked sections, and reports
 #             codes that would become DANGLING when a requirement/story is removed —
 #             the warning surface of the confirmation gate.
@@ -312,6 +312,7 @@ async def analyze_downstream(
     affected = {code.upper() for code in affected_codes}
     removed = {code.upper() for code in removed_codes}
 
+    # IMPACT 7.3 — Read governed PRD sections; failure degrades to no section impacts.
     try:
         sections = await PRDSectionRepository.get_by_project(project_id, session)
     except Exception as sec_err:  # never fail the analysis on section reads
@@ -331,6 +332,7 @@ async def analyze_downstream(
             ),
         })
 
+    # IMPACT 7.4 — Read versioned PRD diagrams; failure degrades to no diagram impacts.
     try:
         prds = await PRDDocumentRepository.get_by_project(project_id, session)
     except Exception as prd_err:  # never fail the analysis on document reads
@@ -352,26 +354,18 @@ async def analyze_downstream(
     return impacted_sections, impacted_diagrams
 
 
-# CONFIRM 4.0 — Impact calculation (the analysis itself is read-only) behind CONFIRM
-# 3.2. The route may first delete an expired pending row (CONFIRM 3.2.1). It diffs the
-# staged draft against the persisted state and derives what is affected downstream:
-#   4.1 analyze_pending_action — orchestrator (this class)
-#   4.2 diff_requirements      — requirement groups added/changed/removed + codes
-#   4.3 diff_stories           — user stories + acceptance-criteria deltas + codes
-#   4.4 analyze_downstream     — prd_sections / prd_documents that reference those
-#                                codes (locked sections flagged, removed codes →
-#                                dangling references)
-#   4.5 _flatten_state_requirements (+ _norm_* / _as_story_list) — shape helpers
-# Nothing here writes: it exists so the user can judge the merge before CONFIRM 3.3.
+# IMPACT 5.0 — Read-only impact orchestration behind route 4.1:
+# 5.1 loads current state, invokes domain calculations 6.1–6.4, and summarizes the
+# predicted change. Nothing in this service writes; it returns to the CONFIRM decision.
 class ImpactService:
     """Builds the Requirement Impact Analysis for one pending action."""
 
     @staticmethod
-    # CONFIRM 4.1 — Orchestrator: load the CURRENT persisted state (PROJECT 2.3.2) as
+    # IMPACT 5.1 — Load CURRENT persisted state (7.2) as
     #               the "version before", diff it against `proposed_changes`
-    #               (4.2 + 4.3), then ask 4.4 which PRD sections/diagrams reference the
+    #               (6.2 + 6.3), then ask 6.4 which PRD sections/diagrams reference the
     #               affected codes. Returns the summary counters + per-item changes +
-    #               impacted artifacts consumed by CONFIRM 1.6.
+    #               impacted artifacts consumed by panel 1.0.
     async def analyze_pending_action(
         action: Dict[str, Any],
         project_id: str,
@@ -385,6 +379,7 @@ class ImpactService:
 
         # Current persisted state (the "version before") from the relation
         # tables — the same shape the merge draft stores.
+        # IMPACT 7.2 — Read the authoritative persisted requirement state.
         current_state = await RequirementStateRepository.get_by_project_id(project_id, session) or {}
 
         current_reqs = _flatten_state_requirements(current_state)

@@ -27,6 +27,8 @@ async def build_project_health(project_id: str, session: AsyncSession) -> dict[s
     if project is None:
         raise LookupError("Project not found")
 
+    # TRACEABILITY 5.2 — Project health reuses the same read-only matrix/coverage
+    # derivation; it does not maintain a second traceability calculation.
     traceability = await TraceabilityService.build_traceability(project_id, session)
     coverage = traceability["coverage"]
     audit = await session.scalar(

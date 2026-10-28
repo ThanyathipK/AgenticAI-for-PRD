@@ -11,7 +11,7 @@ import { formatPrdVersionLabel } from "../utils/version";
 import { formatDateTime } from "../utils/time";
 
 // VERSION 1.3 — Diff-line renderer: paints the add/del/context tuples returned by
-//               3.7. It does not calculate or validate the comparison.
+//               6.7. It does not calculate or validate the comparison.
 /** Renders diff lines: green for additions, red for deletions, grey for context. */
 function DiffLines({ diffLines }: { diffLines: [string, string][] }) {
   if (diffLines.length === 0) {
@@ -38,7 +38,7 @@ function DiffLines({ diffLines }: { diffLines: [string, string][] }) {
 }
 
 /** One per-section diff card showing title, change kind, line counts and diff. */
-// VERSION 1.4 — Per-section diff card: renders 3.8's change kind, line counts and
+// VERSION 1.4 — Per-section diff card: renders 6.8's change kind, line counts and
 //               line tuples. `locked_preserved` reflects the section's CURRENT lock
 //               state when the diff is requested, not necessarily its historical lock.
 function SectionDiffCard({ section }: {
@@ -120,8 +120,8 @@ function ChangeTypeBadge({ changeType }: { changeType: string | undefined }) {
 }
 
 // VERSION 1.0 — Versions tab coordinator:
-//               1.1 paged timeline → automatic selection/base → 1.2 diff request
-//               → 1.3/1.4 rendering → 1.5 confirmed restore. There is no manual
+//               hook 2.1 paged timeline → automatic selection/base → client 3.2 diff
+//               → 1.3/1.4 rendering → hook 2.2 confirmed restore. There is no manual
 //               base picker: the loaded immediate predecessor is selected for it.
 export function VersionHistory({ state }: { state: ProjectState }) {
   const {
@@ -175,7 +175,7 @@ export function VersionHistory({ state }: { state: ProjectState }) {
   }, [versionHistory, selectedHistVersion, setSelectedHistVersion]);
 
   // VERSION 1.2.1 — Choose the selected row's preceding LOADED row. If pagination
-  //                 has not loaded it, null delegates predecessor lookup to 3.8.
+  //                 has not loaded it, null delegates predecessor lookup to 6.8.
   useEffect(() => {
     if (!projectId || selectedHistVersion <= 1) { setDiffBaseVersion(null); return; }
     // Find the version immediately before the selected one (any sort order).
@@ -195,7 +195,7 @@ export function VersionHistory({ state }: { state: ProjectState }) {
     if (base === selectedHistVersion) {
       setDiff(null); setDiffError(null); return;
     }
-    // VERSION 1.2 — The only SPA diff caller. No predecessor means 3.8 compares
+    // VERSION 1.2 — The only SPA diff caller. No predecessor means 6.8 compares
     //               against an empty document (base 0). A 404 from a missing or
     //               invalid target/base is intentionally displayed as no diff.
     console.log('[Diff] Fetching diff:', projectId, 'v' + selectedHistVersion, 'vs v' + base);

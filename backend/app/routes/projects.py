@@ -775,9 +775,10 @@ def get_prd_template(current_user: AuthenticatedUser = Depends(get_current_user)
     }
 
 
-# VERSION 2.0 — EXPORT snapshot producer. Deterministically fills and stamps a
-#               document, then writes directly through 4.1 (not 3.6): it therefore
-#               stores no 3.1 changed_sections and does not synchronize the state
+# PRD-EXPORT 4.0 — POST snapshot-producing export. Deterministically fills and stamps a
+#               document, then writes directly through PRD-EXPORT 7.2 / VERSION 7.1
+#               (not VERSION 6.6): it stores no VERSION 6.1 changed_sections and does not
+#               synchronize the state
 #               counter. SemVer is predicted by 3.9; prediction failure stamps the
 #               legacy label while 4.1 defaults the row semver to 1.0.0. Insert failure
 #               is fatal (500), so this endpoint never reports an unpersisted version.
@@ -834,7 +835,9 @@ async def post_prd_export_generation(
         )
 
     # DETERMINISTIC TEMPLATE FILL: build the PRD by filling the official
-    # Krungsri Nimble template from the persisted project artifacts. The
+    # PRD-EXPORT 5.0 — Assemble the Krungsri Nimble template from persisted project
+    # artifacts, resolve/stamp the predicted SemVer, and require ledger insertion.
+    # The
     # skeleton - every table, merged-cell structure and \newpage marker - is
     # always the untouched official template, so the export is PDF-exact and
     # compiles every time.
@@ -905,6 +908,8 @@ async def post_prd_export_generation(
     # Persist the newly generated PRD as an immutable version record
     version_record = None
     try:
+        # PRD-EXPORT 7.2 — Optional export snapshot insertion. Unlike ordinary
+        # VERSION 6.6 recording, this direct insert is mandatory for this endpoint.
         version_record = await PRDVersionRepository.create(str(project_id), {
             "generated_prd": markdown_content,
             "generated_by": "prd_export_endpoint",
@@ -924,6 +929,8 @@ async def post_prd_export_generation(
             detail=f"PRD generated but failed to persist version record: {str(version_err)}",
         ) from version_err
 
+    # PRD-EXPORT 8.2 — Publish only after the snapshot row exists; publication
+    # failure remains request-fatal and can roll back the transaction.
     await event_manager.publish(str(project_id), "prd_exported", {
         "project_id": str(project_id),
         "version": version_record["version_number"] if version_record else version_number,
@@ -979,7 +986,9 @@ def _safe_filename_stem(
     now: Optional[datetime] = None,
     semver: Optional[str] = None,
 ) -> str:
-    """``PRD_<project>_V<version>_<YYYY-MM-DD>_<HHMM>_<AM/PM>`` download name.
+    """PRD-EXPORT 5.4 — Build the authoritative download filename.
+
+    ``PRD_<project>_V<version>_<YYYY-MM-DD>_<HHMM>_<AM/PM>`` download name.
 
     Underscore-separated so the browser/default OS download name matches the
     shared ``PRD_projectname_version_date_time`` convention on both PDF and
@@ -1001,7 +1010,7 @@ def _safe_filename_stem(
 
 
 async def _latest_stored_prd_source(project_id: str, db: AsyncSession) -> str:
-    """The latest stored PRD document text — prd_documents first, ledger fallback.
+    """PRD-EXPORT 7.1 — Read latest saved PRD: state/document first, ledger fallback.
 
     Mirrors the project-state read path (``RequirementStateRepository``): the
     on-screen preview and BOTH file exports must resolve to the SAME latest
@@ -1100,7 +1109,7 @@ async def _fill_official_export_template(
     payload: LatexExportPayload,
     db: AsyncSession,
 ) -> str:
-    """Put project data and legacy prose into the official template body."""
+    """PRD-EXPORT 5.2 — Put legacy prose/project data into the official template."""
     from app.prd.model import CanonicalPRD, PRDContent, PRDMetadata
     from app.prd.renderers import render_latex
     from app.prd_filler import (
@@ -1228,7 +1237,7 @@ async def _export_prd_bytes(
     db: AsyncSession,
     fmt: str,
 ) -> Response:
-    """Shared body of both file exports: validate, compile off-loop, respond.
+    """PRD-EXPORT 5.1–5.4 — Resolve source, normalize, compile, and respond.
 
     Blocking subprocess work runs in a worker thread so the event loop (and the
     SSE stream other tabs hold open) is never stalled by a slow TeX compile.
@@ -1241,7 +1250,8 @@ async def _export_prd_bytes(
 
     source = strip_template_only_details(payload.latex_source).strip()
 
-    # EXPORTS ALWAYS CARRY THE LATEST VERSION: resolve the newest stored
+    # PRD-EXPORT 5.1 — Resolve the newest stored source server-side; the posted
+    # source is only a pre-generation fallback. EXPORTS ALWAYS CARRY THE LATEST VERSION.
     # document server-side (the same resolution the project-state/preview
     # read path uses) and keep the frontend-posted copy only as a fallback
     # for exports BEFORE the first generation, where the store holds the
@@ -1264,12 +1274,15 @@ async def _export_prd_bytes(
     # into the official template first, preserving their prose and filling the
     # structured requirements from the database.  Newer stored LaTeX documents
     # are already template-shaped and remain untouched.
+    # PRD-EXPORT 5.2 — Normalize legacy Markdown into the official LaTeX template.
     if is_markdown_prd(source):
         source = await _fill_official_export_template(
             project_id, project, source, payload, db,
         )
     is_markdown = False
 
+    # PRD-EXPORT 5.3 — Compiler selection: native DOCX; PDF via that DOCX and
+    # LibreOffice when available, with direct PDF compilation as fallback.
     def _pdf_export(src: str, markdown_reader: bool) -> bytes:
         """Render PDF from the same reference-shaped document as DOCX.
 
@@ -1352,6 +1365,8 @@ async def _export_prd_bytes(
     latest_prd_version = await PRDVersionRepository.get_latest(project_id, db)
     semver = str((latest_prd_version or {}).get("semver") or "").strip()
     stem = _safe_filename_stem(UUID(project_id), payload, semver=semver or None)
+    # PRD-EXPORT 8.1 — Binary download response with authoritative filename,
+    # media type, template identity, and resolved SemVer headers.
     return Response(
         content=data,
         media_type=media_type,
@@ -1370,7 +1385,8 @@ async def export_prd_pdf(
     current_user: AuthenticatedUser = Depends(require_project_owner),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """
+    """PRD-EXPORT 4.1 — Compile and return the latest saved PRD as PDF.
+
     Renders the supplied PRD into a downloadable PDF using the same native
     Word layout as DOCX (direct LaTeX compilation is the fallback).
 
@@ -1394,7 +1410,8 @@ async def export_prd_docx(
     current_user: AuthenticatedUser = Depends(require_project_owner),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """
+    """PRD-EXPORT 4.2 — Compile and return the latest saved PRD as DOCX.
+
     Converts the supplied LaTeX PRD into a downloadable Word document with the
     native Krungsri template renderer (Pandoc is a defensive fallback).
 
@@ -1456,7 +1473,7 @@ async def convert_prd_to_markdown(
 # PRD VERSION HISTORY API
 # ==========================================
 
-# VERSION 2.1 — LIST ledger metadata (1.1 → 4.3), newest first. `limit` bounds a
+# VERSION 4.1 — GET ledger metadata (UI 1.0 → hook 2.1 → client 3.1 → repository 7.3), newest first. `limit` bounds a
 #               page and `before_version` seeks older rows. Full generated_prd bodies
 #               are blanked below; single-snapshot/diff routes retain content access.
 @router.get("/api/project/{project_id}/prd-versions", response_model=List[PRDVersionResponse], status_code=status.HTTP_200_OK)
@@ -1497,11 +1514,11 @@ async def get_prd_versions(
     # (N versions x whole document), downloaded on EVERY project open even
     # though no consumer reads it (toVersionHistory ignores generated_prd).
     # Content stays reachable through the dedicated single-version endpoints
-    # (VERSION 2.3/2.4) and the diff endpoint (VERSION 2.2).
+    # (VERSION 4.3/4.4) and the diff endpoint (VERSION 4.2).
     return [{**v, "generated_prd": ""} for v in versions]
 
 
-# VERSION 2.2 — READ a section/line diff (1.2 → 3.8). Omitted base resolves to
+# VERSION 4.2 — GET section/line diff (UI 1.2 → client 3.2 → domain 6.8). Omitted base resolves to
 #               the immediate predecessor or empty base 0 for the first snapshot.
 #               Invalid UUID is 400; missing target/base or base >= target is 404.
 @router.get(
@@ -1543,9 +1560,9 @@ async def get_prd_version_diff(
     return diff
 
 
-# VERSION 2.3 — READ latest full snapshot through 4.5; 404 when no row exists.
+# VERSION 4.3 — GET latest full snapshot through 7.5; 404 when no row exists.
 #               No application caller was found: the SPA gets its newest metadata from
-#               2.1, while server-side paths call 4.5 directly.
+#               4.1, while server-side paths call 7.5 directly.
 @router.get("/api/project/{project_id}/prd-versions/latest", response_model=PRDVersionResponse, status_code=status.HTTP_200_OK)
 async def get_latest_prd_version(
     project_id: str,
@@ -1577,9 +1594,9 @@ async def get_latest_prd_version(
     return version
 
 
-# VERSION 2.4 — READ: one snapshot by number (repository 4.4) → 404 when absent.
-#             DISCREPANCY (documented, not changed): no frontend caller either (see 2.3);
-#             the diff endpoint (2.2) returns the section contents the UI needs.
+# VERSION 4.4 — GET one snapshot by number (repository 7.4) → 404 when absent.
+#             DISCREPANCY (documented, not changed): no frontend caller either (see 4.3);
+#             the diff endpoint (4.2) returns the section contents the UI needs.
 @router.get("/api/project/{project_id}/prd-versions/{version_number}", response_model=PRDVersionResponse, status_code=status.HTTP_200_OK)
 async def get_prd_version_by_number(
     project_id: str,
@@ -1613,11 +1630,12 @@ async def get_prd_version_by_number(
     return version
 
 
-# VERSION 2.5 — RESTORE orchestration (1.5). Seed parts from the current document
+# VERSION 4.5 — POST whole-document restore (UI 1.5 → hook 2.2 → client 3.3).
+#               Application orchestration 5.1 seeds parts from the current document
 #               (target only when no current document); visit target-present sections;
 #               skip currently locked and identical sections; write changed unlocked
 #               sections; then stitch. Current-only sections remain. Recording through
-#               3.6 normally appends history, but its exception is caught: the document
+#               6.6 normally appends history, but its exception is caught: the document
 #               still persists and the response falls back to source number/blank
 #               semver. `preserved_locked_sections` counts all locked target sections
 #               encountered, including identical ones. Publication precedes request
@@ -1650,7 +1668,7 @@ async def restore_prd_version(
     if not target:
         raise HTTPException(status_code=404, detail=f"PRD version {version_number} not found for this project")
 
-    # Seed the nine lockable parts from the CURRENT document first so the
+    # VERSION 5.1 — Seed the nine lockable parts from the CURRENT document first so the
     # restore always has rows to write into (no-op when they already exist).
     state = await RequirementStateRepository.get_by_project_id(project_id, session)
     current_document = (state or {}).get("generated_prd") or target["generated_prd"]
@@ -1684,7 +1702,7 @@ async def restore_prd_version(
         if updated is not None:
             restored_sections += 1
 
-    # Re-stitch from every current part (including current-only and locked parts),
+    # VERSION 5.2 — Re-stitch from every current part (including current-only and locked parts),
     # then attempt to append an immutable ledger version.
     document_markdown = await assemble_document_markdown(project_id, session)
     try:
@@ -1704,6 +1722,8 @@ async def restore_prd_version(
         "generated_prd": document_markdown,
     }, session)
 
+    # VERSION 8.1 — Publish after restored state is flushed. Request-level commit
+    # still follows publication, so a later uncaught failure rolls everything back.
     await event_manager.publish(project_id, "prd_version_restored", {
         "project_id": project_id,
         "restored_from_version": version_number,

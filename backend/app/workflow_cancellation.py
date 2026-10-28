@@ -83,6 +83,8 @@ class WorkflowCancellationRegistry:
 # Process-wide singleton consumed by the requirements route module.
 workflow_cancellations = WorkflowCancellationRegistry()
 
-# DOC-UPLOAD 6.7 — Process-local task registry used by route 2.5 registration and
-# 2.6 cancellation. Keys include project + document ids; it persists no status.
+# DOC-UPLOAD 8.3 / JOB 5.6 — Process-local extraction task registry used by
+# DOC-UPLOAD 4.5 registration and JOB 4.6 cancellation. Keys contain project +
+# document ids. Cancelling the task persists no status; the running extraction
+# request owns rollback, transcript, document status, and terminal publication.
 document_extraction_cancellations = WorkflowCancellationRegistry()

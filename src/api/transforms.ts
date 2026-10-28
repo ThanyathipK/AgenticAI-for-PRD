@@ -328,7 +328,7 @@ export function toGatheredRequirementsPayload(
 // PRD version ledger
 // ----------------------------------------------------------------------------
 
-// VERSION 1.1.2 — Map one 5.2 row for the timeline. Missing semver gets a display
+// VERSION 3.1.1 — Map one unnumbered ledger DTO for the timeline. Missing SemVer gets a display
 //                 fallback based on the numeric version (not a derived SemVer), and
 //                 every non-`manual` origin is collapsed to the UI's `ai` category.
 export function toVersionHistory(v: PrdVersionPayload): VersionHistory {

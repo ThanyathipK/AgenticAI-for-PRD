@@ -18,9 +18,10 @@ logger = logging.getLogger(__name__)
 # CONFIRM 5.0 — Pending actions = the staging table of the human-in-the-loop gate
 # (pending_actions). Producers include Gatherer/clarification MERGE, document
 # extraction INSERT_CHUNKED_REQUIREMENTS, and Architect GENERATE_PRD previews.
-# Rows are listed by CONFIRM 3.1/3.2 and removed by Save (3.3), Discard (3.4),
+# Rows are listed by CONFIRM 3.1 and read for preview by IMPACT 7.1; they are
+# removed by Save (CONFIRM 3.3), Discard (CONFIRM 3.4),
 # expiry cleanup, supersession, or source deletion. `expires_at` is enforced at
-# the impact/Save route boundary (3.2.1 / 3.3.2), not by repository selection.
+# the IMPACT 4.1 / Save boundary (CONFIRM 3.3.2), not by repository selection.
 class PendingActionRepository:
     """Handles Pending Actions for Human-in-the-Loop confirmation."""
 

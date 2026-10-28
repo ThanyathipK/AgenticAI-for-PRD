@@ -1,7 +1,7 @@
-# DOC-UPLOAD 2.0 — Document HTTP routes. Upload = KNOWLEDGE ONLY.
+# DOC-UPLOAD 4.0 — Document HTTP boundary. Upload = KNOWLEDGE ONLY.
 #             Canonical converted markdown is stored without in-place content updates; the size
-#             gate at save time is config 3.5's MAX_UPLOAD_MB (disk abuse), NOT a token
-#             check. Explicit extraction (2.5) updates tracking/transcript state and stages
+#             gate at save time is domain 6.1's MAX_UPLOAD_MB (disk abuse), NOT a token
+#             check. Explicit extraction (4.5) updates tracking/transcript state and stages
 #             a pending action; only CONFIRM applies its proposed requirement fields.
 #             Auth on every endpoint below: AUTH 7.5 (project ownership).
 """
@@ -82,7 +82,7 @@ async def _persist_conversion_message(
     status_value: str,
     session: AsyncSession,
 ) -> None:
-    """DOC-UPLOAD 2.0.1 — Commit a document-conversion transcript milestone.
+    """DOC-UPLOAD 5.1 — Commit a document-conversion transcript milestone.
 
     Each milestone is committed immediately. A failed upload raises
     ``HTTPException``, which rolls back the request's current transaction; the
@@ -121,7 +121,7 @@ async def _persist_extraction_message(
     intent: str,
     session: AsyncSession,
 ) -> None:
-    """DOC-UPLOAD 2.0.2 — Commit an extraction transcript milestone.
+    """DOC-UPLOAD 5.3 — Commit an extraction transcript milestone.
 
     The explicit commit also commits other changes already flushed in the same
     session—for example extraction status and a newly created pending action.
@@ -139,18 +139,18 @@ async def _persist_extraction_message(
 # ==========================================
 # ALLOWED FORMATS / MIME VALIDATION
 # ==========================================
-# DOC-UPLOAD 3.1 — The upload allow-list (DOC-UPLOAD 1.1's `accept` attribute mirrors it):
+# DOC-UPLOAD 6.1.1 — The upload allow-list (DOC-UPLOAD 1.1's `accept` mirrors it):
 #             only these four formats can enter the knowledge base, each with the MIME
-#             types accepted for it. Anything else is a 400 at 3.4.
-# DOC-UPLOAD 3.2 — Generic content-types tolerated for ANY supported format (curl uploads,
+#             types accepted for it. Anything else is a 400.
+# Generic content-types are tolerated for supported extensions (curl uploads,
 #             drag&drop, browsers that send octet-stream) once the extension itself has
-#             validated in 3.4.
-# DOC-UPLOAD 3.3 — OCR is explicitly OUT OF SCOPE. A PDF with no extractable text is
+#             validated.
+# OCR is explicitly OUT OF SCOPE. A PDF with no extractable text is
 #             surfaced with this clear message and, uniquely for this error, persisted as a
-#             traceable `failed` record (2.1.5) rather than aborting the upload.
-# DOC-UPLOAD 3.4 — Extension + MIME validation (step 2.1.2). Extension decides the
+#             traceable `failed` record rather than aborting the upload.
+# Extension + MIME validation: extension decides the
 #             format; a declared MIME that contradicts the extension is a 400 (an empty or
-#             generic MIME is tolerated per 3.2). Returns the descriptor used for
+#             generic MIME is tolerated). Returns the descriptor used for
 #             conversion and for the stored `original_format`/`mime_type` columns.
 def _resolve_upload_format(filename: str, content_type: str) -> Dict:
     """Validate extension + MIME and return the format descriptor.
@@ -172,10 +172,10 @@ def _validate_binary_signature(raw: bytes, original_format: str) -> None:
     DocumentIngestionService.validate_binary_signature(raw, original_format)
 
 
-# DOC-UPLOAD 3.5 — Streaming size cap (step 2.1.3): reads the upload in 1 MB slices and
+# DOC-UPLOAD 6.1.3 — Streaming size cap: reads the upload in 1 MB slices and
 #             aborts with 413 as soon as MAX_UPLOAD_MB is exceeded, so an oversized body is
 #             never fully buffered. This is the ONLY size check at save time — it guards
-#             disk abuse, NOT tokens (token_count is measured in 2.1.6 and the full
+#             disk abuse, NOT tokens (token_count is metadata and the full
 #             markdown is stored regardless of size).
 async def _read_upload_with_size_cap(file: UploadFile) -> bytes:
     """Read the whole upload, rejecting anything over ``MAX_UPLOAD_MB`` early.
@@ -187,10 +187,10 @@ async def _read_upload_with_size_cap(file: UploadFile) -> bytes:
     return await DocumentIngestionService.read_upload_with_size_cap(file)
 
 
-# DOC-UPLOAD 3.6 — Canonical conversion, run off the event loop by 2.1.4:
+# DOC-UPLOAD 6.1.4 — Canonical conversion, run off the event loop by route 4.1:
 #               md/txt → UTF-8 passthrough (errors replaced, never raised);
 #               docx   → mammoth → markdown (501 when mammoth is missing);
-#               pdf    → pypdf per-page text join → 422 needs-OCR (3.3) when nothing is
+#               pdf    → pypdf per-page text join → 422 needs-OCR when nothing is
 #                        extractable, 422 "could not read" on a parser failure.
 def _convert_to_markdown(raw: bytes, original_format: str) -> str:
     """Convert an uploaded byte stream into canonical markdown server-side.
@@ -207,20 +207,16 @@ def _convert_to_markdown(raw: bytes, original_format: str) -> str:
 # UPLOAD — KNOWLEDGE ONLY (never writes requirements)
 # ==========================================
 
-# DOC-UPLOAD 2.1 — WRITE: POST upload (frontend 1.2). Ordered path:
-#               2.1.1 project_id UUID check → 400
-#               2.1.2 format/MIME validation (3.4) → 400
-#               2.1.3 size-capped read (3.5) → 413
-#               2.1.4 conversion OFF THE EVENT LOOP (asyncio.to_thread → 3.6): PDF/DOCX
+# DOC-UPLOAD 4.1 — POST upload (frontend 1.1 → hook 2.3 → client 3.1).
+# Trigger: user selects a file. Input: multipart DOCX/PDF/Markdown/text.
+# Calls: domain validation/conversion 6.1 → repository create 7.1 → milestone 5.1.
+# Branches: invalid/oversized input fails; OCR-only PDF persists a failed row; other
+# conversion failures create no row. Upload never changes requirement fields.
+# Conversion runs OFF THE EVENT LOOP (asyncio.to_thread): PDF/DOCX
 #                     parsing is CPU-heavy and previously froze every concurrent request
 #                     (SSE heartbeats, chat, other uploads)
-#               2.1.5 needs-OCR PDF → a traceable `failed` document row; every other
-#                     conversion error creates no document row but commits a failure transcript
-#               2.1.6 token count off-thread (tiktoken) — metadata only, never a gate
-#               2.1.7 repository create (4.1) with extraction_status 'not_extracted'
-#               2.1.8 committed terminal transcript + SSE "document_uploaded"
-#             Returns 201 with the record; a needs-OCR failure carries `message` through
-#             the schema's extra=allow (5.1).
+# Writes: canonical row + terminal transcript, then event 8.1. Token count is metadata,
+# never a save gate. Returns 201 even for the traceable OCR-only failed row.
 @router.post(
     "/api/project/{project_id}/documents/upload",
     response_model=UploadedDocumentResponse,
@@ -254,7 +250,7 @@ async def upload_document(
             422 unreadable DOCX/PDF, or 501 missing converter. OCR-only PDFs are
             the exception: they return 201 with a persisted status=failed row.
     """
-    # DOC-UPLOAD 2.1.1 — Identity gate: invalid project_id ⇒ 400 (ownership is already
+    # DOC-UPLOAD 4.1.1 — Identity gate: invalid project_id ⇒ 400 (ownership is already
     #                 enforced by AUTH 7.5 before the handler body runs).
     try:
         UUID(project_id)
@@ -262,7 +258,7 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="Invalid project_id format")
 
     filename = (file.filename or "unnamed").strip()
-    # DOC-UPLOAD 2.1.2 / 2.1.3 — Format allow-list (3.4), then the streaming size cap (3.5).
+    # DOC-UPLOAD 4.1.2 — Domain validation 6.1: format/MIME, byte cap, then signature.
     try:
         fmt = _resolve_upload_format(file.filename or "", file.content_type or "")
         raw = await _read_upload_with_size_cap(file)
@@ -284,7 +280,7 @@ async def upload_document(
     # event loop froze EVERY concurrent request (SSE heartbeats, chat, other
     # uploads) for the whole conversion, so they are offloaded to the default
     # thread pool like the LaTeX export pipeline already does.
-    # DOC-UPLOAD 2.1.4 — Off-loop conversion; 2.1.5 — the needs-OCR branch below is the
+    # DOC-UPLOAD 4.1.3 — Off-loop conversion; the needs-OCR branch below is the
     #                 ONLY conversion failure that still persists a record.
     try:
         markdown = await asyncio.to_thread(_convert_to_markdown, raw, fmt["original_format"])
@@ -317,12 +313,12 @@ async def upload_document(
         )
         raise
 
-    # DOC-UPLOAD 2.1.6 — Token count off-thread (tiktoken BPE over the whole document):
+    # DOC-UPLOAD 4.1.4 — Token count off-thread (tiktoken BPE over the whole document):
     #                 measured for display/budget purposes only — it never truncates or
     #                 blocks the save.
     try:
         token_count = await asyncio.to_thread(count_tokens, markdown)
-        # DOC-UPLOAD 2.1.7 — Persist the canonical knowledge record (4.1): full markdown,
+        # DOC-UPLOAD 4.1.5 — Persist the canonical knowledge record (7.1): full Markdown,
         #                 size, tokens, status, and extraction_status 'not_extracted'.
         doc = await DocumentRepository.create(
             str(project_id),
@@ -350,7 +346,7 @@ async def upload_document(
         raise
 
     # Commit the document and its terminal transcript together. The chat_reply
-    # notification inside 2.0.1 is best-effort; the later document_uploaded event is not.
+    # notification inside 5.1 is best-effort; the later document_uploaded event is not.
     if error_message:
         doc["message"] = error_message  # surfaced via extra=allow on the schema
         await _persist_conversion_message(
@@ -367,7 +363,7 @@ async def upload_document(
             session=session,
         )
 
-    # DOC-UPLOAD 2.1.8 — Publish document_uploaded after 2.0.1 committed the row/message.
+    # DOC-UPLOAD 8.1 — Publish document_uploaded after 5.1 committed the row/message.
     #                 Unlike the chat_reply hint inside 2.0.1, this publish is not caught;
     #                 a delivery failure can surface after the upload is already durable.
     await event_manager.publish(
@@ -395,8 +391,7 @@ async def upload_document(
 # LIST + DETAIL — READ-ONLY KNOWLEDGE ACCESS
 # ==========================================
 
-# DOC-UPLOAD 2.2 — READ: list metadata only, newest first (4.2), no markdown body
-#             (frontend 1.3/1.4). Invalid UUID ⇒ 400.
+# DOC-UPLOAD 4.2 — GET list: metadata only, newest first (7.2), no Markdown body.
 @router.get(
     "/api/project/{project_id}/documents",
     response_model=List[UploadedDocumentResponse],
@@ -424,9 +419,8 @@ async def list_documents(
     return await DocumentRepository.get_by_project(project_id, session)
 
 
-# DOC-UPLOAD 2.3 — READ: the FULL canonical markdown (4.3, include_markdown=True) for the
-#             preview (frontend 1.5). Never truncated — token budgets apply only to the
-#             LLM-feeding path (DOC-UPLOAD 2.5/6.x).
+# DOC-UPLOAD 4.3 — GET detail: full canonical Markdown (7.3) for UI preview 1.3.
+# Never truncated; token budgets apply only to extraction 4.5/6.x.
 @router.get(
     "/api/project/{project_id}/documents/{document_id}",
     response_model=DocumentMarkdownResponse,
@@ -467,15 +461,12 @@ async def get_document_markdown(
 # DELETE — REMOVE A DOCUMENT FROM THE KNOWLEDGE BASE
 # ==========================================
 
-# DOC-UPLOAD 2.4 — WRITE: permanent removal (frontend 1.6). Order:
-#               2.4.1 hard-delete the record (4.4) → 404 when absent
-#               2.4.2 discard every DRAFT staged from THIS document: a pending_action of
-#                     type DRAFT_ACTION_TYPE (2.5's INSERT_CHUNKED_REQUIREMENTS) whose
-#                     proposed_changes[DRAFT_DOCUMENT_REF_KEY].document_id matches — so the
-#                     ConfirmationPanel can never offer a draft whose source is gone
-#               2.4.3 SSE "document_deleted"
-#             Requirements already confirm-extracted from this document are NOT touched
-#             (they live in the requirement tables / PRD ledger).
+# DOC-UPLOAD 4.4 — DELETE document (UI 1.5 → hook 2.6 → client 3.6).
+# Calls: hard-delete repository 7.4, then application cleanup 5.2 discards every
+# DRAFT staged from THIS document: a DRAFT_ACTION_TYPE pending action whose document
+# reference matches, so ConfirmationPanel cannot offer a draft whose source is gone.
+# Writes: row/draft deletion plus document_deleted event 8.2. Requirements already
+# confirmed from this document remain in the requirement tables / PRD ledger.
 @router.delete(
     "/api/project/{project_id}/documents/{document_id}",
     response_model=DocumentDeleteResponse,
@@ -514,12 +505,12 @@ async def delete_document(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project_id or document_id format")
 
-    # DOC-UPLOAD 2.4.1 — Hard-delete scoped to the project (4.4) → 404 when it was absent.
+    # DOC-UPLOAD 4.4.1 — Hard-delete scoped to the project (7.4) → 404 when absent.
     doc = await DocumentRepository.delete(str(document_id), str(project_id), session)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # DOC-UPLOAD 2.4.2 — Draft eviction: drop every CURRENT merge-preview staged from this
+    # DOC-UPLOAD 5.2 — Draft eviction: drop every CURRENT merge-preview staged from this
     #                 document (and nothing else), so the confirmation UI never references
     #                 a deleted source. Only WAITING_CONFIRMATION actions are returned by
     #                 get_by_project and these expire within the hour anyway — this just
@@ -536,7 +527,7 @@ async def delete_document(
             await PendingActionRepository.delete(action["id"], str(project_id), session)
             removed_drafts += 1
 
-    # DOC-UPLOAD 2.4.3 — Publish document_deleted before the request-level DB commit.
+    # DOC-UPLOAD 8.2 — Publish document_deleted before the request-level DB commit.
     #                 A publication failure therefore rolls back row/draft deletion.
     await event_manager.publish(
         str(project_id),
@@ -574,7 +565,7 @@ async def _run_extraction_by_chunks(
     content_markdown: str,
     token_count: int,
 ) -> Dict[str, Any]:
-    """DOC-UPLOAD 2.5.3 — Feed extraction-safe text through the Gatherer.
+    """DOC-UPLOAD 5.4 — Feed extraction-safe text through the Gatherer.
 
     Mode routing:
       - ``token_count <= DOCUMENT_BUDGET``   -> ONE gatherer pass over the full doc.
@@ -709,7 +700,7 @@ async def process_document(
         )
     ),
 ) -> Dict[str, Any]:
-    """DOC-UPLOAD 2.5 — Extract requirements from an uploaded document as a draft.
+    """DOC-UPLOAD 4.5 — Extract requirements from an uploaded document as a draft.
 
     This is the explicit, user-triggered extraction action. It NEVER writes
     requirements, user stories, or acceptance criteria directly. Instead it
@@ -736,7 +727,7 @@ async def process_document(
         HTTPException: 400 invalid UUID or failed (OCR) document; 404 unknown
             document; 413 document too large to extract; 502 gatherer failure.
     """
-    # DOC-UPLOAD 2.5.1 — Validate ids, load the project-scoped canonical document,
+    # DOC-UPLOAD 4.5.1 — Validate ids, load the project-scoped canonical document,
     #                   and reject failed conversions before any extraction milestone.
     try:
         UUID(project_id)
@@ -756,7 +747,7 @@ async def process_document(
             ),
         )
 
-    # DOC-UPLOAD 2.5.2 — Build an extraction-only copy (6.1 removes embedded image
+    # DOC-UPLOAD 5.3.1 — Build an extraction-only copy (6.2 removes embedded image
     #                   bytes without changing stored markdown), count its tokens,
     #                   commit the request transcript, then mark tracking pending.
     content_markdown = doc.get("content_markdown") or ""
@@ -777,7 +768,7 @@ async def process_document(
         document_id, project_id, "extraction_pending", session
     )
     # The started event is a pre-commit progress hint; `extraction_pending` is flushed
-    # but not committed until a later 2.0.2 milestone succeeds. A subscriber that
+    # but not committed until a later 5.3 milestone succeeds. A subscriber that
     # immediately reloads may therefore still observe the previous status.
     await event_manager.publish(
         project_id,
@@ -793,14 +784,16 @@ async def process_document(
     cancellation_key = _extraction_cancellation_key(project_id, document_id)
     current_task = asyncio.current_task()
     if current_task is not None:
+        # DOC-UPLOAD extraction run → JOB 5.6 registration. The registry is
+        # process-local; durable document status remains owned by this request.
         document_extraction_cancellations.register(cancellation_key, current_task)
 
-    # DOC-UPLOAD 2.5.3 — Run full/chunked Gatherer passes through the helper above.
+    # DOC-UPLOAD 5.4 — Run full/chunked Gatherer passes and emit progress hints (8.4).
     try:
         run = await _run_extraction_by_chunks(
             project_id, document_id, extraction_markdown, token_count
         )
-    # DOC-UPLOAD 2.5.4 — Cancellation/failure cleanup: discard partial in-memory output,
+    # DOC-UPLOAD 5.5 — Cancellation/failure cleanup: discard partial in-memory output,
     #                   restore `not_extracted`, commit a transcript milestone, publish
     #                   the terminal event, and return cancelled or re-raise failure.
     except asyncio.CancelledError:
@@ -858,10 +851,12 @@ async def process_document(
         raise
     finally:
         if current_task is not None:
+            # DOC-UPLOAD 8.3 / JOB 5.6 — Remove only this request's registration;
+            # a replacement task under the same key must remain cancellable.
             document_extraction_cancellations.unregister(cancellation_key, current_task)
 
-    # DOC-UPLOAD 2.5.5 — Collapse chunk output (6.4), build one revision-guarded merged
-    #                   proposal (6.5), create one pending action for THIS run (without
+    # DOC-UPLOAD 5.6 — Collapse chunk output (6.5), build one revision-guarded merged
+    #                   proposal (6.6), create one pending action for THIS run (without
     #                   deduplicating older drafts), then commit it together
     #                   with `extraction_pending` and the draft-ready transcript.
     doc_draft = accumulate_document_draft(run["chunks"])
@@ -906,8 +901,8 @@ async def process_document(
         session=session,
     )
 
-    # DOC-UPLOAD 2.5.6 — After the draft commit, publish its id/stats for client refresh
-    #                   and return the same handoff metadata to DOC-UPLOAD 1.7. This
+    # DOC-UPLOAD 8.5 — After the draft commit, publish its id/stats for client refresh
+    #                   and return the same handoff metadata to hook 2.4. This
     #                   publish is not caught, so delivery failure may surface even
     #                   though the pending action/status/transcript are already durable.
     await event_manager.publish(
@@ -957,9 +952,9 @@ async def cancel_document_extraction(
     document_id: str,
     current_user: AuthenticatedUser = Depends(require_project_owner),
 ) -> Dict[str, Any]:
-    """DOC-UPLOAD 2.6 — Signal a registered extraction task to stop.
+    """DOC-UPLOAD 4.6 / JOB 4.6 — Signal a registered extraction task to stop.
 
-    This endpoint changes no document row itself. The cancelled 2.5 request catches
+    This endpoint changes no document row itself. The cancelled 4.5 request catches
     CancelledError, resets status, records the transcript, and publishes the event.
     `cancelled=false` means no live task matched the project/document key.
     """
@@ -969,6 +964,8 @@ async def cancel_document_extraction(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project_id or document_id format")
 
+    # JOB 5.6 — Cancel the process-local extraction task. The running DOC-UPLOAD
+    # 4.5 request catches CancelledError and performs every durable cleanup write.
     cancelled = document_extraction_cancellations.cancel(
         _extraction_cancellation_key(project_id, document_id)
     )

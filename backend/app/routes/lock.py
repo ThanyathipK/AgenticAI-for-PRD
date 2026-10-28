@@ -272,9 +272,10 @@ async def get_pending_actions(
     return actions
 
 
-# CONFIRM 3.2 — Impact preview for one staged action (CONFIRM 2.2 / 1.5).
+# IMPACT 4.1 / CONFIRM 3.2 cross-reference — GET impact preview for one staged action
+# (IMPACT 2.0 → 3.1), then return to the CONFIRM decision.
 #             Auth: AUTH 7.5. Branches: 400 invalid ids → 404 action not in this
-#             project → 3.2.1 expiry gate → ImpactService (CONFIRM 4.0).
+#             project → CONFIRM expiry cleanup → ImpactService 5.1.
 #             The analysis is read-only, but an expired row is deleted and committed
 #             before 410. Cross-project action ids remain invisible and return 404.
 @router.get("/api/pending-actions/{action_id}/impact", response_model=ImpactAnalysisResponse, status_code=status.HTTP_200_OK)
@@ -312,13 +313,15 @@ async def get_action_impact(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project_id or action_id format")
 
+    # IMPACT 7.1 — Read the project-scoped pending-action collection; a foreign
+    # action id stays indistinguishable from a missing one.
     actions = await PendingActionRepository.get_by_project(project_id, session)
     action = next((a for a in actions if a["id"] == action_id), None)
     if not action:
         raise HTTPException(status_code=404, detail="Pending action not found")
 
     expires_at = action.get("expires_at")
-    # CONFIRM 3.2.1 — Expired preview cleanup: consume the unusable pending row,
+    # CONFIRM expiry cleanup at IMPACT 4.1 — consume the unusable pending row,
     #                 commit that deletion immediately, and return 410 without diffing.
     if expires_at:
         try:
