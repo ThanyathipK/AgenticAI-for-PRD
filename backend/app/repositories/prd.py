@@ -120,13 +120,13 @@ class PRDDocumentRepository:
         return False
 
 
-# VERSION 4.x — Immutable PRD-version ledger (prd_versions table). APPEND-ONLY:
+# VERSION 4.0 — Immutable PRD-version ledger (prd_versions table). APPEND-ONLY:
 #   there is no UPDATE/DELETE path — history is never rewritten.
-#   4.1 create                ← VERSION 3.6 (every AI/manual/revert/restore snapshot)
+#   4.1 create                ← VERSION 3.6 records and VERSION 2.0 direct export
 #   4.2 get_previous          ← VERSION 3.8 (default diff base)
 #   4.3 get_by_project        ← VERSION 2.1 (newest-first timeline)
 #   4.4 get_by_version_number ← VERSION 2.4 and the restore (2.5) lookup
-#   4.5 get_latest            ← VERSION 2.3, PROJECT 8.2.3 and CONFIRM 3.3.7 (pinned version)
+#   4.5 get_latest            ← 3.6/3.9 plus project-state/export/generation reads
 class PRDVersionRepository:
     """
     Dedicated immutable PRD version repository.
@@ -136,10 +136,10 @@ class PRDVersionRepository:
     """
 
     @staticmethod
-    # VERSION 4.1 — INSERT one snapshot. Version numbering: `max(existing)+1` by
-        #             default, or the caller's PINNED number (used by CONFIRM 3.3.7 so a
-        #             merge that already advanced the requirement version does not
-        #             double-bump). There is deliberately NO "same content" short-circuit.
+    # VERSION 4.1 — INSERT one snapshot. Numbering is max(existing)+1 by default,
+    #               or an optional pinned number. There is no identical-content
+    #               short-circuit. A project/version unique constraint rejects
+    #               duplicates; this method does not lock the max row.
     async def create(
         project_id: str,
         data: Dict[str, Any],
@@ -152,10 +152,8 @@ class PRDVersionRepository:
         # advances on every snapshot (AI generation, manual edit, revert) —
         # there is intentionally no "same content" short-circuit.
         #
-        # ``version_number`` may be pinned by the caller (e.g. a confirmed
-        # merge whose requirement-state version was already advanced exactly
-        # once): the ledger row then adopts THAT number so the requirement
-        # version and the ledger stay in lock-step instead of double-bumping.
+        # ``version_number`` may be pinned by a caller. No current application
+        # caller supplies it; all current paths use max(existing)+1.
         if version_number is not None:
             next_version = int(version_number)
         else:
@@ -244,9 +242,10 @@ class PRDVersionRepository:
         return None
 
     @staticmethod
-    # VERSION 4.5 — SELECT the newest snapshot. The two callers use it for VERSION
-    #             BOOKKEEPING rather than display: 3.6 compares the new document against
-    #             it, and CONFIRM 3.3.7 reads its number to pin the next ledger row.
+    # VERSION 4.5 — SELECT newest snapshot. 3.6/3.9 use its content/SemVer as the
+    #               next-record base; project-state, export/preview and generation
+    #               paths also read it directly. None becomes each caller's no-history
+    #               branch.
     async def get_latest(project_id: str, session: AsyncSession) -> Optional[Dict[str, Any]]:
         pid = as_uuid(project_id)
         stmt = select(PRDVersionModel).where(PRDVersionModel.project_id == pid).order_by(PRDVersionModel.version_number.desc()).limit(1)

@@ -30,22 +30,21 @@ def _serialize_requirement_context(value: Any) -> Optional[str]:
     return compact_requirement_context(value)
 
 
-# AUDIT 4.x — Clarification-question persistence (clarification_questions table):
+# AUDIT 4.0 — Clarification-question persistence group (clarification_questions):
 #   4.1 update         — the answer path (AUDIT 3.2); LOCK-GATED
-#   4.2 create         — used by the requirement-state save (CONFIRMATION flow) when
-#                        the staged clarification_questions list is persisted
+#   4.2 create         — used by requirement-state saves, including AUDIT 2.8
 #   4.3 get_project_id — ownership resolution for AUDIT 3.1
-#   4.4 _resolve_story_id / _resolve_story_code — map a TICKET CODE to the story UUID
-#                        (the helpers MATCHING 1.5 / AUDIT 2.6 bypass when they store a
-#                        code or the sentinel "ALL" as target_user_story_id)
+#   4.4 _resolve_story_id / _resolve_story_code — map ticket codes and UUID links
+# CLARIFY 4.0 — Answer-flow read support over the same rows: PROJECT state projects
+#   questions through CLARIFY 4.1 → 4.2, and 4.3 restores display ticket codes.
 class ClarificationQuestionRepository:
     """Handles Clarification Questions of the project."""
 
-    # CLARIFY 4.3 — Serialization helper used by the reads above: maps the stored
+    # CLARIFY 4.3 — Serialization helper used by CLARIFY 4.2: maps the stored
     #             target_user_story_id back to a human-readable TICKET CODE for the UI.
     #             This is the counterpart of AUDIT 4.4 (code → UUID), and it is why a
-    #             target stored as a raw code (MATCHING 1.5) or the sentinel "ALL"
-    #             (AUDIT 2.6) still renders sensibly in the clarification forms.
+    #             target stored as a raw code (for example MATCHING 1.5) still renders
+    #             sensibly in clarification forms when it can be resolved.
     @staticmethod
     async def _resolve_story_code(session: AsyncSession, story_id) -> Optional[str]:
         """Resolve a target user story UUID to its ticket code (US-xxx)."""
@@ -57,9 +56,8 @@ class ClarificationQuestionRepository:
 
     @staticmethod
     # AUDIT 4.4 — Ticket code → story UUID resolution, inserted at the persistence
-    #             boundary. Callers that store a raw code (MATCHING 1.5) or a sentinel
-    #             such as "ALL" (AUDIT 2.6) as `target_user_story_id` cannot be
-    #             resolved here, so the question survives with a NULL target link.
+    #             boundary. Raw ticket codes are resolved within the project; values
+    #             that match neither a story UUID nor ticket code retain a NULL link.
     async def _resolve_story_id(pid, session: AsyncSession, target_us: str) -> Optional[uuid.UUID]:
         """Resolve ``target_user_story_id`` exactly like the legacy logic.
 
@@ -87,10 +85,11 @@ class ClarificationQuestionRepository:
                 return us.id
             return None
 
-    # AUDIT 4.2 — INSERT a clarification question (used when a confirmed merge
-    #             persists the auditor's / matcher's / gatherer's questions, and by the
-    #             audit-result writer). Resolves the target ticket code to a story UUID
-    #             through 4.4 when one is available.
+    # AUDIT 4.2 — Insert a clarification question during requirement/audit persistence.
+    # AUDIT 2.8 uses this through the audit-result writer; confirmation paths may also
+    # persist matcher/gatherer questions. Target ticket codes resolve through 4.4. If
+    # a document-only project has no requirement row, one archived internal anchor is
+    # created solely to satisfy the audit/question foreign-key contract.
     @staticmethod
     async def create(project_id: str, data: Dict[str, Any], session: AsyncSession, requirement_id: Optional[uuid.UUID] = None) -> Dict[str, Any]:
         pid = as_uuid(project_id)
@@ -176,12 +175,12 @@ class ClarificationQuestionRepository:
             return serialize_clarification_question(cq, pid, ret_story_id)
         return None
 
-    # CLARIFY 4.2 — Repository read of a project's clarification questions (called by
-    #             CLARIFY 4.1 inside the state load). NOTE the join route: questions
-    #             are reached through audit_results → requirements, and when no
-    #             requirement row matches it falls back to the project's newest
-    #             requirement — i.e. the query never trusts
-    #             user_stories.project_id (the documented schema-drift workaround).
+    # CLARIFY 4.2 — Project question load used by CLARIFY 4.1. The join follows
+    #             clarification_questions → audit_results → requirements and returns
+    #             every project question in creation order. It also repairs exact
+    #             legacy duplicates in the ORM: a resolved copy propagates its answer
+    #             to an unresolved copy. That repair becomes durable if the caller's
+    #             request transaction commits; distinct questions remain independent.
     @staticmethod
     async def get_by_project(project_id: str, session: AsyncSession, requirement_id: Optional[uuid.UUID] = None) -> List[Dict[str, Any]]:
         pid = as_uuid(project_id)

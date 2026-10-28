@@ -543,8 +543,8 @@ def _dedupe_changes(changes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     return [by_key[key] for key in order]
 
-# GATHERING 5.0 — Semantic change detection service (the deterministic target finder
-#             that feeds GATHERING 2.2/2.3 and the merge recommendations). Chain:
+# GATHERING 5.0 — LLM-assisted semantic change detection and deterministic validation
+#             service feeding GATHERING 2.2/2.3 and merge recommendations. Chain:
 #             5.1 empty guard → 5.2 prompt (prompts/semantic.md) → 5.3 structured LLM
 #             call → 5.4 fail-loud on parse failure → 5.5 normalization/repair
 #             (5.5.1 + `_downgrade_unverifiable_change` / `_resolve_action_conflict` /
@@ -617,8 +617,9 @@ async def detect_semantic_changes(
             validate=_is_valid_changes,
         )
         logger.info("Successfully obtained structured output for semantic changes.")
-    # GATHERING 5.4 — FAIL LOUD: a parse/LLM failure raises RuntimeError to the caller
-    #             (surfaced as HTTP 500). Defaulting to an "INSERT/NEW" recommendation
+    # GATHERING 5.4 — Fail loudly on semantic-call or parse failure.
+    #             RuntimeError propagates to the workflow route's retryable 503 path.
+    #             Defaulting to an "INSERT/NEW" recommendation
     #             would masquerade as a legitimate new requirement and drive a wrong
     #             workflow decision — the opposite of GATHERING 2.4's safe stop.
     except Exception as e2:
@@ -626,7 +627,7 @@ async def detect_semantic_changes(
         # FAIL LOUDLY instead of silently defaulting to a NEW_REQUIREMENT "INSERT"
         # recommendation. A parse/LLM failure would otherwise be masked as a
         # legitimate new requirement and drive a wrong workflow decision, so we
-        # propagate the error to the caller (which surfaces it as HTTP 500).
+        # propagate the error to the workflow route's retryable HTTP 503 handler.
         raise RuntimeError(f"Semantic change detection failed: {str(e2)}") from e2
 
     # GATHERING 5.5 — Deterministic repair/validation pass (5.5.1): coerces every
@@ -666,28 +667,28 @@ async def detect_semantic_changes(
 
 
 
-# INTENT 2.0 — The detector: raw user text (+ optional story context) → one of five
-#             intents with a confidence and a reason. Layer chain:
-#               1.1/1.3, 3.1, 3.2, 4.1.3 (callers) → 2.1 guard → 2.2 context →
-#               2.3 prompt (prompts/intent.md) → 2.4 parser/format →
-#               2.6 shared structured LLM call (llm_utils) → 2.7 normalization;
-#               any failure falls back to the deterministic ladder 2.8.
-#             Pure service: no DB writes, no state mutation, no caching.
+# INTENT 2.0 — Classify user text into the canonical requirement-intent vocabulary.
+# Trigger: INTENT 1.3 pipeline, INTENT 3.x graph fallback, or INTENT 4.1.3 API call.
+# Input: raw user text and optional current-story context.
+# Calls: INTENT 2.1 guard → 2.2 context → 2.3 prompt → 2.4/2.5 contract →
+#        2.6 structured LLM → 2.7 normalization.
+# Branches: successful model result → normalized intent; failure → INTENT 2.8.
+# Writes: NONE; this service has no database, workflow-state, or cache mutation.
+# Failure: INTENT 2.8.1 deterministically returns a conservative classification.
 async def detect_requirement_intent(raw_input: str, current_stories: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Uses LLM for semantic intent classification on user message.
     Returns a dict with: intent, confidence, reason.
     Supports intents: GENERAL_CHAT, CREATE_REQUIREMENT, UPDATE_REQUIREMENT, DELETE_REQUIREMENT, CLARIFY_REQUIREMENT.
     """
-    # INTENT 2.0.1 — Allowed vocabulary. DUPLICATION (documented, not changed):
-    #               this literal list duplicates the intent values described in
-    #               schemas.RequirementIntentDetectionResult (INTENT 5.1) and in
-    #               prompts/intent.md; nothing keeps the three in sync at runtime.
+    # INTENT 2.0.1 — Define the runtime-accepted intent vocabulary.
+    # Contract note: this duplicates INTENT 5.1 and prompts/intent.md; runtime
+    # validation does not structurally synchronize the three definitions.
     VALID_INTENTS = ["GENERAL_CHAT", "CREATE_REQUIREMENT", "UPDATE_REQUIREMENT", "DELETE_REQUIREMENT", "CLARIFY_REQUIREMENT"]
     
-    # INTENT 2.1 — Input guard: blank input short-circuits to GENERAL_CHAT with full
-    #             confidence (which is why an empty PRD/Audit request classifies as
-    #             chat — hence the bypass rule documented at CHAT 2.3.0).
+    # INTENT 2.1 — Short-circuit blank input to GENERAL_CHAT.
+    # Branches: blank → immediate full-confidence result; nonblank → INTENT 2.2.
+    # Note: explicit agent requests are protected separately by CHAT 2.3.0.
     if not raw_input or not str(raw_input).strip():
         return {
             "intent": "GENERAL_CHAT",
@@ -702,6 +703,10 @@ async def detect_requirement_intent(raw_input: str, current_stories: Optional[Li
         "gather the following requirements:",
         "add the following requirements:",
     )
+    # INTENT 2.1.1 — Recognize explicit requirement-brief intake deterministically.
+    # Trigger: nonblank input begins with a canonical intake marker.
+    # Branches: marker present → CREATE_REQUIREMENT; otherwise → INTENT 2.2 context.
+    # Writes: NONE; avoids an unnecessary model call for structured intake text.
     if any(marker in normalized_input for marker in requirement_brief_markers):
         return {
             "intent": "CREATE_REQUIREMENT",
@@ -711,40 +716,34 @@ async def detect_requirement_intent(raw_input: str, current_stories: Optional[Li
         
     logger.info(f"Detecting requirement intent for message: '{raw_input[:100]}'")
     
-    # INTENT 2.2 — Context build: the canonical backlog rendering (shared helper,
-    #             same format as the gatherer/matcher prompts) or a placeholder when
-    #             the project has no stories yet. This is what lets the classifier
-    #             tell "update the transfer limit" (existing) from "add transfers".
+    # INTENT 2.2 — Render canonical backlog context for classification.
+    # Input: current stories.
+    # Branches: stories → shared formatted context; empty backlog → explicit placeholder.
+    # Writes: NONE.
     context_lines = format_story_context_lines(current_stories or [])
     current_context = "\n".join(context_lines) if context_lines else "No existing user stories in this project."
 
-    # INTENT 2.3 — Prompt assembly from prompts/intent.md (the intent taxonomy:
-    #             GENERAL_CHAT / CREATE / UPDATE / DELETE / CLARIFY + the "ask a
-    #             question ⇒ GENERAL_CHAT" rule). NOTE: no comment block is added to
-    #             that markdown file on purpose — its text is sent verbatim to the
-    #             model, so annotating it would change LLM behaviour.
+    # INTENT 2.3 — Assemble prompts/intent.md with message, context, and format rules.
+    # Writes: NONE; the prompt file is model input and must not contain code comments.
     prompt_template = PromptTemplate(
         template=load_prompt("intent"),
         input_variables=["current_context", "user_message", "format_instructions"]
     )
     
-    # INTENT 2.4 — JSON contract: the pydantic model doubles as the schema handed to
-    #             the LLM (format instructions) and as the validation target in 2.6.
+    # INTENT 2.4 — Build JSON format instructions from the INTENT 5.1 schema.
     pydantic_parser = JsonOutputParser(pydantic_object=RequirementIntentDetectionResult)
     format_instructions = pydantic_parser.get_format_instructions()
     
     # Prefer .with_structured_output(), falling back to raw JSON parse
-    # INTENT 2.5 — Acceptance test for the model's answer: the intent must be one of
-    #             INTENT 2.0.1 (case-insensitive), otherwise 2.6 retries and finally
-    #             raises into the 2.8 fallback ladder.
+    # INTENT 2.5 — Accept only values from INTENT 2.0.1.
+    # Failure: invalid output causes INTENT 2.6 retry, then INTENT 2.8 fallback.
     def _is_valid_intent(result: Dict[str, Any]) -> bool:
         return str(result.get("intent", "")).strip().upper() in VALID_INTENTS
 
     try:
-        # INTENT 2.6 — Shared structured-output call (llm_utils.invoke_llm_structured):
-        #             it owns the raw-JSON → with_structured_output retry, the
-        #             markdown-fence stripping and the `reasoning_content` recovery.
-        #             Model/transport: llm_factory → LM Studio (CHAT 6.1).
+        # INTENT 2.6 — Request and validate structured model output.
+        # Calls: invoke_llm_structured → llm_factory/LM Studio transport.
+        # Failure: parsing/validation exhaustion raises into INTENT 2.8.
         result = await invoke_llm_structured(
             llm,
             prompt_template,
@@ -758,9 +757,8 @@ async def detect_requirement_intent(raw_input: str, current_stories: Optional[Li
             format_instructions=format_instructions,
             validate=_is_valid_intent,
         )
-        # INTENT 2.7 — Normalization: upper-cased intent, numeric confidence (default
-        #             0.90 when the model omitted it), and `reason` preferred over the
-        #             schema's `reasoning` alias. Returned verbatim to the callers.
+        # INTENT 2.7 — Normalize the accepted model result for all callers.
+        # Writes: NONE; returns uppercase intent, numeric confidence, and reason.
         intent = str(result.get("intent", "")).strip().upper()
         confidence = float(result.get("confidence", 0.90))
         reason = str(result.get("reason") or result.get("reasoning") or "")
@@ -770,17 +768,16 @@ async def detect_requirement_intent(raw_input: str, current_stories: Optional[Li
             "confidence": confidence,
             "reason": reason
         }
-    # INTENT 2.8 — LLM/parse failure: logged, then the deterministic keyword ladder
-    #             below classifies instead. This is what keeps the workflow usable
-    #             when the gateway is down (the pipeline still gets an intent).
+    # INTENT 2.8 — Recover from LLM or parsing failure without dropping the request.
+    # Failure: logs the model failure and continues to INTENT 2.8.1.
     except Exception as e2:
         logger.error(f"Intent detection parsing failed completely: {str(e2)}")
 
     # Fallback: heuristic classification
-    # INTENT 2.8.1 — Fallback ladder (ordered, first match wins): greeting → question
-    #              → clarify/audit → delete → update → create → default GENERAL_CHAT
-    #              at 0.80. Deliberately conservative: anything unrecognised stays a
-    #              conversation rather than fabricating a requirement operation.
+    # INTENT 2.8.1 — Classify deterministically when model classification fails.
+    # Branches: greeting → question → clarify/audit → delete → update → create →
+    #           conservative GENERAL_CHAT default; first match wins.
+    # Writes: NONE.
     lower_inp = raw_input.lower().strip()
     polite_prefix = r"^(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?"
     delete_command = bool(
@@ -859,11 +856,13 @@ async def detect_requirement_intent(raw_input: str, current_stories: Optional[Li
         }
 
 
-# CHAT 2.3.2 — Service layer of the conversation branch. Reads its system prompt
-#             from prompts/general_chat.md, injects a compact project context
-#             (stories/ACs/PRD preview + last 10 turns) and answers with the shared
-#             LLM (via app/llm_factory). NEVER mutates project artifacts, and it
-#             never raises: the caller gets the canned fallback below instead.
+# CHAT 2.3.2 — Generate text for the direct conversation branch.
+# Trigger: CHAT 2.3 after history and optional project knowledge are loaded.
+# Input: raw message, project state, conversation history, and knowledge chunks.
+# Calls: prompts/general_chat.md → shared LangChain LLM.
+# Writes: NONE; route-level CHAT 2.3 owns persistence and events.
+# Failure: fails softly with the service's canned fallback response.
+# Next: CHAT 2.3.3 optional assistant-turn persistence.
 async def generate_general_chat_response(
     raw_input: str,
     project_context: Dict[str, Any],
@@ -1131,11 +1130,14 @@ async def match_requirement(raw_input: str, detected_intent: str, current_storie
 
 
 
-# ROUTING 3.0 — Workflow classifier (the LLM half of ROUTING 2.x). One of four
-#             workflows (CHAT | QUESTION | COMMAND | REQUIREMENT) + confidence +
-#             reason. Chain: 3.1 guard → 3.2 prompt (prompts/router.md) →
-#             3.3 parser/validator → 3.4 shared structured call → 3.5 heuristic
-#             ladder on any failure. Pure service: no DB, no state, no caching.
+# ROUTING 3.0 — Classify input into a graph-level workflow category.
+# Trigger: ROUTING 2.1 router node or ROUTING 5.1.2 debug endpoint.
+# Input: raw user text.
+# Calls: ROUTING 3.1 guard → 3.2 prompt → 3.3 contract → 3.4 structured LLM.
+# Branches: valid model result → normalized classification; failure → ROUTING 3.5.
+# Writes: NONE; this service has no database or workflow-state side effects.
+# Failure: deterministic ROUTING 3.5.1 fallback always returns a category.
+# Next: ROUTING 4.1 graph dispatch when called from the router node.
 async def classify_workflow(raw_input: str) -> Dict[str, Any]:
     """
     Lightweight Workflow Router layer before the Gatherer Agent.

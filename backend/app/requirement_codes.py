@@ -13,7 +13,7 @@ Nothing in the codebase should hardcode a literal code such as ``"REQ-001"``:
   every caller (agents, routes, document import, repositories) derives the same
   answer.
 """
-# GATHERING 7.x — Requirement-code helpers used across this flow:
+# GATHERING 7.0 — Requirement-code helper group used across this flow:
 #   7.1 format_requirement_code — canonical REQ-NNN rendering
 #   7.2 normalize_requirement_code — "req_1"/"REQ-1" → REQ-001 ("" when invalid); used
 #       by GATHERING 3.6/3.7 and by every repository that stores requirement codes

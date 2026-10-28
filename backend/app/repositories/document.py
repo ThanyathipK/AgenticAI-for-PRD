@@ -1,8 +1,9 @@
 """
 Uploaded-document repository operations.
 
-The ``uploaded_documents`` table is the project's immutable knowledge /
-document store. Uploading a document ONLY adds source material — nothing here
+The ``uploaded_documents`` table is the project's knowledge/document store.
+Canonical content is not edited in place, but extraction status is mutable and
+rows can be deleted. Uploading ONLY adds source material — nothing here
 ever mutates requirements, user stories, or acceptance criteria (that happens
 exclusively through the explicit, user-confirmed extraction flow in
 ``app/routes/documents.py``).
@@ -19,12 +20,13 @@ from app.repositories.base import as_uuid, serialize_document
 logger = logging.getLogger(__name__)
 
 
-# DOC-UPLOAD 4.x — uploaded_documents persistence (the immutable knowledge store).
+# DOC-UPLOAD 4.0 — uploaded_documents persistence. Canonical content has no update
+# path; extraction status is mutable and 4.4 permanently deletes the entire row.
 #   4.1 create                  ← DOC-UPLOAD 2.1.7 (the only INSERT path)
 #   4.2 get_by_project          ← DOC-UPLOAD 2.2 + the delete-time draft scan context
-#   4.3 get_by_id               ← DOC-UPLOAD 2.3 (with markdown) and FLOW 15's process
+#   4.3 get_by_id               ← DOC-UPLOAD 2.3 and 2.5.1 (with markdown)
 #   4.4 delete                  ← DOC-UPLOAD 2.4.1 (hard delete, project-scoped)
-#   4.5 update_extraction_status ← FLOW 15 only; never touched by upload/list/detail
+#   4.5 update_extraction_status ← DOC-UPLOAD 2.5 and CONFIRM 3.3.7/3.4
 # Nothing here mutates requirements/user_stories/acceptance_criteria.
 class DocumentRepository:
     """CRUD operations for uploaded project documents."""
@@ -33,7 +35,7 @@ class DocumentRepository:
     async def create(project_id: str, data: Dict[str, Any], session: AsyncSession) -> Dict[str, Any]:
         # DOC-UPLOAD 4.1 — The only INSERT into uploaded_documents (2.1.7): stores the FULL
         #             converted markdown with its metadata; status defaults to 'processed' and
-        #             extraction_status to 'not_extracted' (extraction is opt-in, FLOW 15).
+        #             extraction_status to 'not_extracted' (extraction is opt-in, 2.5).
         """Persist a new document record with its full canonical markdown."""
         doc = DocumentModel(
             project_id=as_uuid(project_id),
@@ -71,7 +73,7 @@ class DocumentRepository:
     async def get_validation_context(
         project_id: str, session: AsyncSession
     ) -> List[Dict[str, Any]]:
-        """Return usable knowledge-base text for the validation workflow.
+        """DOC-UPLOAD 4.2.1 — Return usable canonical text to the AUDIT flow.
 
         Unlike the lightweight document-list query, this deliberately includes
         the canonical markdown. Failed conversions (for example OCR-only PDFs)
@@ -101,7 +103,7 @@ class DocumentRepository:
     @staticmethod
     async def get_by_id(document_id: str, project_id: str, session: AsyncSession) -> Optional[Dict[str, Any]]:
         # DOC-UPLOAD 4.3 — Single record WITH markdown (include_markdown=True) for 2.3 and for
-        #             FLOW 15's process path, which re-reads the stored text.
+        #             2.5's process path, which re-reads the stored text.
         """Fetch a single document by id, scoped to the project."""
         did = as_uuid(document_id)
         pid = as_uuid(project_id)
@@ -122,9 +124,9 @@ class DocumentRepository:
         extraction_status: str,
         session: AsyncSession,
     ) -> Optional[Dict[str, Any]]:
-        # DOC-UPLOAD 4.5 — Extraction-status flag (FLOW 15 only: 'extraction_pending' on start,
-        #             'extraction_applied' after CONFIRM). Upload never calls this — a fresh
-        #             upload always starts as 'not_extracted' (4.1).
+        # DOC-UPLOAD 4.5 — Extraction tracking: `extraction_pending` during/after 2.5,
+        #             `not_extracted` on cancellation/failure/Discard, and
+        #             `extraction_applied` after CONFIRM. Upload begins not_extracted.
         """Update a document's extraction-status tracking flag."""
         did = as_uuid(document_id)
         pid = as_uuid(project_id)

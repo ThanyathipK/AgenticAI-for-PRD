@@ -177,8 +177,8 @@ export interface RequirementStore {
     projId: string,
     options?: { append?: boolean; beforeVersion?: number; limit?: number },
   ) => Promise<number>;
-  /** Restore the whole PRD document from a ledger version (append-only;
-   *  locked parts are preserved). Resolves to true on success. */
+  /** Restore target-present unlocked parts; current-only/locked parts remain.
+   *  Resolves to true for any successful route response, including ledger fallback. */
   handleRestoreVersion: (versionNumber: number) => Promise<boolean>;
   /** Lock/unlock ONE PRD part (blocks edits + AI regeneration when locked). */
   handleToggleSectionLock: (sectionId: string) => Promise<void>;
@@ -429,9 +429,8 @@ export function useRequirementStore(
         return;
       }
 
-      // Refresh the version ledger — a manual section edit always creates a new
-      // immutable PRD version on the server, so reload the history to reflect the
-      // new version number / change summary.
+      // Refresh after the manual section request. Its ledger append is fail-open,
+      // so this may reveal a new row or simply retain the prior history.
       await loadVersionHistory(projectId);
     }
 
@@ -464,9 +463,10 @@ export function useRequirementStore(
     }
   };
 
-  // VERSION 1.1 — Ledger load (trigger: project open / after restore / after any
-  //             snapshot-creating action). Failure is non-fatal: the timeline simply
-  //             keeps its previous contents (the PRD panel is unaffected).
+  // VERSION 1.1 — Paged ledger load. A replacement load keeps only the returned
+  //               page; append mode deduplicates by numeric version and restores
+  //               newest-first order. Stale project responses are discarded and
+  //               failures are non-fatal, leaving the existing timeline untouched.
   const loadVersionHistory = useCallback(async (
     projId: string,
     options?: { append?: boolean; beforeVersion?: number; limit?: number },
@@ -498,17 +498,12 @@ export function useRequirementStore(
     }
   }, []);
 
-  // Restore the WHOLE PRD document from a ledger version. The backend is
-  // append-only: the restored content becomes a NEW version (history is never
-  // rewritten) and locked parts keep their current content. On success the
-  // store document, preview copy, current version and ledger all refresh.
-  // Resolves to true only on success so ConfirmModal closes on success.
-  // VERSION 1.5 — Restore handler (VERSION 2.5 → 3.6). APPEND-ONLY semantics are
-  //             visible here: the preview/document are set to the RESTORED content while
-  //             `currentVersion` moves to the NEW number, and the ledger + section
-  //             locks are reloaded so the timeline shows the appended row. Locked parts
-  //             keep their current content (the backend enforces the lock contract).
-  //             Resolves true only on success so the ConfirmModal closes.
+  // VERSION 1.5 — Restore coordinator (2.5). On an HTTP success it accepts the
+  //               route's stitched document and reported version, then reloads
+  //               ledger metadata and section state in parallel. The route may
+  //               report the source number/blank semver when its caught ledger
+  //               write failed; this handler does not distinguish that fallback.
+  //               Resolves true only when the request succeeds so ConfirmModal closes.
   const handleRestoreVersion = async (
     versionNumber: number,
   ): Promise<boolean> => {

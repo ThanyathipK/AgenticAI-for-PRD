@@ -11,6 +11,7 @@ DOCUMENT_INJECTION_RE = re.compile(
 )
 
 
+# AUDIT 2.5.1 — Stable deduplication shared by pass merging and question reconciliation.
 def dedupe_dicts(items: list[dict[str, Any]], key_fields: tuple[str, ...]) -> list[dict[str, Any]]:
     """Perform stable de-duplication for overlapping audit chunks."""
     seen = set()
@@ -26,6 +27,9 @@ def dedupe_dicts(items: list[dict[str, Any]], key_fields: tuple[str, ...]) -> li
     return output
 
 
+# AUDIT 1.2.1 — Prepare knowledge documents as untrusted audit evidence.
+# Redacts obvious prompt-injection lines, preserves document identity/content, and
+# records whether redaction occurred; it does not write or mutate source documents.
 def prepare_audit_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Treat uploaded text as data and redact obvious prompt-injection lines."""
     prepared = []
@@ -50,6 +54,9 @@ def prepare_audit_documents(documents: list[dict[str, Any]]) -> list[dict[str, A
     return prepared
 
 
+# AUDIT 2.5.2 — Deterministically merge validated audit passes.
+# Deduplicates/sorts findings and questions, synthesizes missing conflict questions,
+# selects the strongest project context, and derives the risk-based verdict.
 def merge_audit_passes(
     results: list[dict[str, Any]],
     current_version: int,

@@ -1177,12 +1177,13 @@ def _fill_glossary_rows(body: str, narrative: Optional[Dict[str, Any]]) -> str:
 
 
 
-# ARCHITECT 3.1 — Deterministic template filler (the ARCHITECT 3.3 write path, and the
+# ARCHITECT 3.1 — Deterministic template filler (the ARCHITECT 3.3 fill path, and the
 #             same helper used by the PROJECT PRD-export endpoint): fills the official
 #             LaTeX template BODY's blanks from the project dataset — cover,
 #             stakeholders, version history, reviews, business overview, scope tables
 #             (in/out), technical appendix and glossary. No LLM text enters the
-#             structure, so the result always compiles and stays PDF-exact.
+#             structure, avoiding model-generated structural markup while preserving
+#             the official template layout.
 def fill_template_body(
     *,
     project_id: str = "",

@@ -51,7 +51,8 @@ async def lifespan(app: FastAPI):
     # unless the operator explicitly opts into that weaker posture.
     verify_single_worker_guarantee()
 
-    # SSE event-bus hardening — same single-process contract as the rate limiter.
+    # SYNC 8.4 — Enforce SYNC 8.3 before migrations/startup recovery. This is a
+    # separate check from the rate limiter even though both require one process.
     # The in-process subscriber queues + replay buffer are process-local; with
     # multiple workers events published on one worker would never reach SSE
     # clients connected to another (missing/duplicate streams). This guard is
@@ -261,10 +262,11 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 #   - events:      /api/events, /api/project/{id}/events, /api/project/{id}/sse (SSE push stream)
 #   - documents:   /api/project/{id}/documents upload/list/get + DRAFT-only process endpoint
 #   - traceability:/api/project/{id}/traceability (derived matrix)
-# AUTH 1.7.0 — Router mount: this single include registers EVERY /api/auth/* route
-#              documented below (AUTH 1.7 login, 2.3 me, 3.3 config, 4.4 logout,
-#              5.1 change-password, 6.3 register). Anonymous here on purpose —
-#              per-route dependencies (AUTH 7.1) do the enforcement.
+# AUTH 1.7.0 — Mount the authentication router.
+# Trigger: FastAPI application construction.
+# Calls: registers AUTH 1.7, 2.3, 3.3, 4.4, 5.1, and 6.3 routes.
+# Writes: route table only.
+# Failure: authorization is deliberately enforced by each route's AUTH 7.x dependency.
 app.include_router(auth.router, tags=["Authentication"])
 app.include_router(chat.router, tags=["System"])
 app.include_router(projects.router, tags=["Projects"])

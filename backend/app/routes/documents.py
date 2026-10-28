@@ -1,8 +1,8 @@
-# DOC-UPLOAD 2.0 — Module contract: upload = KNOWLEDGE ONLY (never writes requirements).
-#             The whole converted markdown is always persisted immutably; the only size
+# DOC-UPLOAD 2.0 — Document HTTP routes. Upload = KNOWLEDGE ONLY.
+#             Canonical converted markdown is stored without in-place content updates; the size
 #             gate at save time is config 3.5's MAX_UPLOAD_MB (disk abuse), NOT a token
-#             check. Extraction is the separate explicit action (FLOW 15, 2.x `/process`),
-#             which stages a DRAFT pending_action and still writes nothing until CONFIRM.
+#             check. Explicit extraction (2.5) updates tracking/transcript state and stages
+#             a pending action; only CONFIRM applies its proposed requirement fields.
 #             Auth on every endpoint below: AUTH 7.5 (project ownership).
 """
 Document upload & extraction API.
@@ -82,7 +82,7 @@ async def _persist_conversion_message(
     status_value: str,
     session: AsyncSession,
 ) -> None:
-    """Append a durable document-conversion turn to the project transcript.
+    """DOC-UPLOAD 2.0.1 — Commit a document-conversion transcript milestone.
 
     Each milestone is committed immediately. A failed upload raises
     ``HTTPException``, which rolls back the request's current transaction; the
@@ -121,7 +121,11 @@ async def _persist_extraction_message(
     intent: str,
     session: AsyncSession,
 ) -> None:
-    """Persist a document extraction turn as part of the normal chat timeline."""
+    """DOC-UPLOAD 2.0.2 — Commit an extraction transcript milestone.
+
+    The explicit commit also commits other changes already flushed in the same
+    session—for example extraction status and a newly created pending action.
+    """
     await ConversationMessageRepository.save_message(
         project_id=project_id,
         role=role,
@@ -210,11 +214,11 @@ def _convert_to_markdown(raw: bytes, original_format: str) -> str:
 #               2.1.4 conversion OFF THE EVENT LOOP (asyncio.to_thread → 3.6): PDF/DOCX
 #                     parsing is CPU-heavy and previously froze every concurrent request
 #                     (SSE heartbeats, chat, other uploads)
-#               2.1.5 needs-OCR PDF → a traceable `failed` row with the 3.3 message;
-#                     every other conversion error aborts and persists NOTHING
+#               2.1.5 needs-OCR PDF → a traceable `failed` document row; every other
+#                     conversion error creates no document row but commits a failure transcript
 #               2.1.6 token count off-thread (tiktoken) — metadata only, never a gate
 #               2.1.7 repository create (4.1) with extraction_status 'not_extracted'
-#               2.1.8 one chat confirmation + SSE "document_uploaded"
+#               2.1.8 committed terminal transcript + SSE "document_uploaded"
 #             Returns 201 with the record; a needs-OCR failure carries `message` through
 #             the schema's extra=allow (5.1).
 @router.post(
@@ -246,8 +250,9 @@ async def upload_document(
             'failed' with a clear 'needs-OCR' message in ``result.message``).
 
     Raises:
-        HTTPException: 400 bad extension/MIME, 413 oversized file, 422
-            unreadable/OCR-only PDF.
+        HTTPException: 400 bad extension/MIME/empty content, 413 oversized file,
+            422 unreadable DOCX/PDF, or 501 missing converter. OCR-only PDFs are
+            the exception: they return 201 with a persisted status=failed row.
     """
     # DOC-UPLOAD 2.1.1 — Identity gate: invalid project_id ⇒ 400 (ownership is already
     #                 enforced by AUTH 7.5 before the handler body runs).
@@ -285,8 +290,8 @@ async def upload_document(
         markdown = await asyncio.to_thread(_convert_to_markdown, raw, fmt["original_format"])
     except HTTPException as exc:
         # A scanned/no-text PDF keeps a traceable 'failed' record and surfaces an
-        # explicit, non-silent 'needs-OCR' message. All other conversion errors
-        # abort with the raised status code (nothing is persisted).
+        # explicit, non-silent 'needs-OCR' message. Other conversion errors create
+        # no document row, but their durable failure transcript was committed above.
         if (
             exc.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
             and exc.detail == NEEDS_OCR_MESSAGE
@@ -317,7 +322,7 @@ async def upload_document(
     #                 blocks the save.
     try:
         token_count = await asyncio.to_thread(count_tokens, markdown)
-        # DOC-UPLOAD 2.1.7 — Persist the immutable knowledge record (4.1): full markdown,
+        # DOC-UPLOAD 2.1.7 — Persist the canonical knowledge record (4.1): full markdown,
         #                 size, tokens, status, and extraction_status 'not_extracted'.
         doc = await DocumentRepository.create(
             str(project_id),
@@ -344,8 +349,8 @@ async def upload_document(
         )
         raise
 
-    # Commit the document and its final transcript status together before any
-    # best-effort realtime notification can fail.
+    # Commit the document and its terminal transcript together. The chat_reply
+    # notification inside 2.0.1 is best-effort; the later document_uploaded event is not.
     if error_message:
         doc["message"] = error_message  # surfaced via extra=allow on the schema
         await _persist_conversion_message(
@@ -362,8 +367,9 @@ async def upload_document(
             session=session,
         )
 
-    # DOC-UPLOAD 2.1.8 — SSE "document_uploaded" (EVENTS flow) so other tabs/windows refresh
-    #                 their knowledge lists.
+    # DOC-UPLOAD 2.1.8 — Publish document_uploaded after 2.0.1 committed the row/message.
+    #                 Unlike the chat_reply hint inside 2.0.1, this publish is not caught;
+    #                 a delivery failure can surface after the upload is already durable.
     await event_manager.publish(
         str(project_id),
         "document_uploaded",
@@ -420,7 +426,7 @@ async def list_documents(
 
 # DOC-UPLOAD 2.3 — READ: the FULL canonical markdown (4.3, include_markdown=True) for the
 #             preview (frontend 1.5). Never truncated — token budgets apply only to the
-#             LLM-feeding path (FLOW 15).
+#             LLM-feeding path (DOC-UPLOAD 2.5/6.x).
 @router.get(
     "/api/project/{project_id}/documents/{document_id}",
     response_model=DocumentMarkdownResponse,
@@ -464,7 +470,7 @@ async def get_document_markdown(
 # DOC-UPLOAD 2.4 — WRITE: permanent removal (frontend 1.6). Order:
 #               2.4.1 hard-delete the record (4.4) → 404 when absent
 #               2.4.2 discard every DRAFT staged from THIS document: a pending_action of
-#                     type DRAFT_ACTION_TYPE (FLOW 15's INSERT_CHUNKED_REQUIREMENTS) whose
+#                     type DRAFT_ACTION_TYPE (2.5's INSERT_CHUNKED_REQUIREMENTS) whose
 #                     proposed_changes[DRAFT_DOCUMENT_REF_KEY].document_id matches — so the
 #                     ConfirmationPanel can never offer a draft whose source is gone
 #               2.4.3 SSE "document_deleted"
@@ -483,7 +489,7 @@ async def delete_document(
 ) -> Dict[str, Any]:
     """Permanently remove an uploaded document from the project's knowledge base.
 
-    Deletes the immutable document record (full canonical markdown included).
+    Deletes the document record (including its canonical markdown).
     Any DRAFT extraction merge-preview staged from this document (the
     ``INSERT_CHUNKED_REQUIREMENTS`` pending_action whose
     ``proposed_changes._document_ref.document_id`` matches) is discarded too, so
@@ -513,11 +519,12 @@ async def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # DOC-UPLOAD 2.4.2 — Draft eviction: drop every DRAFT merge-preview staged from this
+    # DOC-UPLOAD 2.4.2 — Draft eviction: drop every CURRENT merge-preview staged from this
     #                 document (and nothing else), so the confirmation UI never references
     #                 a deleted source. Only WAITING_CONFIRMATION actions are returned by
     #                 get_by_project and these expire within the hour anyway — this just
-    #                 prevents stale drafts.
+    #                 prevents stale drafts. This route does not cancel an extraction
+    #                 already in flight; its later completion is a separate race.
     pending = await PendingActionRepository.get_by_project(str(project_id), session)
     removed_drafts = 0
     for action in pending:
@@ -529,7 +536,8 @@ async def delete_document(
             await PendingActionRepository.delete(action["id"], str(project_id), session)
             removed_drafts += 1
 
-    # DOC-UPLOAD 2.4.3 — SSE "document_deleted" (frontend 1.6 removes the preview locally).
+    # DOC-UPLOAD 2.4.3 — Publish document_deleted before the request-level DB commit.
+    #                 A publication failure therefore rolls back row/draft deletion.
     await event_manager.publish(
         str(project_id),
         "document_deleted",
@@ -566,7 +574,7 @@ async def _run_extraction_by_chunks(
     content_markdown: str,
     token_count: int,
 ) -> Dict[str, Any]:
-    """Feed the whole document through the gatherer, accumulating a draft.
+    """DOC-UPLOAD 2.5.3 — Feed extraction-safe text through the Gatherer.
 
     Mode routing:
       - ``token_count <= DOCUMENT_BUDGET``   -> ONE gatherer pass over the full doc.
@@ -701,16 +709,17 @@ async def process_document(
         )
     ),
 ) -> Dict[str, Any]:
-    """Extract requirements from an uploaded document — DRAFT ONLY.
+    """DOC-UPLOAD 2.5 — Extract requirements from an uploaded document as a draft.
 
     This is the explicit, user-triggered extraction action. It NEVER writes
     requirements, user stories, or acceptance criteria directly. Instead it
     accumulates every chunk's gatherer output in memory, de-duplicates it across
     the whole document, builds a SINGLE merged merge preview against the current
-    requirement state, and stores that draft in ONE pending_action (action_type
+    requirement state, and stores that run's draft in one pending_action (action_type
     ``INSERT_CHUNKED_REQUIREMENTS``). The draft is versioned
     (``requirements_revision + 1``) so confirming via ``/api/confirm-action/{id}``
-    applies it as a single atomic merge without creating a PRD version.
+    applies it as a single atomic merge without creating a PRD version. This route
+    does not supersede an older extraction draft from the same document.
 
     Args:
         project_id: Owning project UUID string.
@@ -727,6 +736,8 @@ async def process_document(
         HTTPException: 400 invalid UUID or failed (OCR) document; 404 unknown
             document; 413 document too large to extract; 502 gatherer failure.
     """
+    # DOC-UPLOAD 2.5.1 — Validate ids, load the project-scoped canonical document,
+    #                   and reject failed conversions before any extraction milestone.
     try:
         UUID(project_id)
         UUID(document_id)
@@ -745,6 +756,9 @@ async def process_document(
             ),
         )
 
+    # DOC-UPLOAD 2.5.2 — Build an extraction-only copy (6.1 removes embedded image
+    #                   bytes without changing stored markdown), count its tokens,
+    #                   commit the request transcript, then mark tracking pending.
     content_markdown = doc.get("content_markdown") or ""
     extraction_markdown = prepare_document_for_extraction(content_markdown)
     token_count = count_tokens(extraction_markdown)
@@ -762,6 +776,9 @@ async def process_document(
     await DocumentRepository.update_extraction_status(
         document_id, project_id, "extraction_pending", session
     )
+    # The started event is a pre-commit progress hint; `extraction_pending` is flushed
+    # but not committed until a later 2.0.2 milestone succeeds. A subscriber that
+    # immediately reloads may therefore still observe the previous status.
     await event_manager.publish(
         project_id,
         "document_extraction_started",
@@ -778,10 +795,14 @@ async def process_document(
     if current_task is not None:
         document_extraction_cancellations.register(cancellation_key, current_task)
 
+    # DOC-UPLOAD 2.5.3 — Run full/chunked Gatherer passes through the helper above.
     try:
         run = await _run_extraction_by_chunks(
             project_id, document_id, extraction_markdown, token_count
         )
+    # DOC-UPLOAD 2.5.4 — Cancellation/failure cleanup: discard partial in-memory output,
+    #                   restore `not_extracted`, commit a transcript milestone, publish
+    #                   the terminal event, and return cancelled or re-raise failure.
     except asyncio.CancelledError:
         logger.info(
             "Document %s extraction stopped by user; discarding partial results.",
@@ -839,6 +860,10 @@ async def process_document(
         if current_task is not None:
             document_extraction_cancellations.unregister(cancellation_key, current_task)
 
+    # DOC-UPLOAD 2.5.5 — Collapse chunk output (6.4), build one revision-guarded merged
+    #                   proposal (6.5), create one pending action for THIS run (without
+    #                   deduplicating older drafts), then commit it together
+    #                   with `extraction_pending` and the draft-ready transcript.
     doc_draft = accumulate_document_draft(run["chunks"])
     current_state = await RequirementStateRepository.get_by_project_id(project_id, session)
 
@@ -881,6 +906,10 @@ async def process_document(
         session=session,
     )
 
+    # DOC-UPLOAD 2.5.6 — After the draft commit, publish its id/stats for client refresh
+    #                   and return the same handoff metadata to DOC-UPLOAD 1.7. This
+    #                   publish is not caught, so delivery failure may surface even
+    #                   though the pending action/status/transcript are already durable.
     await event_manager.publish(
         project_id,
         "document_extraction_draft",
@@ -928,7 +957,12 @@ async def cancel_document_extraction(
     document_id: str,
     current_user: AuthenticatedUser = Depends(require_project_owner),
 ) -> Dict[str, Any]:
-    """Stop extraction on the event loop, aborting the LM Studio HTTP await."""
+    """DOC-UPLOAD 2.6 — Signal a registered extraction task to stop.
+
+    This endpoint changes no document row itself. The cancelled 2.5 request catches
+    CancelledError, resets status, records the transcript, and publishes the event.
+    `cancelled=false` means no live task matched the project/document key.
+    """
     try:
         UUID(project_id)
         UUID(document_id)

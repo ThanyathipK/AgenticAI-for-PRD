@@ -42,6 +42,14 @@ VALID_ARTIFACT_TYPES = [
 # GENERIC ARTIFACT LOCK / UNLOCK API
 # ==========================================
 
+# LOCK 4.1 — Lock one generic supported artifact.
+# Trigger: LOCK 3.1 client call.
+# Input: owner-scoped project, artifact type/UUID, caller owner label.
+# Calls: LOCK 5.1 service → SYNC 8.2 publication.
+# Branches: same-label re-lock → 200; different label → 409.
+# Writes: artifact lock columns and best-effort event log.
+# Failure: invalid IDs/type → 400; absent/wrong project → 404.
+# Next: publish before request commit, so SYNC refresh may race persistence.
 @router.post("/api/project/{project_id}/artifacts/{artifact_type}/{artifact_id}/lock", response_model=ArtifactLockResponse, status_code=status.HTTP_200_OK)
 async def lock_artifact(
     project_id: str,
@@ -67,8 +75,8 @@ async def lock_artifact(
         ArtifactLockResponse: Confirmation with the artifact's lock metadata.
 
     Raises:
-        HTTPException: 400 on invalid IDs or unsupported artifact type; 409 if
-            the artifact is already locked; 404 if the artifact is not found.
+        HTTPException: 400 on invalid IDs or unsupported type; 409 when a
+            different label holds the lock; 404 if absent/wrong project.
     """
     from app.lock_service import ArtifactLockError, LockService
 
@@ -108,6 +116,12 @@ async def lock_artifact(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# LOCK 4.2 — Unlock one generic supported artifact.
+# Trigger: LOCK 3.1 client call; Calls: LOCK 5.2 → SYNC 8.2.
+# Branches: already unlocked → 200; different nonempty label → 403;
+#           ownerless lock → any supplied label may clear it.
+# Writes: clears lock columns; publishes before request commit.
+# Failure: invalid IDs/type → 400; absent/wrong project → 404.
 @router.post("/api/project/{project_id}/artifacts/{artifact_type}/{artifact_id}/unlock", response_model=ArtifactLockResponse, status_code=status.HTTP_200_OK)
 async def unlock_artifact(
     project_id: str,
@@ -172,6 +186,9 @@ async def unlock_artifact(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+# LOCK 4.3 — Read generic lock status through LOCK 5.3.
+# Trigger: API consumer; no current SPA caller found.
+# Writes: NONE. Failure: invalid/type → 400; absent/wrong project → 404.
 @router.get("/api/project/{project_id}/artifacts/{artifact_type}/{artifact_id}/lock-status", response_model=LockStatusResponse, status_code=status.HTTP_200_OK)
 async def get_artifact_lock_status(
     project_id: str,
@@ -222,10 +239,11 @@ async def get_artifact_lock_status(
 # PENDING ACTIONS API
 # ==========================================
 
-# CONFIRM 3.1 — READ: staged actions (CONFIRM 2.1 / 1.7). Auth: AUTH 7.5 ownership.
+# CONFIRM 3.1 — LIST staged actions (CONFIRM 2.1 / 1.7). Auth: AUTH 7.5 ownership.
 #             Only rows still WAITING_CONFIRMATION are returned (repository 5.2); the
 #             response carries `full=True` proposed_changes so the panel can render
-#             the draft without a second call.
+#             the draft without a second call. Before returning, 3.1.1 removes older
+#             duplicate clarification-review drafts and retains the newest one.
 @router.get("/api/pending-actions/{project_id}", response_model=List[PendingActionResponse], status_code=status.HTTP_200_OK)
 async def get_pending_actions(
     project_id: str,
@@ -242,7 +260,7 @@ async def get_pending_actions(
     Returns:
         List[PendingActionResponse]: Pending actions for the project.
     """
-    # Older builds could create one clarification-review draft per answer/batch.
+    # CONFIRM 3.1.1 — Older builds could create one clarification-review draft per answer/batch.
     # Only the newest combined draft is meaningful; remove stale duplicates as
     # part of the pending-review lifecycle while leaving every other draft type.
     removed = await PendingActionRepository.discard_clarification_review_drafts(
@@ -254,11 +272,11 @@ async def get_pending_actions(
     return actions
 
 
-# CONFIRM 3.2 — READ-ONLY impact preview for one staged action (CONFIRM 2.2 / 1.5).
+# CONFIRM 3.2 — Impact preview for one staged action (CONFIRM 2.2 / 1.5).
 #             Auth: AUTH 7.5. Branches: 400 invalid ids → 404 action not in this
-#             project → ImpactService.analyze_pending_action (CONFIRM 4.x).
-#             Writes nothing (note: the action is located via the project's pending
-#             list, so an action id from another project is invisible → 404).
+#             project → 3.2.1 expiry gate → ImpactService (CONFIRM 4.0).
+#             The analysis is read-only, but an expired row is deleted and committed
+#             before 410. Cross-project action ids remain invisible and return 404.
 @router.get("/api/pending-actions/{action_id}/impact", response_model=ImpactAnalysisResponse, status_code=status.HTTP_200_OK)
 async def get_action_impact(
     action_id: str,
@@ -300,6 +318,8 @@ async def get_action_impact(
         raise HTTPException(status_code=404, detail="Pending action not found")
 
     expires_at = action.get("expires_at")
+    # CONFIRM 3.2.1 — Expired preview cleanup: consume the unusable pending row,
+    #                 commit that deletion immediately, and return 410 without diffing.
     if expires_at:
         try:
             expiry = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
@@ -321,22 +341,19 @@ async def get_action_impact(
     return analysis
 
 
-# CONFIRM 3.3 — THE ONLY PATH THAT PERSISTS AI OUTPUT (CONFIRM 2.3 / 1.2). Everything
-#             the agents produced before this point is a pending-action draft.
+# CONFIRM 3.3 — Save boundary for a pending action (CONFIRM 2.3 / UI 1.2 or 1.8).
+#             The row itself is already persisted; this route decides whether its
+#             proposed project changes may become authoritative.
 #             Branch map:
-#               3.3.1 UUID format 400
-#               3.3.2 project artifact lock gate → 409 (locked) / 404 (unresolvable)
-#               3.3.3 action lookup within this project → 404
-#               3.3.4 empty proposed_changes → action deleted + 400 (nothing to apply)
-#               3.3.5 RequirementStateRepository.save_or_update ← THE WRITE
-#                     (PROJECT 8.2.2: requirement_states + requirements / epics /
-#                      user_stories / acceptance_criteria / audit_results /
-#                      clarification_questions / prd_documents)
-#               3.3.6 document-extraction bookkeeping (only INSERT_CHUNKED_REQUIREMENTS)
-#               3.3.7 version ledger row (pinned version, fail-soft)
-#               3.3.8 pending action deleted (the row IS the state; it is not "applied")
-#               3.3.9 SSE "merge_confirmed" → clients refresh
-#               3.3.10 response {status, requirement_state}
+#               3.3.1 UUID validation + row-locked, project-scoped action lookup
+#               3.3.2 expiry gate → delete + commit + 410
+#               3.3.3 ARCHIVE parent-lock recheck → 409 while draft remains
+#               3.3.4 empty proposal → 400; attempted deletion rolls back with error
+#               3.3.5a GENERATE_PRD → ARCHITECT 9.0 commit/version/event branch
+#               3.3.5b other actions → stale-revision guard + requirement-state save
+#               3.3.6 post-save invalidation, legacy section sync, governance status
+#               3.3.7 document-extraction bookkeeping when applicable
+#               3.3.8 consume action; 3.3.9 publish merge_confirmed; 3.3.10 respond
 @router.post("/api/confirm-action/{action_id}", response_model=ConfirmActionResponse, status_code=status.HTTP_200_OK)
 async def confirm_action(
     action_id: str,
@@ -364,8 +381,8 @@ async def confirm_action(
         action_uuid = UUID(action_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project_id or action_id format")
-    # 1. Get the action
-    # Serialize confirmation of this exact preview. On PostgreSQL, a second
+    # CONFIRM 3.3.1 — Validate both identifiers, then serialize confirmation of this
+    # exact project-scoped WAITING_CONFIRMATION row. On PostgreSQL, a second
     # request waits here and then observes that the first transaction consumed
     # the row, so one preview can create at most one immutable PRD version.
     action_model = (await session.execute(
@@ -384,6 +401,8 @@ async def confirm_action(
     action = serialize_pending_action(action_model, full=True)
 
     expires_at = action.get("expires_at")
+    # CONFIRM 3.3.2 — An expired preview cannot be saved. Delete and commit its row,
+    #                 then return 410 so the client must generate a fresh preview.
     if expires_at:
         try:
             expiry = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
@@ -401,7 +420,7 @@ async def confirm_action(
         except (TypeError, ValueError):
             logger.warning("Pending action %s has an invalid expires_at value: %r", action_id, expires_at)
 
-    # Archive previews are checked again here because an artifact may have been
+    # CONFIRM 3.3.3 — Archive previews are checked again here because an artifact may have been
     # locked after the preview was created. Never silently skip a protected
     # target while reporting the confirmation as successful.
     if action.get("action_type") == "ARCHIVE":
@@ -482,15 +501,21 @@ async def confirm_action(
                 ),
             )
 
-    # 2. Extract the proposed changes (the full merged requirement state)
+    # CONFIRM 3.3.4 — Extract the proposal. Empty content is rejected with 400. The
+    #                 delete below is flushed, but get_db rolls the transaction back
+    #                 with the HTTPException, so the pending row remains in practice.
     proposed_changes = action.get("proposed_changes", {})
     if not proposed_changes:
         await PendingActionRepository.delete(action_id, project_id, session)
         raise HTTPException(status_code=400, detail="No proposed changes found in pending action")
 
-    # PRD generation has its own commit boundary. The architect only staged a
-    # rendered document and diagram; approval below is the first point at which
-    # sections, the canonical PRD, or version history may change.
+    # CONFIRM 3.3.5a / ARCHITECT 9.0 — Confirm a staged GENERATE_PRD preview.
+    # Guards: compare source requirements_revision and base PRD version with current
+    # state (409 when stale), then require nonempty candidate content. As in 3.3.4,
+    # the attempted deletion for empty content rolls back with the 400 response.
+    # Writes: ARCHITECT 5.1 section synchronization, immutable PRD version, canonical
+    # document/diagram/narrative/current workflow state, pending-action deletion, and
+    # prd_confirmed event. This is the first governed write in the explicit UI flow.
     if action.get("action_type") == "GENERATE_PRD":
         latest_state = await RequirementStateRepository.get_by_project_id(project_id, session) or {}
         expected_requirements_revision = int(
@@ -562,6 +587,8 @@ async def confirm_action(
             version_record["version_number"],
             project_id,
         )
+        # CONFIRM 3.3.10 — Return the saved state. The PRD branch additionally returns
+        #                  its immutable ledger SemVer; no cascade job is required.
         return {
             "status": "confirmed",
             "requirement_state": persisted_state,
@@ -570,10 +597,9 @@ async def confirm_action(
             "cascade_status": "not_required",
         }
 
-    # 3. Apply proposed changes to the database
+    # CONFIRM 3.3.5b — Apply a non-GENERATE_PRD proposal to requirement state.
     logger.info(f"[MERGE CONFIRM] Persisting merged state for project {project_id}...")
-    # CONFIRM 3.3.5 — THE WRITE (the single point where a staged draft becomes real
-    #               data). Reuses the PROJECT 8.2.2 repository step: create-if-missing,
+    # Reuses the PROJECT 8.2.2 repository step: create-if-missing,
     #               else partial update that rebuilds the child tables from the lists
     #               supplied in the draft. Committed by the request's get_db on success.
     previous_state = await RequirementStateRepository.get_by_project_id(project_id, session)
@@ -606,6 +632,10 @@ async def confirm_action(
             previous_revision + 1,
         )
     persisted_state = await RequirementStateRepository.save_or_update(project_id, updates_to_persist, session)
+    # CONFIRM 3.3.6 — Post-save reconciliation for the non-GENERATE_PRD branch.
+    # CONFIRM 3.3.6.1 — For ordinary requirement merges, invalidate changed dependents
+    #                   and remove every stale GENERATE_PRD preview. Clarification-
+    #                   review merges intentionally skip this dependency pass.
     if requirement_merge and not clarification_review_merge:
         from app.dependency_graph_service import (
             detect_changed_artifacts,
@@ -633,6 +663,9 @@ async def confirm_action(
             if pending.get("action_type") == "GENERATE_PRD":
                 await PendingActionRepository.delete(pending["id"], project_id, session)
 
+    # CONFIRM 3.3.6.2 — Legacy COMPLETED-stage proposals may carry generated PRD
+    # content outside the dedicated GENERATE_PRD action. Materialize their sections
+    # fail-soft; this compatibility branch does not append a PRD version.
     # Architect output is staged without touching the section/version stores.
     # Materialize its sections only at this confirmation boundary so Cancel
     # truly leaves all governed PRD artifacts unchanged.
@@ -665,6 +698,8 @@ async def confirm_action(
                 project_id,
                 section_err,
             )
+    # CONFIRM 3.3.6.3 — If governed content changed on an approved project, move its
+    #                   governance status back to revised for a new review cycle.
     if governed_state_changed(previous_state, proposed_changes):
         await mark_revised_if_approved(
             project_id,
@@ -679,7 +714,7 @@ async def confirm_action(
     # source document's extraction flag and append the audit-log entry. The
     # draft was created by POST .../documents/{id}/process; THIS is the only
     # point at which document-derived requirements ever reach the DB.
-    # CONFIRM 3.3.6 — Document-extraction bookkeeping (only for drafts staged by the
+    # CONFIRM 3.3.7 — Document-extraction bookkeeping (only for drafts staged by the
     #               DOCUMENT EXTRACTION flow, identified by `_document_ref` in the
     #               draft): flip uploaded_documents.extraction_status to
     #               "extraction_applied" and append an artifact_event_logs entry.
@@ -733,6 +768,8 @@ async def confirm_action(
     })
 
     logger.info(f"[MERGE CONFIRM] Merge confirmed and persisted for project {project_id}")
+    # CONFIRM 3.3.10 — Return the authoritative requirement state and cascade fields
+    #                  consumed by the Dashboard completion callback (CONFIRM 1.3).
     return {
         "status": "confirmed",
         "requirement_state": persisted_state,
@@ -741,10 +778,11 @@ async def confirm_action(
     }
 
 
-# CONFIRM 3.4 — Discard path (CONFIRM 2.4 / 1.4): delete the staged action and nothing
-#             else — the persisted project is untouched, so no lock check is needed
-#             (there is nothing to overwrite). SSE "action_cancelled" closes the gate
-#             on every connected client.
+# CONFIRM 3.4 — Discard path (CONFIRM 2.4 / UI 1.4 or 1.8): find the project-scoped
+#             waiting action, reset a document-extraction source to `not_extracted`
+#             when applicable, delete the draft, then publish `action_cancelled`.
+#             Proposed project changes are never applied, so no artifact-lock gate is
+#             needed. A missing/cross-project action returns 404.
 @router.post("/api/cancel-action/{action_id}", response_model=ActionStatusResponse, status_code=status.HTTP_200_OK)
 async def cancel_action(
     action_id: str,

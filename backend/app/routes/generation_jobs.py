@@ -1,4 +1,4 @@
-"""Persistent background-job API for long-running agents and regeneration."""
+"""JOB 4.0 — Persistent background-job HTTP boundaries."""
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,6 +16,12 @@ from app.schemas import ProcessRequirementsRequest
 router = APIRouter()
 
 
+# JOB 4.1 — Accept durable Architect/Auditor work.
+# Trigger: JOB 3.1 client create.
+# Input: authenticated user and ProcessRequirementsRequest.
+# Calls: access/precondition gates → JOB 5.1 create → commit → JOB 5.3.1 launch.
+# Branches: unsupported agent/empty Architect input → 400; active job → 409.
+# Writes: queued generation_jobs row before task launch.
 @router.post("/api/process-requirements/background", status_code=status.HTTP_202_ACCEPTED)
 async def start_agent_job(
     payload: ProcessRequirementsRequest,
@@ -55,6 +61,11 @@ async def start_agent_job(
     return job
 
 
+# JOB 4.2 — Accept durable regeneration work.
+# Trigger: regeneration client; Calls: JOB 5.1 → commit → JOB 5.3.1.
+# Branches: active project job → 409.
+# Failure: execution later reaches JOB 5.2's unsupported `project` lock lookup
+#          and fails before regeneration (documented, not fixed).
 @router.post("/api/projects/{project_id}/regeneration/background", status_code=status.HTTP_202_ACCEPTED)
 async def start_regeneration_job(
     project_id: str,
@@ -76,6 +87,8 @@ async def start_regeneration_job(
     return job
 
 
+# JOB 4.3 — Return project-owner-scoped status/result for JOB 3.2 polling.
+# Writes: NONE. Failure: invalid/cross-project/missing id → 404.
 @router.get("/api/projects/{project_id}/generation-jobs/{job_id}")
 async def read_generation_job(
     project_id: str,
@@ -89,6 +102,9 @@ async def read_generation_job(
     return serialize_job(job)
 
 
+# JOB 4.4 — Request durable cancellation through JOB 5.4.
+# Branches: terminal → cancelled=false; active → persist cancelling then cancel task.
+# Failure: invalid/cross-project/missing id → 404.
 @router.post("/api/projects/{project_id}/generation-jobs/{job_id}/cancel")
 async def stop_generation_job(
     project_id: str,

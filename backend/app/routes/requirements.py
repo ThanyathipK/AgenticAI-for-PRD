@@ -319,6 +319,10 @@ async def get_requirement(
 # REQUIREMENT LOCK / UNLOCK API
 # ==========================================
 
+# LOCK 4.4 — Legacy requirement-specific lock route. It bypasses LOCK 5.x and
+#            calls repository 7.1. Re-lock returns 200 even when another label
+#            already owns the row; the existing metadata remains unchanged.
+#            No SPA caller was found (LOCK 2.x uses generic route 4.1).
 @router.post("/api/project/{project_id}/requirements/{requirement_id}/lock", response_model=RequirementLockResponse, status_code=status.HTTP_200_OK)
 async def lock_requirement(
     project_id: str,
@@ -365,6 +369,9 @@ async def lock_requirement(
     }
 
 
+# LOCK 4.5 — Legacy requirement-specific unlock through repository 7.2. It
+#            requires exact supplied-label equality; unlike generic 3.2, a null
+#            stored owner is not freely clearable. No SPA caller was found.
 @router.post("/api/project/{project_id}/requirements/{requirement_id}/unlock", response_model=RequirementLockResponse, status_code=status.HTTP_200_OK)
 async def unlock_requirement(
     project_id: str,
@@ -418,17 +425,18 @@ async def unlock_requirement(
 # AUDIT / CLARIFICATION API
 # ==========================================
 
-# AUDIT 3.0 — Answer a compliance clarification question raised by the auditor
-#             (AUDIT 2.x → staged → confirmed). Branch map:
+# AUDIT 3.0 — Answer a persisted compliance clarification raised by AUDIT 2.x.
+#             Successful current audits are auto-persisted at AUDIT 2.8, so their
+#             questions already have stable row IDs and require no Save/Merge step.
+#             Branch map:
 #               3.1 resolve the owning project from the question id and verify
 #                   ownership (IDOR fix — writing by PK alone let any authenticated
 #                   user answer any project's question; unknown id → 404, never 403)
 #               3.2 project-scoped, LOCK-GATED repository update
 #                   (user_answer + is_resolved=True; ArtifactLockError → 409)
 #               3.3 session commit + SSE "clarification_answered"
-#             PRECONDITION (documented): the question must already exist as a ROW, i.e.
-#             its merge must have been confirmed (CONFIRMATION flow) — a question that
-#             is still only staged in a pending action is not resolvable yet.
+#             PRECONDITION: question_id must identify a persisted, unlocked row owned
+#             by the authenticated user's project.
 @router.post("/api/audit/respond/{question_id}", response_model=AuditRespondResponse, status_code=status.HTTP_200_OK)
 async def post_audit_resolution_reply(
     question_id: UUID,
@@ -470,6 +478,8 @@ async def post_audit_resolution_reply(
         raise HTTPException(status_code=404, detail=f"Clarification question {question_id} not found")
     await verify_project_access(str(project_id), current_user, session)
 
+    # AUDIT 3.2 — Resolve the question through the project-scoped lock-gated writer.
+    # Writes: user_answer and is_resolved=True; locked → 409, vanished → 404.
     updated = await ClarificationQuestionRepository.update(
         str(question_id),
         str(project_id),
@@ -480,14 +490,14 @@ async def post_audit_resolution_reply(
         # The question vanished between the ownership lookup and the write.
         raise HTTPException(status_code=404, detail=f"Clarification question {question_id} not found")
 
+    # AUDIT 3.3 — Commit the answer, then publish clarification_answered after success.
     try:
         await session.commit()
     except Exception:
         await session.rollback()
         raise
 
-    # AUDIT 3.3 — Real-time fan-out: the resolved question disappears from other
-    #            clients' pending-clarification forms (EVENTS flow).
+    # Real-time fan-out removes the resolved question from other clients' forms.
     await event_manager.publish(str(project_id), "clarification_answered", {
         "project_id": str(project_id),
         "question_id": str(question_id),
@@ -504,21 +514,20 @@ async def post_audit_resolution_reply(
     }
 
 
-# CLARIFY 3.0 — Answer intake for the auditor's / matcher's / gatherer's clarification
-#             questions (FLOW 10). Reached from CLARIFY 1.3 via 2.1. Branch map:
-#               3.1 manual validation (`payload` is an untyped Dict → UUID check 400)
-#                   + AUTHZ ownership (AUTH 7.4) BEFORE any read/write
-#               3.2 project artifact-lock gate → 409 (locked) / 404 (unresolvable)
-#               3.3 state read (PROJECT 2.3.2) → 404 when the project has no state
-#               3.4 positional answer mapping (`q-<index>` over the stored list)
-#               3.5 validation recompute (unresolved ⇒ invalid + WAITING_CLARIFICATION)
-#               3.6 RequirementStateRepository.save_or_update ← THE WRITE (PROJECT 8.2.2)
-#               3.7 SSE "clarification_submitted"
-#               3.8 return the saved state → CLARIFY 1.3 refreshes the audit view
-#             DISCREPANCY (documented, not changed): the UI button says "Submit Answers
-#             & Re-Audit", but no auditor/LLM call happens here — the verdict is
-#             recomputed deterministically from the unresolved count (3.5); a real
-#             re-audit requires a separate Validate action (AUDIT 5.0).
+# CLARIFY 3.0 — Answer intake for persisted Auditor/Matcher/Gatherer questions.
+#             Reached from CLARIFY 1.3 via 2.1. Branch map:
+#               3.1 validate project id + verify owner before project-state access
+#               3.2 load state/questions; 404 when no requirement state exists
+#               3.3 map stable-id (or legacy q-index) answers, resolve/dedupe questions
+#               3.4 group answers and ask CLARIFY 5.1 Gatherer for a review proposal
+#               3.5 write answer evidence and invalid/pending workflow status in-session
+#               3.6 replace old review drafts; stage MERGE only for material changes
+#               3.7 publish clarification_submitted; 3.8 return saved state + metadata
+#             This route never runs the Auditor and has no artifact-lock gate. Answer
+#             evidence and any pending proposal commit together when the request succeeds;
+#             proposed requirement edits remain behind explicit CONFIRM approval.
+#             Scope: only questions returned by CLARIFY 4.1 from persisted rows can be
+#             answered here; request-local/transcript-only questions have no stable row.
 @router.post("/api/clarification/submit", response_model=RequirementStateResponse, status_code=status.HTTP_200_OK)
 async def post_clarification_submit(payload: Dict[str, Any], current_user: AuthenticatedUser = Depends(get_current_user), session: AsyncSession = Depends(get_db)) -> RequirementStateResponse:
     """
@@ -526,8 +535,8 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
     reviewable requirement-change proposal. It never runs the Auditor.
 
     Args:
-        payload: Dict containing ``project_id`` and a mapping of answers
-            (``answers[`q-<idx>`]``).
+        payload: Dict containing ``project_id`` and an answer mapping keyed by
+            stable question UUID (preferred) or legacy ``q-<idx>``.
         session: Active asynchronous database session.
 
     Returns:
@@ -540,6 +549,8 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
     project_id = payload.get("project_id")
     answers = payload.get("answers", {})
 
+    # CLARIFY 3.1 — Validate the untyped payload's project id, then enforce ownership
+    #               before reading questions or writing stakeholder evidence.
     if not isinstance(project_id, str):
         raise HTTPException(status_code=400, detail="Invalid project_id format")
 
@@ -551,11 +562,13 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
     # AUTHZ: the caller must own the project before anything is read/written.
     await verify_project_access(str(project_id), current_user, session)
 
+    # CLARIFY 3.2 — Load the authoritative state and its flattened persisted questions
+    #               through CLARIFY 4.1/4.2. A project without state cannot be answered.
     req_state = await RequirementStateRepository.get_by_project_id(project_id, session)
     if not req_state:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Stable question UUIDs are the primary contract. Keep q-<index> support for
+    # CLARIFY 3.3 — Stable question UUIDs are the primary contract. Keep q-<index> support for
     # older clients, but never depend on list position when an id is available.
     questions = req_state.get("clarification_questions", [])
     submitted_envelopes = []
@@ -630,7 +643,7 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
     if not submitted_envelopes:
         raise HTTPException(status_code=400, detail="At least one non-empty clarification answer is required")
 
-    # Keep LM Studio calls small and coherent: group by requirement/story/topic,
+    # CLARIFY 3.4 — Keep LM Studio calls small and coherent: group by requirement/story/topic,
     # then cap every call at four answer envelopes. Results are folded into one
     # draft and therefore one explicit confirmation action.
     grouped: Dict[str, List[Dict[str, Any]]] = {}
@@ -692,16 +705,16 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
     # only the next explicit Validate action may create new audit questions.
     req_state["clarification_questions"] = questions
 
-    # Answers are evidence for a future audit, not proof that blocking findings
+    # CLARIFY 3.5 — Answers are evidence for a future audit, not proof that blocking findings
     # are fixed. Keep the project pending/invalid until a fresh Auditor run.
     unresolved = [q for q in req_state["clarification_questions"] if not q.get("is_resolved", False)]
     req_state["validation_status"] = "invalid"
     req_state["current_workflow_state"] = "WAITING_CLARIFICATION" if unresolved else "AUDIT_PENDING"
 
-    # CLARIFY 3.6 — THE WRITE (PROJECT 8.2.2): the whole state (with the answered
-    #             questions) is persisted, which also re-derives the child rows. Note
-    #             this is the second write path besides CONFIRM 3.3 — unlike the AI
-    #             merge it is user-authored data, so no pending action is needed.
+    # Write the answered rows through PROJECT 8.2.2 using the loaded full-state shape;
+    # this may re-derive relational child rows, but carries the unchanged requirement
+    # board. The request transaction commits only after draft staging/event publication
+    # also succeed. This evidence write is not acceptance of Gatherer-proposed edits.
     saved_state = await RequirementStateRepository.save_or_update(project_id, req_state, session)
 
     from datetime import datetime, timedelta, timezone
@@ -718,6 +731,9 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
         for criterion in (story.get("acceptance_criteria") or [])
     ]
     proposal_state["clarification_answer_classifications"] = classifications
+    # CLARIFY 3.6 — Replace every older clarification-review draft. Create one MERGE
+    #               pending action only when the Gatherer's full requirement proposal
+    #               differs from the pre-answer requirements; otherwise no CONFIRM gate.
     removed_drafts = await PendingActionRepository.discard_clarification_review_drafts(
         project_id, session, keep_latest=False,
     )
@@ -756,8 +772,9 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
             + (" ".join(dict.fromkeys(rationales)) if rationales else
                "The Gatherer found no actionable requirement update in the submitted answers.")
         )
-    # CLARIFY 3.7 — Real-time fan-out with the new verdict so other clients update
-    #            their audit/clarification views (EVENTS flow).
+    # CLARIFY 3.7 — Publish saved workflow status and proposal metadata so other clients
+    #               refresh their clarification/pending-action views (EVENTS flow).
+    #               Publication occurs before get_db commits the request transaction.
     await event_manager.publish(project_id, "clarification_submitted", {
         "project_id": project_id,
         "validation_status": req_state.get("validation_status"),
@@ -765,8 +782,9 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
         "pending_action_id": pending_action.get("id") if pending_action else None,
         "proposal_generation_warning": proposal_generation_warning,
     })
-    # CLARIFY 3.8 — Response = the saved state; CLARIFY 1.3 applies it (answers reset,
-    #            agent node + audit verdict refreshed, project state re-loaded).
+    # CLARIFY 3.8 — Response = saved evidence plus proposal metadata; CLARIFY 1.4/1.5
+    #               reset resolved inputs, refresh question state, reload the project,
+    #               and mirror the optional pending action. It is not a fresh verdict.
     return saved_state
 
 
@@ -774,6 +792,11 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
 # GENERATION CANCELLATION API (Stop button)
 # ==========================================
 
+# JOB 4.5 — Cancel a legacy direct workflow task.
+# Trigger: JOB 3.4 when no durable job id is known.
+# Calls: JOB 5.5.2 registry cancellation.
+# Writes: process-local task cancellation only; no durable cancellation row.
+# Branches: live task → true; missing/completed task → false.
 @router.post("/api/process-requirements/cancel", status_code=status.HTTP_200_OK)
 def post_cancel_process_requirements(
     project_id: str = Query(..., description="Project whose in-flight generation should be terminated."),
@@ -809,10 +832,13 @@ def post_cancel_process_requirements(
 # MULTI-AGENT PROCESS REQUIREMENTS API
 # ==========================================
 
-# CHAT 2.1 — Backend entry for the CHAT flow (and for every other intent): the
-#            shared pipeline below authenticates (AUTH 7.1/7.4), enforces the
-#            context budget, persists the user turn and detects intent (CHAT 2.2)
-#            before choosing conversation (CHAT 2.3) or an agent workflow.
+# CHAT 2.1 — Accept the product's shared chat/agent processing request.
+# Trigger: CHAT 1.3 POST /api/process-requirements.
+# Input: processing payload, AUTH 7.1 identity, database session, and rate limit.
+# Calls: RequirementProcessingService → _process_requirements_pipeline.
+# Branches: CHAT 2.2 chooses CHAT 2.3 direct conversation or LangGraph processing.
+# Writes: registers cancellation state and may persist conversation/agent results.
+# Failure: authorization, rate-limit, budget, and workflow errors map to HTTP responses.
 @router.post("/api/process-requirements", response_model=ProcessRequirementsResponse, status_code=status.HTTP_200_OK)
 async def post_process_requirements(
     request: ProcessRequirementsRequest,
@@ -839,9 +865,14 @@ async def post_process_requirements(
     )
     response = await service.process(request, session, current_user)
 
-    # The SPA uses this multi-agent endpoint rather than /api/chat. Feed every
-    # completed turn into the same fail-open semantic-memory writer so durable
-    # project facts are actually persisted during the product's normal flow.
+    # CHAT 2.5 — Distill durable memory after completed product processing.
+    # Trigger: RequirementProcessingService returns a non-cancelled response.
+    # Input: project id, original user message, and returned assistant message.
+    # Calls: CHAT 4.1 extract_and_remember.
+    # Branches: blank input/reply or cancelled response → no memory call.
+    # Writes: semantic-memory facts and embeddings when enabled and novel.
+    # Failure: fail-open inside CHAT 4.1; memory cannot block the completed response.
+    # Next: return ProcessRequirementsResponse to CHAT 1.4.
     reply = getattr(response, "message", None)
     user_message = (request.raw_input or "").strip()
     if user_message and reply and getattr(response, "status", None) != "cancelled":
@@ -928,15 +959,18 @@ async def _process_requirements_pipeline(
         )
 
     # ==========================================
-    # INTENT 1.1 — Primary call site of the intent detector (pipeline STEP 2).
-    #              Runs BEFORE the LangGraph workflow so the pipeline can pick the
-    #              conversation branch (CHAT 2.3) or map the intent onto an agent
-    #              (INTENT 1.4). The detector itself is INTENT 2.x.
-    #              DB: requirement_states read below supplies the story context.
-    # STEP 2: Intent Detection (before LangGraph)
+    # INTENT 1.0 — Integrate intent detection into the shared processing pipeline.
+    # Trigger: CHAT 2.1 pipeline after user-turn persistence and request validation.
+    # Input: raw user text and confirmed project RequirementState.
+    # Calls: INTENT 1.1 context phase → 1.2 service import → 1.3 detector call.
+    # Branches: GENERAL_CHAT → CHAT 2.3; requirement intent → INTENT 1.4 mapping.
+    # Writes: in-memory intent/confidence and target_agent; no intent-specific DB row.
+    # Failure: INTENT 2.8 supplies a deterministic fallback classification.
     # ==========================================
-    # INTENT 1.2 — Service import (module-local to keep the route module's import
-    #              graph light; semantic_service pulls in the LLM factory).
+    # INTENT 1.1 — Establish the pipeline detection phase before LangGraph.
+    # Calls: RequirementState read supplies story context for INTENT 1.3.
+    # Next: INTENT 1.2 service import and INTENT 1.3 invocation.
+    # INTENT 1.2 — Import detector services locally to avoid eager LLM dependency loading.
     from app.semantic_service import detect_requirement_intent, generate_general_chat_response
 
     # Load the centralized RequirementState from Supabase (single source of truth)
@@ -984,18 +1018,21 @@ async def _process_requirements_pipeline(
                 detail="There are no requirements to generate.",
             )
 
-    # Detect intent on the raw input
-    # INTENT 1.3 — Detector invocation: raw user text + the project's current user
-    #              stories (context disambiguates "add X" from "explain X").
-    #              Returns {intent, confidence, reason} — INTENT 2.0; consumed
-    #              immediately below by CHAT 2.2 and INTENT 1.4.
+    # INTENT 1.3 — Classify pipeline input with current story context.
+    # Trigger: confirmed RequirementState has been loaded and preflight guards pass.
+    # Input: raw user text and current user stories.
+    # Calls: INTENT 2.0 detect_requirement_intent.
+    # Returns: intent, confidence, and reason for CHAT 2.2 and INTENT 1.4.
+    # Writes: NONE; result remains in pipeline memory.
     detected_intent_result = await detect_requirement_intent(
         request.raw_input or "",
         req_state.get("user_stories", []) if req_state else []
     )
-    # CHAT 2.2 — Intent detection (LLM): the single decision point that turns this
-    #            request into either conversation (CHAT 2.3) or a requirement
-    #            operation. The default keeps an unparsable reply on the chat path.
+    # CHAT 2.2 — Select direct conversation or requirement processing.
+    # Trigger: pipeline state and story context have been loaded.
+    # Input: normalized result from the INTENT 2.x detector.
+    # Branches: GENERAL_CHAT → CHAT 2.3; other intents → target-agent/LangGraph path.
+    # Writes: in-memory detected_intent and confidence only.
     detected_intent = detected_intent_result.get("intent", "GENERAL_CHAT")
     # Propagated into the workflow so the Gatherer prompt can quote the real
     # classifier confidence (and hedge when the classification was uncertain)
@@ -1150,9 +1187,15 @@ async def _process_requirements_pipeline(
             }
 
     # ==========================================
-    # CHAT 2.3 — GENERAL_CHAT short-circuit: the chat flow's backend branch. Runs
-    #            INSTEAD of the LangGraph workflow, performs no artifact/version
-    #            writes, and returns a conversational reply (CHAT 2.4 → CHAT 1.4).
+    # CHAT 2.3 — Generate a direct conversational response outside LangGraph.
+    # Trigger: CHAT 2.2 returns GENERAL_CHAT and CHAT 2.3.0 permits the branch.
+    # Input: raw message, current project state, transcript, and knowledge chunks.
+    # Calls: CHAT 2.3.1 history read → CHAT 2.3.2 generation → optional
+    #        CHAT 2.3.3 persistence → CHAT 2.3.4 event publication.
+    # Writes: conversation row/event only; no requirement, PRD, or version mutation.
+    # Failure: history read fails loudly; knowledge/generation/persistence degrade
+    #          according to their nested policies.
+    # Next: CHAT 2.4 response → CHAT 1.4.
     # STEP 3: GENERAL_CHAT handling (bypass LangGraph entirely)
     # ==========================================
     # If the intent is GENERAL_CHAT (greeting, question, explanation request, concept query),
@@ -1254,10 +1297,11 @@ async def _process_requirements_pipeline(
                     "intent": "GENERAL_CHAT",
                 })
 
-        # CHAT 2.4 — Response contract for the conversation path: status
-        #            "general_chat" + the reply text, with the project's CURRENT
-        #            artifacts echoed back unchanged (nothing was written). The UI
-        #            branches on `detected_intent` in CHAT 1.4.
+        # CHAT 2.4 — Return the direct-conversation response contract.
+        # Trigger: CHAT 2.3 has produced a reply.
+        # Input: reply text, knowledge sources, and unchanged current artifacts.
+        # Writes: NONE; this return does not commit artifact state.
+        # Next: CHAT 1.4 frontend response branch.
         # Return response (no project artifacts modified)
         logger.info(
             "[WORKFLOW][%s][GENERAL_CHAT][DONE] elapsed_ms=%.1f",
@@ -1301,11 +1345,13 @@ async def _process_requirements_pipeline(
     # STEP 4: Route based on detected intent
     # ==========================================
     # Map detected intent to target_agent for LangGraph workflow routing
-    # INTENT 1.4 — Intent → agent mapping (the second consumption point, after the
-    #              GENERAL_CHAT branch). Only the four requirement intents appear
-    #              here; GENERAL_CHAT never reaches this code (CHAT 2.3 returned
-    #              already), and an explicit request.target_agent sent by the UI
-    #              buttons survives because those intents are absent from the map.
+    # INTENT 1.4 — Map a requirement intent to the LangGraph target agent.
+    # Trigger: restore, lock/conflict, and CHAT 2.3 short-circuits did not return.
+    # Input: detected intent and any explicit target_agent already on the request.
+    # Branches: create/update → Gatherer; delete → delete flow; clarify → Auditor;
+    #           unmapped explicit agent target remains unchanged.
+    # Writes: request.target_agent in pipeline memory.
+    # Next: workflow-state checks and LangGraph invocation.
     intent_to_target = {
         "CREATE_REQUIREMENT": "gatherer",
         "UPDATE_REQUIREMENT": "gatherer",
@@ -1512,6 +1558,13 @@ async def _process_requirements_pipeline(
             req_state.get(field) != requirement_state_before_workflow.get(field)
             for field in requirement_source_fields
         )
+        # MATCHING 4.1 — Interpret the completed graph match at the API pipeline boundary.
+        # Trigger: MATCHING 4.0 has ended the matcher/Gatherer/archive graph branch.
+        # Input: final requirement_match plus the RequirementState returned by the graph.
+        # Branches: unresolved match → MATCHING 4.1.1 clarification persistence;
+        #           material archive preview → MATCHING 4.1.2 pending ARCHIVE action;
+        #           no material change, lock, or stale run → no matcher mutation.
+        # Writes: NONE in this step; it derives the persistence decision used below.
         requirement_match = final_state.get("requirement_match") or {}
         matcher_status = str(requirement_match.get("status") or "").upper()
         matcher_needs_clarification = (
@@ -1570,11 +1623,14 @@ async def _process_requirements_pipeline(
         pending_action_id = None
         logger.info(f"[IN-MEMORY MERGE] Storing merged state as pending action for project {request.project_id}...")
 
-        # Architect generation changes document artifacts, not the gathered
-        # requirements. Keep its output as a preview-only pending action. The
-        # confirmation endpoint is the sole boundary that may update PRD
-        # sections, the stored document/diagram, and the immutable version
-        # ledger. This also makes Cancel a true no-op for governed artifacts.
+        # ARCHITECT 8.1 — Stage an explicit architect result as a durable preview.
+        # Trigger: target_agent="architect" and the run is not stale.
+        # Writes: replaces any older GENERATE_PRD pending action with the candidate
+        # document/diagram/narrative, source requirements revision, base PRD version,
+        # proposed version/SemVer, and preserved-section list.
+        # Persistence: no canonical document, section, diagram, or version ledger is
+        # changed here. ARCHITECT 9.0 Save is the sole governed artifact writer;
+        # Discard removes the pending action and leaves saved artifacts unchanged.
         if request.target_agent == "architect" and not stale_result:
             generated_prd = str(req_state.get("generated_prd") or "").strip()
             if not generated_prd:
@@ -1625,18 +1681,22 @@ async def _process_requirements_pipeline(
                 run_id, pending_action_id, request.project_id,
             )
 
-        # GATHERING 8.0 — Handoff to the CONFIRMATION flow: the merged state is NOT
-        #             persisted. It is staged as a pending action carrying the whole
-        #             `proposed_changes` payload (action_type="MERGE"); the user's Save
-        #             (confirm-action, CONFIRMATION flow) is the only writer.
-        #             DB: pending_actions INSERT. The response then triggers the
-        #             debounced SSE refresh and the client's merge preview (8.1).
+        # GATHERING 8.0 — API-pipeline handoff to confirmation.
+        # Input: final graph preview, pre-run state/revision, intent, stale/lock/error
+        #        flags, and whether requirement source content materially changed.
+        # Branches: matcher clarification persists only question state; audit and PRD
+        #           use their own contracts; a current material Gatherer result creates
+        #           MERGE (DELETE creates ARCHIVE); stale/locked/unchanged creates none.
+        # Writes: pending_actions stores proposed_changes and its base revision, but
+        #         does not apply final requirement/story rows. Save in CONFIRMATION is
+        #         the final writer; the response exposes the action to GATHERING 8.1.
         # Create a pending action with the full merged state as proposed changes
         if matcher_needs_clarification and not stale_result:
-            # Matcher ambiguity is a question, not a requirement edit. Persist
-            # it immediately so the chat can render the answer form before any
-            # Gatherer merge preview. A preview is created only after a later
-            # answer produces a material requirement change.
+            # MATCHING 4.1.1 — Persist unresolved matcher state without a preview.
+            # Writes: validation/workflow status and clarification questions in
+            #         RequirementState. MATCHING 1.5 already wrote the transcript.
+            # Next: the chat renders the answer form; no MERGE/ARCHIVE confirmation
+            #       exists until a later clarified request produces a material change.
             req_state = await RequirementStateRepository.save_or_update(
                 request.project_id,
                 {
@@ -1652,10 +1712,18 @@ async def _process_requirements_pipeline(
                 request.project_id,
             )
         elif request.target_agent == "auditor" and not audit_operational_error and not stale_result:
-            # An audit changes only audit metadata and clarification questions;
-            # it is not a proposed requirements edit. Persist those fields
-            # immediately so questions are answerable by stable database IDs,
-            # without forcing a redundant Save/Merge confirmation.
+            # AUDIT 2.8 — Persist a successful current audit immediately.
+            # Trigger: the original request explicitly selected target_agent="auditor"
+            #          and completed without operational error or stale state. A
+            #          router-classified audit COMMAND does not enter this branch.
+            # Writes: validation/check fields, findings, sources, verdict/context,
+            #         checklist identity, clarification-question rows, audit_results,
+            #         and audit_runs history through RequirementStateRepository. On a
+            #         document-only project, repositories may create one archived
+            #         REQ-000-style internal requirement anchor for audit foreign keys;
+            #         it is excluded from the visible active requirement board.
+            # Next: questions are answerable at AUDIT 3.x by stable ID. No pending
+            #       MERGE is created because requirement source content is unchanged.
             saved_audit_state = await RequirementStateRepository.save_or_update(
                 request.project_id,
                 {
@@ -1685,6 +1753,14 @@ async def _process_requirements_pipeline(
             and not final_state.get("lock_blocked")
             and requirement_content_changed
         ):
+            # MATCHING 4.1.2 — Stage material graph output for confirmation.
+            # Matcher branch: when MATCHING 3.3 produced a resolved delete preview,
+            #                 action_type is ARCHIVE; non-delete Gatherer output uses
+            #                 the existing MERGE path through this shared block.
+            # Writes: pending_actions with proposed state; ARCHIVE also carries
+            #         canonical affected REQ/US codes and acceptance-criteria IDs for
+            #         confirmation-time lock validation. No final row changes here.
+            # Next: the CONFIRMATION flow applies or cancels the staged action.
             pending_action_type = "ARCHIVE" if detected_intent == "DELETE_REQUIREMENT" else "MERGE"
             pending_action = await PendingActionRepository.create(
                 project_id=request.project_id,
@@ -1932,10 +2008,18 @@ async def _process_requirements_pipeline(
 # WORKFLOW ROUTER / INTENT DETECTOR / MATCHER API
 # ==========================================
 
-# INTENT 4.1.1 — Shared context loader for the detector/matcher endpoints: one DB
-#               read of the project's user stories that FAILS LOUD (HTTP 500) rather
-#               than degrading to an empty list — an empty list would silently make
-#               intent detection run without project context (misleading output).
+# INTENT 4.0 — Authenticated API/debug integration for intent classification.
+# Trigger: direct detector or matcher API request; the SPA uses INTENT 1.x instead.
+# Calls: INTENT 4.1 detector endpoint, INTENT 4.2 matcher fallback, and shared
+#        INTENT 4.1.1 context loading.
+# Writes: NONE.
+
+# INTENT 4.1.1 — Load authoritative story context for direct detector/matcher calls.
+# Trigger: INTENT 4.1.2 or the project-scoped matcher endpoint after ownership.
+# Input: project id and request-scoped database session.
+# Calls: RequirementStateRepository.get_by_project_id.
+# Writes: NONE.
+# Failure: fails loudly with HTTP 500 rather than misclassifying against empty context.
 async def _load_current_stories(project_id: str, db: AsyncSession) -> List[Dict[str, Any]]:
     """Load a project's current user stories, or fail loudly if the DB is unreachable.
 
@@ -1954,13 +2038,13 @@ async def _load_current_stories(project_id: str, db: AsyncSession) -> List[Dict[
         ) from e
     return req_state.get("user_stories", []) if req_state else []
 
-# ROUTING 5.1 — Debug/manual endpoint for the classifier: POST /api/workflow-router.
-#             Guards: rate limit ("workflow" scope, 429) → AUTH 7.1 identity →
-#             validate_text_budget (413). Then ROUTING 5.1.2.
-#             DISCREPANCY (documented, not changed): no frontend caller — the SPA
-#             reaches the classifier only indirectly through the graph (ROUTING
-#             2.1), and `workflow_routing` in the response is typed in
-#             src/api/types.ts but never rendered. LLM-cost surface, API/tests only.
+# ROUTING 5.1 — Expose the classifier for authenticated API/debug callers.
+# Trigger: POST /api/workflow-router; the SPA reaches routing through ROUTING 2.1.
+# Input: message, AUTH 7.1 identity, and workflow rate limit.
+# Calls: ROUTING 5.1.1 budget guard → ROUTING 5.1.2 classifier invocation.
+# Writes: NONE.
+# Failure: rate limit returns 429; oversized text returns 413; classifier fallback
+#          follows ROUTING 3.5.
 @router.post("/api/workflow-router", response_model=WorkflowRoutingResult, status_code=status.HTTP_200_OK)
 async def post_workflow_router(
     payload: WorkflowRouterRequest,
@@ -1988,7 +2072,8 @@ async def post_workflow_router(
     """
     from app.semantic_service import classify_workflow
 
-    # Finding #39: enforce MAX_CONTEXT_TOKENS on the incoming message.
+    # ROUTING 5.1.1 — Reject an oversized classifier message before LLM work.
+    # Failure: validate_text_budget raises HTTP 413.
     validate_text_budget(payload.message, "Workflow-router message")
     # ROUTING 5.1.2 — Same classifier the graph uses (ROUTING 3.0); the result is
     #               returned verbatim, so this endpoint can be used to reproduce a
@@ -1996,13 +2081,12 @@ async def post_workflow_router(
     return await classify_workflow(payload.message)
 
 
-# INTENT 4.1 — Debug/manual endpoint for the detector: POST /api/intent-detector.
-#              Guards: rate limit ("workflow" scope, 429) → AUTH 7.1 identity →
-#              validate_text_budget (413) → optional project scoping (INTENT 4.1.1/
-#              4.1.2). DISCREPANCY (documented, not changed): no frontend caller —
-#              src/api/client.ts exposes no method for it, so this LLM-cost surface
-#              is only reachable by API clients/tests. Kept for parity with the
-#              pipeline path (INTENT 1.x).
+# INTENT 4.1 — Expose intent classification to authenticated API/debug callers.
+# Trigger: POST /api/intent-detector; no SPA client method calls this route.
+# Input: message, optional project id, AUTH 7.1 identity, DB session, and rate limit.
+# Calls: INTENT 4.1.0 budget guard → optional 4.1.2 ownership/context → 4.1.3 detector.
+# Writes: NONE.
+# Failure: rate limit 429, oversized text 413, ownership errors, or loud context-read 500.
 @router.post("/api/intent-detector", response_model=RequirementIntentDetectionResult, status_code=status.HTTP_200_OK)
 async def post_intent_detector(
     payload: IntentDetectorRequest,
@@ -2031,33 +2115,39 @@ async def post_intent_detector(
     """
     from app.semantic_service import detect_requirement_intent
 
-    # Finding #39: enforce MAX_CONTEXT_TOKENS on the incoming message.
+    # INTENT 4.1.0 — Reject oversized direct-detector input before context or LLM work.
+    # Failure: validate_text_budget raises HTTP 413.
     validate_text_budget(payload.message, "Intent-detector message")
 
     current_stories = []
     if payload.project_id:
+        # INTENT 4.1.2 — Authorize project context and load its current stories.
+        # Calls: AUTH 7.4 ownership gate → INTENT 4.1.1 context loader.
+        # Writes: NONE.
         # AUTHZ: project stories are tenant data (titles/descriptions that get
         # injected into the LLM prompt). The caller must own the project before
         # they are loaded — otherwise any authenticated user could probe another
         # project's story content by passing its id here.
         await verify_project_access(str(payload.project_id), current_user, db)
-        # INTENT 4.1.2 — Repository read of the caller's own stories (AUTHZ above):
-        #               this is prompt context, i.e. tenant data.
         current_stories = await _load_current_stories(payload.project_id, db)
 
-    # INTENT 4.1.3 — Same detector as the pipeline (INTENT 2.0), returned verbatim.
+    # INTENT 4.1.3 — Invoke INTENT 2.0 and return its normalized result verbatim.
     result = await detect_requirement_intent(payload.message, current_stories)
     return result
 
 
-# MATCHING 5.1 — Debug/manual endpoint for the matcher: POST /api/requirement-matcher.
-#             Guards: rate limit ("workflow" scope, 429) → AUTH 7.1 identity →
-#             validate_text_budget (413) → optional project scoping (AUTH 7.4 +
-#             _load_current_stories, INTENT 4.1.1/4.1.2) → intent reuse or INTENT
-#             2.x detection when the payload omits it. Then MATCHING 5.1.2.
-#             DISCREPANCY (documented, not changed): no frontend caller — src/api/
-#             client.ts exposes no method for it, so this LLM-cost surface is API/
-#             test-only, exactly like INTENT 4.1 and ROUTING 5.1.
+# MATCHING 5.0 — Authenticated direct matcher API boundary.
+# Purpose: expose MATCHING 2.0 for manual/API use without entering the graph.
+# Writes: NONE; this endpoint reads authorized story context and returns a match.
+#
+# MATCHING 5.1 — POST /api/requirement-matcher.
+# Trigger: an authenticated, workflow-rate-limited API request.
+# Input: message, optional project_id, and optional pre-detected intent.
+# Calls: MATCHING 5.1.0 budget guard → MATCHING 5.1.1 authorized context load →
+#        optional INTENT 4.2 → MATCHING 5.1.2 canonical matcher.
+# Failure: oversized text returns 413; missing/foreign project access is rejected
+#          by AUTH; semantic/parse failures follow MATCHING 2.6.
+# Note: no frontend client method currently calls this API/test-facing endpoint.
 @router.post("/api/requirement-matcher", response_model=RequirementMatcherResult, status_code=status.HTTP_200_OK)
 async def post_requirement_matcher(
     payload: RequirementMatcherRequest,
@@ -2090,9 +2180,12 @@ async def post_requirement_matcher(
     """
     from app.semantic_service import detect_requirement_intent, match_requirement
 
-    # Finding #39: enforce MAX_CONTEXT_TOKENS on the incoming message.
+    # MATCHING 5.1.0 — Reject an oversized message before context or LLM work.
     validate_text_budget(payload.message, "Requirement-matcher message")
 
+    # MATCHING 5.1.1 — Load optional project context only after ownership succeeds.
+    # Branches: no project_id → empty story context; authorized project → active
+    #           current stories; unauthorized/missing project → AUTH error.
     current_stories = []
     if payload.project_id:
         # AUTHZ: same tenant-data gate as the intent detector — the caller must
@@ -2102,6 +2195,13 @@ async def post_requirement_matcher(
 
     intent = payload.detected_intent
     if not intent:
+        # INTENT 4.2 — Supply missing intent to the direct matcher endpoint.
+        # Trigger: /api/requirement-matcher payload omits detected_intent.
+        # Input: matcher message and optionally authorized current stories.
+        # Calls: INTENT 2.0 canonical detector.
+        # Branches: supplied intent → skip detection; missing intent → classify here.
+        # Writes: local matcher input only; no project state mutation.
+        # Failure: detector uses INTENT 2.8 fallback; absent result uses legacy UPDATE.
         intent_res = await detect_requirement_intent(payload.message, current_stories)
         intent = intent_res.get("intent", "UPDATE")
 

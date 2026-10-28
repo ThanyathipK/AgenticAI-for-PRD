@@ -47,7 +47,8 @@ const normalizeClarificationText = (value: string | null | undefined) =>
 const clarificationFingerprint = (question: ClarificationQuestionPayload) =>
   `${normalizeClarificationText(question.checklist_category)}\u0000${normalizeClarificationText(question.question_text)}`;
 
-/** Audit providers can emit the same question under multiple internal targets. */
+/** CLARIFY 1.0.1 — Collapse identical user-visible questions from multiple audit
+ * anchors before CLARIFY 1.1 renders them; preserve resolved evidence and metadata. */
 export function dedupeClarificationQuestions(
   questions: ClarificationQuestionPayload[] | null | undefined,
 ): ClarificationQuestionPayload[] {
@@ -327,7 +328,9 @@ export function toGatheredRequirementsPayload(
 // PRD version ledger
 // ----------------------------------------------------------------------------
 
-/** Convert one immutable `prd_versions` row into the ledger domain shape. */
+// VERSION 1.1.2 — Map one 5.2 row for the timeline. Missing semver gets a display
+//                 fallback based on the numeric version (not a derived SemVer), and
+//                 every non-`manual` origin is collapsed to the UI's `ai` category.
 export function toVersionHistory(v: PrdVersionPayload): VersionHistory {
   return {
     version: v.version_number,

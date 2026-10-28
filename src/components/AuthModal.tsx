@@ -35,10 +35,12 @@ interface AuthModalProps {
   onClose: () => void;
 }
 
-// AUTH 1.1.1 — Dialog entry point (LOGIN): rendered by Dashboard with
-//              isOpen={isAuthModalOpen}. Two modes share one card: 'signin'
-//              (AUTH 1.2) and 'signup' (AUTH 6.x, only offered when the
-//              backend reports signup_enabled — see AUTH 3.x).
+// AUTH 1.1.1 — Present the sign-in and optional sign-up dialog.
+// Trigger: AUTH 1.1 sign-in action opens the modal from Dashboard.
+// Input: capability state plus login/register callbacks owned by useAuth.
+// Branches: sign-in → AUTH 1.2.1; enabled sign-up → AUTH 1.2.2.
+// Writes: local form/error state only.
+// Failure: callback errors remain visible inline; the modal stays open.
 export function AuthModal({
   isOpen,
   signupEnabled,
@@ -89,11 +91,12 @@ export function AuthModal({
     (!isSignUp || (fullName.trim().length > 0 && password.length >= MIN_PASSWORD_LENGTH)) &&
     !isAuthenticating;
 
-  // AUTH 1.2 — Frontend submit handler (layer: Frontend → hook).
-  //            It calls the handler injected as a prop — onSignIn = useAuth().login
-  //            (AUTH 1.3.1) or onSignUp = useAuth().register (AUTH 6.1). The hook
-  //            resolves to null on success or to a user-facing error string, which
-  //            is rendered inline (no alert()).
+  // AUTH 1.2 — Validate and dispatch authentication form submission.
+  // Trigger: AuthModal form submit.
+  // Input: selected mode and validated form fields.
+  // Calls: AUTH 1.3.1 login or AUTH 6.1 registration callback.
+  // Branches: error string → render inline; null → close modal.
+  // Writes: local error state only; useAuth owns session state.
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!canSubmit) return;

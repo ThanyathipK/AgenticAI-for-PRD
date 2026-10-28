@@ -1,6 +1,10 @@
-// useArtifactLocks — optimistic lock/unlock actions extracted from the former
-// useProjectState god-hook. Works against the shared `RequirementStore` so lock
-// state stays consistent with the rest of the requirement engine.
+// LOCK 2.0 — Coordinate frontend requirement locking.
+// Trigger: lock-panel action, project change, or requirement-list change.
+// Input: shared RequirementStore and active project id.
+// Calls: LOCK 2.1–2.4 → LOCK 3.1.
+// Writes: optimistic lock maps, authoritative target list, and sync status.
+// Failure: request failures roll back local flags; list failures retain prior data.
+// Note: PRD-section buttons use RequirementStore's separate section path.
 //
 // It ALSO owns the authoritative, lockable requirement list for the active
 // project (`GET /api/project/{id}/requirements`). The generic lock endpoints
@@ -83,7 +87,11 @@ export function useArtifactLocks(
   store: RequirementStore,
   projectId: string | null
 ): UseArtifactLocksResult {
-  // Authoritative, lockable requirement rows (real UUIDs). Seeded from the
+  // LOCK 2.1 — Load authoritative lockable requirement rows with real UUIDs.
+  // Trigger: project/requirement signature change or fallback UUID resolution.
+  // Calls: API requirement list read.
+  // Writes: local requirementList only.
+  // Failure: fail-soft; retain the prior/fallback in-memory list.
   // project's stored requirement records and refreshed whenever the project
   // changes or a lock action succeeds, so the "Requirement Lock Status" panel
   // always lists EVERY requirement instead of only those the in-memory gather
@@ -144,7 +152,12 @@ export function useArtifactLocks(
     [],
   );
 
-  // Generic lock artifact function - ISOLATED, no full project reload.
+  // LOCK 2.2 — Optimistically lock one persisted artifact.
+  // Trigger: requirement lock UI (generic helper also accepts PRD-section UUIDs).
+  // Calls: LOCK 3.1 → LOCK 4.1.
+  // Writes: local lock maps/status before the request.
+  // Failure: roll local maps back; no full project reload.
+  // Next: SYNC 2.x may later reconcile server metadata.
   // Returns true only when the backend accepted the lock, so callers can keep
   // their derived views (e.g. the lockable requirement list) in sync instead of
   // showing a lock that was actually rolled back.
@@ -194,7 +207,10 @@ export function useArtifactLocks(
     }
   };
 
-  // Generic unlock artifact function - ISOLATED, no full project reload
+  // LOCK 2.3 — Optimistically unlock one persisted artifact.
+  // Trigger/Calls: unlock UI → LOCK 3.1 → LOCK 4.2.
+  // Writes: local maps/status; success keeps them.
+  // Failure: restore only is_locked/artifact_id, losing prior owner/time locally.
   const handleUnlockArtifact = async (artifactType: string, artifactId: string, artifactCode: string): Promise<boolean> => {
     if (!projectId) return false;
 
@@ -253,7 +269,8 @@ export function useArtifactLocks(
     [projectId],
   );
 
-  // Legacy functions for backward compatibility
+  // LOCK 2.4 — Requirement-code adapters. Resolve a real persisted UUID from
+  // local sources, retry one server list read, and refuse unsaved/synthetic rows.
   const handleLockRequirement = async (requirementCode: string) => {
     const reqId = resolveRequirementId(requirementCode) || await resolveRequirementIdFromServer(requirementCode);
     if (!reqId) {

@@ -15,18 +15,19 @@ from app.repositories.base import as_uuid, serialize_pending_action
 logger = logging.getLogger(__name__)
 
 
-# CONFIRM 5.x — Pending actions = the staging table of the human-in-the-loop gate
-# (pending_actions). Lifecycle: created by GATHERING 8.0 (MERGE) or the document
-# extraction (INSERT_CHUNKED_REQUIREMENTS) → read by CONFIRM 3.1/3.2 → removed by
-# CONFIRM 3.3.8 (applied) or 3.4 (discarded). `expires_at` is written but never
-# queried — there is no expiry sweeper (analysis §9 item 2).
+# CONFIRM 5.0 — Pending actions = the staging table of the human-in-the-loop gate
+# (pending_actions). Producers include Gatherer/clarification MERGE, document
+# extraction INSERT_CHUNKED_REQUIREMENTS, and Architect GENERATE_PRD previews.
+# Rows are listed by CONFIRM 3.1/3.2 and removed by Save (3.3), Discard (3.4),
+# expiry cleanup, supersession, or source deletion. `expires_at` is enforced at
+# the impact/Save route boundary (3.2.1 / 3.3.2), not by repository selection.
 class PendingActionRepository:
     """Handles Pending Actions for Human-in-the-Loop confirmation."""
 
-    # CONFIRM 5.1 — INSERT a staged action (called by GATHERING 8.0 and the document
-    #             extraction). Defaults: action_type "UPDATE", workflow_stage
+    # CONFIRM 5.1 — INSERT a staged action for Gatherer/clarification, document
+    #             extraction, or Architect preview producers. Defaults: action_type "UPDATE", workflow_stage
     #             "gatherer_node", status WAITING_CONFIRMATION (model default); the
-    #             caller supplies expires_at (never enforced — see the class note).
+    #             caller supplies expires_at (enforced at the route boundary).
     @staticmethod
     async def create(project_id: str, data: PendingMutation, expires_at: datetime, session: AsyncSession) -> Dict[str, Any]:
         pid = as_uuid(project_id)
@@ -58,6 +59,9 @@ class PendingActionRepository:
         return [serialize_pending_action(a, full=True) for a in actions]
 
     @staticmethod
+    # CONFIRM 5.2.1 — Remove superseded combined clarification-review drafts. The
+    #                 pending-list route keeps the newest; draft regeneration may
+    #                 remove all. Other pending-action types are never touched.
     async def discard_clarification_review_drafts(
         project_id: str,
         session: AsyncSession,

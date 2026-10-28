@@ -159,6 +159,8 @@ class RequirementRepository:
             return True
         return False
 
+    # LOCK 7.1 — Legacy requirement lock writer used only by LOCK 4.4. Existing
+    #            lock is returned unchanged without checking the requested label.
     @staticmethod
     async def lock(id_val: str, project_id: str, session: AsyncSession, locked_by: str = "user") -> Optional[Dict[str, Any]]:
         rid = as_uuid(id_val)
@@ -191,6 +193,8 @@ class RequirementRepository:
             return RequirementRepository._serialize(req)
         return None
 
+    # LOCK 7.2 — Legacy requirement unlock used by LOCK 4.5. Exact label match
+    #            is required, including the ownerless-lock discrepancy with 5.2.
     @staticmethod
     async def unlock(id_val: str, project_id: str, session: AsyncSession, unlocked_by: str = "user") -> Optional[Dict[str, Any]]:
         """

@@ -1,4 +1,4 @@
-"""Server-side cancellation support for the multi-agent workflow (Stop button).
+"""JOB 5.5 — In-process cancellation for legacy direct workflow requests.
 
 The long-running ``POST /api/process-requirements`` handler executes the whole
 LangGraph pipeline (intent detection, gatherer/auditor/architect agents) inside
@@ -13,9 +13,9 @@ Mechanism
    and calls ``task.cancel()``, which raises ``asyncio.CancelledError`` at the
    task's current await point — including mid-LLM-call, so the outbound LM
    Studio HTTP request is aborted too.
-3. The handler catches ``CancelledError``, skips every persistence step
-   (pending actions, assistant messages, SSE publishes) and returns a
-   ``{"status": "cancelled"}`` response.
+3. The handler catches ``CancelledError`` and returns its cancelled response;
+   transaction rollback prevents uncommitted pipeline writes. This mechanism is
+   separate from durable ``generation_jobs`` cancellation.
 
 The registry is deliberately in-process: the app enforces a single uvicorn
 worker (see ``app.event_manager.verify_single_worker_guarantee``), so a plain
@@ -34,6 +34,8 @@ class WorkflowCancellationRegistry:
     def __init__(self) -> None:
         self._tasks: Dict[str, asyncio.Task] = {}
 
+    # JOB 5.5.1 — Register one cancellable task per key. A racing newer direct run
+    #           replaces the pointer but does not cancel the older task.
     def register(self, project_id: str, task: asyncio.Task) -> None:
         """Record ``task`` as the in-flight generation for ``project_id``."""
         previous = self._tasks.get(project_id)
@@ -56,6 +58,7 @@ class WorkflowCancellationRegistry:
         if self._tasks.get(project_id) is task:
             self._tasks.pop(project_id, None)
 
+    # JOB 5.5.2 — Cancel the currently registered live task; false means none/done.
     def cancel(self, project_id: str) -> bool:
         """Terminate the in-flight generation for ``project_id``.
 
@@ -80,6 +83,6 @@ class WorkflowCancellationRegistry:
 # Process-wide singleton consumed by the requirements route module.
 workflow_cancellations = WorkflowCancellationRegistry()
 
-# Document extraction is a separate long-running request from the LangGraph
-# workflow, so it needs its own namespace. Keys include project + document IDs.
+# DOC-UPLOAD 6.7 — Process-local task registry used by route 2.5 registration and
+# 2.6 cancellation. Keys include project + document ids; it persists no status.
 document_extraction_cancellations = WorkflowCancellationRegistry()

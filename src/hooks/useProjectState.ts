@@ -191,8 +191,8 @@ export interface ProjectState {
   handleToggleSectionLock: (sectionId: string) => Promise<void>;
   /** Hand a MANUAL (human-owned) PRD part back to AI regeneration. */
   handleHandSectionToAi: (sectionId: string) => Promise<void>;
-  /** Restore the whole PRD document from a ledger version (append-only;
-   *  locked parts preserved). Resolves to true on success. */
+  /** Restore target-present unlocked parts; current-only/locked parts remain.
+   *  Resolves to true for any successful route response, including ledger fallback. */
   handleRestoreVersion: (versionNumber: number) => Promise<boolean>;
   loadVersionHistory: (
     projectId: string,

@@ -1,10 +1,9 @@
 // DocumentLibrary — uploaded-document knowledge base panel.
 //
-// DOC-UPLOAD 1.4/1.5/1.6 — the knowledge-base UI of FLOW 14 (state lives in useDocuments):
-// - Per-document "Process / Extract requirements" action (FLOW 15) runs the explicit,
-//   DRAFT-ONLY extraction: it shows mode/chunk progress and, when ready, hands
-//   the merged draft to the existing pending-action Confirmation UI. Nothing is
-//   written until the user confirms that preview.
+// DOC-UPLOAD 1.4–1.7 — Knowledge-base UI (state lives in useDocuments):
+// - Explicit extraction shows mode/chunk progress and, when ready, hands the merged
+//   proposal to CONFIRM. Tracking status/transcript/draft writes happen before approval;
+//   proposed requirement fields do not.
 // - Per-document "Remove" action permanently deletes the stored document (and
 //   any DRAFT merge-preview staged from it, server-side 2.4.2) after a destructive-style
 //   confirm.
@@ -35,9 +34,9 @@ const formatBytes = (bytes: number): string => {
   return `${(bytes / Math.pow(1024, idx)).toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
 };
 
-// DOC-UPLOAD 1.4 — Extraction chip: the three knowledge-base states a row can be in.
-//             'knowledge only' is the norm right after upload (extraction_status
-//             'not_extracted', DOC-UPLOAD 4.1) — proof that upload alone writes nothing.
+// DOC-UPLOAD 1.4 — Extraction chip maps repository 4.5 status. `extraction_pending`
+//             means either processing is active or a draft awaits CONFIRM; this UI uses
+//             `processingDocId` separately to show the active Extracting state.
 const extractionChip = (status: string): { label: string; className: string } => {
   switch (status) {
     case 'extraction_applied':
@@ -94,7 +93,7 @@ export const DocumentLibrary: React.FC<DocumentLibraryProps> = ({ projectId, doc
       {/* DOCUMENT LIST — DOC-UPLOAD 1.4: filename opens the markdown preview (1.5), the chip
           shows extraction state, and the Process button is disabled unless the document is
           `processed` (a needs-OCR `failed` row can never be extracted — matches the backend
-          guard in FLOW 15's process endpoint). */}
+          guard in DOC-UPLOAD 2.5.1). */}
       <section className="space-y-2">
         {!docs.isLoadingDocuments && docs.documents.length === 0 && (
           <p className="text-xs text-on-surface-variant px-1">No documents uploaded yet.</p>
@@ -151,7 +150,9 @@ export const DocumentLibrary: React.FC<DocumentLibraryProps> = ({ projectId, doc
                 </button>
               </div>
 
-              {/* Extraction progress: mode + chunk count surfaced clearly */}
+              {/* DOC-UPLOAD 1.7 — Extraction progress. The user-facing “nothing is
+                  saved” wording means no proposed requirement fields are applied;
+                  tracking status and transcript milestones are persisted separately. */}
               {isProcessing && docs.extractionProgress && (
                 <div className="mt-3 text-[11px] text-primary bg-primary/5 border border-primary/20 rounded-xl px-3 py-2 font-mono">
                   Running extraction in <b>{docs.extractionProgress.mode}</b> mode

@@ -25,6 +25,10 @@ export function PRDGenerationPreview({
   onRegenerate,
   onBackToRequirements,
 }: PRDGenerationPreviewProps) {
+  // CONFIRM 1.8 — Generated-PRD confirmation UI. The pending GENERATE_PRD row is
+  //               persisted, while its document/diagram remain a preview. Approve
+  //               enters CONFIRM 2.3 → 3.3 → ARCHITECT 9.0; Discard enters 2.4 →
+  //               3.4. Regenerate is an ARCHITECT action, not a confirmation write.
   const proposed = action.proposed_changes ?? {};
   const source = typeof proposed.generated_prd === "string" ? proposed.generated_prd : "";
   const proposedVersion = typeof proposed.proposed_version === "number" ? proposed.proposed_version : undefined;

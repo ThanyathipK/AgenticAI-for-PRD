@@ -58,10 +58,11 @@ import type {
 // any endpoint the backend later protects is authenticated automatically; the
 // auth helpers below also accept an explicit token because they must work
 // before (login) or independently of that global default.
-// AUTH 1.5.1 — Session sink #1 (token → transport): mirror the JWT into axios
-//              defaults so every later call on a protected route is authenticated
-//              automatically. Written in AUTH 1.3.1 (login) and AUTH 2.1
-//              (restore); removed in AUTH 4.3 (logout / stale session).
+// AUTH 1.5.1 — Synchronize the JWT with the shared HTTP transport.
+// Trigger: AUTH 1.5 login persistence, AUTH 2.1 restoration, or AUTH 4.3 clear.
+// Input: JWT string or null.
+// Writes: axios default Authorization header only.
+// Branches: token → Bearer header; null → remove header.
 export function setAuthToken(token: string | null): void {
   if (token) {
     axios.defaults.headers.common.Authorization = `Bearer ${token}`;
@@ -217,13 +218,13 @@ export const api = {
     post(`/api/project/${projectId}/prd/sections/${sectionKey}/unlock`, { locked_by: lockedBy }),
 
   // ---- PRD version ledger ------------------------------------------------
-  // VERSION 1.x — frontend side of the append-only ledger (VERSION 2.x/3.x/4.x).
-  // VERSION 1.1 — timeline read: the whole ledger, newest first (VERSION 2.1),
-  //               mapped by toVersionHistoryList into the VersionHistory panel.
-  // Immutable per-project PRD snapshots. EVERY change (Generate PRD click or
-  // manual part edit/revert) appends a version that ALWAYS advances; each row
-  // carries change_type ('ai' | 'manual'), a change summary, and the
-  // per-section change records incl. locked_preserved markers.
+  // VERSION 1.0 — frontend entry points for the PRD snapshot ledger
+  //               (routes 2.x → service 3.x → repository 4.x).
+  // VERSION 1.1 — paged metadata read, newest first (2.1). Project opening asks
+  //               for one row; the Versions tab asks for 20 and uses
+  //               beforeVersion to append older pages. The backend deliberately
+  //               blanks generated_prd in this response; toVersionHistoryList
+  //               maps only the timeline metadata.
   getPrdVersions: (
     projectId: string,
     options?: { limit?: number; beforeVersion?: number; signal?: AbortSignal },
@@ -234,18 +235,19 @@ export const api = {
       null,
       options?.signal,
     ),
-  // VERSION 1.2 — diff read (VERSION 2.2): `baseVersion` is the user-picked base from
-  //               the timeline; omitted ⇒ the backend uses the immediate predecessor.
+  // VERSION 1.2 — diff read (2.2): the panel automatically supplies the preceding
+  //               loaded version. If that row is not loaded, omission makes the
+  //               backend resolve the true preceding ledger row (3.8/4.2).
   getPrdVersionDiff: (projectId: string, versionNumber: number, baseVersion?: number) =>
     get<PrdVersionDiffPayload>(
       `/api/project/${projectId}/prd-versions/${versionNumber}/diff`,
       baseVersion ? { base_version: baseVersion } : undefined,
     ),
-  // Restore the WHOLE PRD document from a ledger version. APPEND-ONLY: the
-  // backend records the restored content as a NEW version; locked parts keep
-  // their current content. Returns the re-stitched document + new version.
-  // VERSION 1.5 — restore call (VERSION 2.5): append-only, so the response carries the
-  //               NEW version number produced by the restore, not the restored one.
+  // VERSION 1.5 — restore request (2.5). The route copies target sections that
+  //               exist and are currently unlocked, preserves locked/current-only
+  //               sections, and normally appends a new ledger row. Ledger-record
+  //               failure is caught by the route, so new_version_number can fall
+  //               back to the source number even though the document was restored.
   restorePrdVersion: (projectId: string, versionNumber: number, restoredBy = 'user') =>
     post<PrdVersionRestorePayload>(
       `/api/project/${projectId}/prd-versions/${versionNumber}/restore`,
@@ -323,8 +325,9 @@ export const api = {
     put<RequirementStatePayload>(`/api/project/${projectId}`, updates),
 
   // ---- Pending actions ----------------------------------------------------
-  // CONFIRM 2.x — client side of the human-in-the-loop write path. The draft was
-  // staged by GATHERING 8.0 or the document extraction; only 2.3 actually writes.
+  // CONFIRM 2.0 — Client boundary for the human-in-the-loop gate. The pending row
+  //               was staged earlier; 2.3 applies its proposed authoritative state,
+  //               2.4 deletes it, and 2.2 may prune it when already expired.
   // CONFIRM 2.1 — read: staged actions for a project (CONFIRM 3.1, WAITING_CONFIRMATION
   //               only). Also drives CONFIRM 1.7.
   listPendingActions: (projectId: string) =>
@@ -333,14 +336,15 @@ export const api = {
     get<ConversationMessagePayload[]>(`/api/project/${projectId}/conversations`, options),
   appendConversationMessage: (projectId: string, message: ConversationMessageCreatePayload) =>
     post<ConversationMessagePayload>(`/api/project/${projectId}/conversations`, message),
-  // CONFIRM 2.3 — THE write call of the whole product's AI path: it commits the
-  //               staged draft (CONFIRM 3.3 → RequirementStateRepository).
+  // CONFIRM 2.3 — Save call: submits the staged action to CONFIRM 3.3, whose action
+  //               type selects the requirement-state or generated-PRD commit branch.
   confirmAction: (actionId: string, projectId: string) =>
     post<ConfirmActionResponse>(`/api/confirm-action/${actionId}`, null, { project_id: projectId }),
-  // CONFIRM 2.4 — Discard call (CONFIRM 3.4): deletes the action, writes nothing else.
+  // CONFIRM 2.4 — Discard call (CONFIRM 3.4): deletes the action without applying
+  //               its proposal. Document-extraction drafts also reset source status.
   cancelAction: (actionId: string, projectId: string) =>
     post<ActionStatusResponse>(`/api/cancel-action/${actionId}`, null, { project_id: projectId }),
-  // CONFIRM 2.2 — Impact preview read (CONFIRM 1.5 → 3.2 → 4.x): what the draft
+  // CONFIRM 2.2 — Impact preview read (CONFIRM 1.5 → 3.2 → 4.0): what the draft
   //               changes and which downstream artifacts are affected.
   // READ-ONLY Requirement Impact Analysis for one pending merge action:
   // what the merge changes + which downstream artifacts are impacted.
@@ -348,6 +352,12 @@ export const api = {
     get<ImpactAnalysisPayload>(`/api/pending-actions/${actionId}/impact`, { project_id: projectId }),
 
   // ---- Artifact locks -----------------------------------------------------
+  // LOCK 3.1 — Send generic requirement/PRD-section lock mutations.
+  // Trigger: LOCK 2.2/2.3 optimistic handlers.
+  // Input: project/type/artifact UUID plus caller-supplied owner label.
+  // Calls: LOCK 4.1 lock or LOCK 4.2 unlock route.
+  // Writes: NONE locally; transport only.
+  // Failure: propagates so the hook rolls back optimistic state.
   lockArtifact: (projectId: string, artifactType: string, artifactId: string, lockedBy = 'user') =>
     post<ArtifactLockResponse>(
       `/api/project/${projectId}/artifacts/${artifactType}/${artifactId}/lock`,
@@ -370,16 +380,25 @@ export const api = {
   // `signal` lets callers abort an in-flight generation (the Stop button) —
   // axios then rejects the promise with a CanceledError instead of waiting for
   // the LLM workflow to finish.
-  // CHAT 1.3 / GATHERING entry — the single request the chat composer issues. The
-  // backend decides between conversation (CHAT 2.3) and the agent workflow, which
-  // is why the UI never calls POST /api/chat (CHAT 5.1): that handler exists but
-  // has NO client method here (documented discrepancy, see CHAT 5.x).
+  // CHAT 1.3 — Send a message through the product's shared processing endpoint.
+  // Trigger: CHAT 1.2 useChat.handleSendMessage or an explicit agent action.
+  // Input: process payload and optional AbortSignal.
+  // Calls: CHAT 2.1 POST /api/process-requirements.
+  // Branches: backend chooses CHAT 2.3 or the LangGraph agent path.
+  // Failure: transport/cancellation errors propagate to the calling hook.
+  // Note: the SPA does not call CHAT 5.1 POST /api/chat.
   processRequirements: (request: ProcessRequirementsRequest, signal?: AbortSignal) =>
     post<ProcessRequirementsResponse>('/api/process-requirements', request, undefined, signal),
+  // JOB 3.1 — Create durable Architect/Auditor work through JOB 4.1.
+  // Trigger: JOB 2.1 background runner.
+  // Writes: NONE locally; backend persists the queued job.
+  // Failure: HTTP errors propagate to the runner.
   startAgentJob: (request: ProcessRequirementsRequest) =>
     post<GenerationJobPayload<ProcessRequirementsResponse>>('/api/process-requirements/background', request),
+  // JOB 3.2 — Poll project-scoped status/result through JOB 4.3.
   getGenerationJob: <T>(projectId: string, jobId: string) =>
     get<GenerationJobPayload<T>>(`/api/projects/${projectId}/generation-jobs/${jobId}`),
+  // JOB 3.3 — Request durable cancellation through JOB 4.4.
   cancelGenerationJob: (projectId: string, jobId: string) =>
     post<GenerationJobPayload>(`/api/projects/${projectId}/generation-jobs/${jobId}/cancel`),
 
@@ -399,9 +418,8 @@ export const api = {
     post<ConvertedPrdMarkdownPayload>('/api/prd/convert', { latex_source: source }),
 
   // ---- Generation cancellation (Stop button) --------------------------------
-  // Asks the backend to hard-terminate the in-flight multi-agent run for a
-  // project. Complements the AbortSignal above: the signal stops the UI
-  // waiting, this stops the server actually doing the work.
+  // JOB 3.4 — Request direct-workflow cancellation through JOB 4.5.
+  // Trigger: JOB 2.2 Stop when no durable job id is known.
   cancelProcessRequirements: (projectId: string) =>
     post<{ project_id: string; cancelled: boolean }>(
       '/api/process-requirements/cancel',
@@ -410,10 +428,9 @@ export const api = {
     ),
 
   // ---- Clarifications ------------------------------------------------------
-  // CLARIFY 2.x — client side of the clarification flow (FLOW 10).
-  // CLARIFY 2.1 — POST /api/clarification/submit (CLARIFY 3.0): answers are keyed
-  //               POSITIONALLY (`q-0`, `q-1`, …) over the stored question list, which
-  //               is the contract CLARIFY 3.4 relies on.
+  // CLARIFY 2.0 — Client boundary for clarification-answer submission.
+  // CLARIFY 2.1 — POST /api/clarification/submit (CLARIFY 3.0). `answers` normally
+  //               maps stable question UUIDs to text; legacy q-<index> keys are accepted.
   submitClarifications: (projectId: string, answers: Record<string, string>) =>
     post<RequirementStatePayload>('/api/clarification/submit', {
       project_id: projectId,
@@ -421,10 +438,8 @@ export const api = {
     }),
 
   // ---- Uploaded documents (knowledge base) ---------------------------------
-  // DOC-UPLOAD 1.7 — client side of the knowledge base (FLOW 14): backend routes 2.1–2.4.
-  //               Upload ONLY stores the converted markdown as knowledge; it never writes
-  //               requirements. `processDocument` (FLOW 15) is the explicit extraction
-  //               action and returns a DRAFT pending_action for user confirmation.
+  // DOC-UPLOAD 1.0.1 — HTTP client boundary for backend routes 2.1–2.6. Upload stores
+  //               converted knowledge; processDocument explicitly stages a draft.
   // DOC-UPLOAD 1.2 — the upload call itself (DOC-UPLOAD 2.1); multipart FormData is the
   //               only request in this client that does not send JSON.
   uploadDocument: (projectId: string, file: File) => {
@@ -441,7 +456,8 @@ export const api = {
   // DOC-UPLOAD 1.5 — full stored markdown for the preview (DOC-UPLOAD 2.3).
   getDocumentMarkdown: (projectId: string, documentId: string) =>
     get<DocumentMarkdownPayload>(`/api/project/${projectId}/documents/${documentId}`),
-  // FLOW 15 — explicit extraction (DRAFT only); no knowledge-base write happens here.
+  // DOC-UPLOAD 1.7 / 2.5 — Explicit extraction. It updates extraction tracking and
+  //               transcript state, then returns a pending requirement proposal.
   processDocument: (projectId: string, documentId: string, signal?: AbortSignal) =>
     post<ProcessDocumentResponse>(
       `/api/project/${projectId}/documents/${documentId}/process`,
@@ -449,6 +465,7 @@ export const api = {
       undefined,
       signal,
     ),
+  // DOC-UPLOAD 1.7.2 / 2.6 — Signal cancellation of a currently registered run.
   cancelDocumentExtraction: (projectId: string, documentId: string) =>
     post<{ project_id: string; document_id: string; cancelled: boolean }>(
       `/api/project/${projectId}/documents/${documentId}/process/cancel`,
@@ -504,15 +521,21 @@ export const api = {
     }),
 
   // ---- Health --------------------------------------------------------------
-  // CHAT 6.3 — Readiness probe (GET /api/health → routes/chat.py get_health_status
-  //            → llm_client.check_lm_studio_health). Polled by useLmStudioHealth to
-  //            drive the offline pill when the local LLM is down.
+  // CHAT 6.3.1 — Fetch backend and inference-gateway readiness.
+  // Trigger: CHAT 6.3.2 useLmStudioHealth polling/manual retry.
+  // Calls: CHAT 6.2.1 GET /api/health → CHAT 6.2 gateway probe.
+  // Writes: NONE; returns the structured readiness payload.
+  // Failure: transport errors propagate so the hook can mark the backend offline.
   fetchHealth: () => get<HealthPayload>('/api/health'),
 
   // ---- Authentication (backend/app/routes/auth.py) -------------------------
-  // AUTH 1.4 — API-client layer of the LOGIN flow. Called by AUTH 1.3.1; the
-  //            payload it returns is what AUTH 1.5 persists. The other AUTH
-  //            entry points live in this same block:
+  // AUTH 1.4 — Send login credentials to the authentication route.
+  // Trigger: AUTH 1.3.1 useAuth.login.
+  // Input: email and plaintext password encoded as OAuth2 form data.
+  // Calls: AUTH 1.7 POST /api/auth/login.
+  // Returns: access token plus public user for AUTH 1.5 persistence.
+  // Failure: axios preserves the route's generic 401 for the modal.
+  // Other AUTH API boundaries in this block:
   //              authMe       AUTH 2.2  (session restore, GET  /api/auth/me)
   //              authConfig   AUTH 3.2  (signup probe   , GET  /api/auth/config)
   //              authLogout   AUTH 4.2  (audit log      , POST /api/auth/logout)
@@ -546,7 +569,12 @@ export const api = {
   /** Server-side logout (audit log). JWT is stateless, so also clear client state. */
   authLogout: (token: string) =>
     post<AuthMessageResponse>('/api/auth/logout', undefined, undefined, undefined, token),
-  /** Permanently delete the authenticated account after password re-verification. */
+  // AUTH 8.3 — Send the destructive account-deletion request.
+  // Trigger: AUTH 8.2 useAuth.deleteAccount.
+  // Input: password, DELETE confirmation, and explicit bearer token.
+  // Calls: AUTH 8.4 DELETE /api/auth/account.
+  // Writes: NONE in the browser transport layer.
+  // Failure: axios preserves the route status/detail for AUTH 8.2.
   authDeleteAccount: async (password: string, confirmation: string, token: string) => {
     const { data } = await axios.delete<AuthAccountDeleteResponse>('/api/auth/account', {
       data: { password, confirmation },

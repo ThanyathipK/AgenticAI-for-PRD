@@ -1,4 +1,4 @@
-"""Persistent, cancellable background execution for long-running AI work."""
+"""JOB 5.0 — Persistent, cancellable single-project background execution."""
 from __future__ import annotations
 
 import asyncio
@@ -47,6 +47,7 @@ def _public_failure(exc: Exception) -> str:
     return "workflow_error: The background workflow failed. Check the server log for details."
 
 
+# Public row projection used by every JOB 4.x response (local helper; unnumbered).
 def serialize_job(job: GenerationJobModel) -> BackgroundJobState:
     return {
         "id": str(job.id),
@@ -63,6 +64,13 @@ def serialize_job(job: GenerationJobModel) -> BackgroundJobState:
     }
 
 
+# JOB 5.1 — Create one queued durable job.
+# Trigger: JOB 4.1 or JOB 4.2 after authorization/preconditions.
+# Input: project/user/type plus JSON-encodable request payload.
+# Calls: JOB 7.1 persistence constraint.
+# Branches: narrow interrupted automatic regeneration → supersede; other active → 409.
+# Writes: generation_jobs row; route commits before launch.
+# Failure: uniqueness IntegrityError rolls back the caller session and becomes 409.
 async def create_job(project_id: str, user_id: str, job_type: str, payload: dict[str, Any], session) -> BackgroundJobState:
     existing = await session.scalar(
         select(GenerationJobModel).where(
@@ -125,6 +133,13 @@ async def get_job(job_id: str, project_id: str, session) -> GenerationJobModel |
     ))
 
 
+# JOB 5.2 — Dispatch a persisted job payload.
+# Trigger: JOB 5.3 after model capacity is acquired.
+# Calls: Architect/Auditor → requirements pipeline; regeneration → dependency service.
+# Branches: missing requesting user/unknown type → failure.
+# Writes: domain writes remain in JOB 5.3's transaction.
+# Failure: regeneration first asks LOCK 5.3 for unsupported type `project`, so it
+#          currently fails before dependency execution (documented, not fixed).
 async def _execute(job: GenerationJobModel, session) -> dict[str, Any]:
     user = await session.get(UserModel, job.requested_by_user_id)
     if user is None:
@@ -159,6 +174,13 @@ async def _execute(job: GenerationJobModel, session) -> dict[str, Any]:
     raise RuntimeError(f"Unsupported generation job type: {job.job_type}")
 
 
+# JOB 5.3 — Execute and finalize a durable job.
+# Trigger: JOB 5.3.1 launch or JOB 8.1 recovery.
+# Calls: heavy-inference semaphore → timed JOB 5.2 dispatch.
+# Branches: success → completed; user cancel → cancelled; shutdown → queued;
+#           exception/timeout → failed with sanitized public error.
+# Writes: progress/result/error/timestamps and transactional domain work.
+# Failure: rolls back domain work before committing terminal failure state.
 async def _run_job(job_id: str) -> None:
     started = time.perf_counter()
     log_context = LogContext(job_id=job_id, workflow="background_generation")
@@ -275,6 +297,7 @@ async def _run_job(job_id: str) -> None:
             )
 
 
+# JOB 5.3.1 — Idempotently attach one process-local asyncio task to a persisted id.
 def launch_job(job_id: str) -> None:
     current = _tasks.get(job_id)
     if current is not None and not current.done():
@@ -284,6 +307,11 @@ def launch_job(job_id: str) -> None:
     task.add_done_callback(lambda finished: _tasks.pop(job_id, None) if _tasks.get(job_id) is finished else None)
 
 
+# JOB 5.4 — Cancel a durable job.
+# Trigger: JOB 4.4.
+# Writes: cancel_requested + cancelling commit before process-local task cancellation.
+# Branches: terminal → false; live task → task.cancel; no task → immediate cancelled.
+# Failure: database errors propagate to the route.
 async def cancel_job(job: GenerationJobModel, session) -> bool:
     if job.status in TERMINAL_STATUSES:
         return False
@@ -303,6 +331,10 @@ async def cancel_job(job: GenerationJobModel, session) -> bool:
     return True
 
 
+# JOB 8.1 — Recover durable work at application startup.
+# Trigger: lifespan startup after migrations/user seed.
+# Branches: cancel_requested → cancelled; otherwise → queued and JOB 5.3.1.
+# Writes: recovery status/stage/timestamps.
 async def recover_generation_jobs() -> int:
     """Requeue work interrupted by a restart, then launch every queued job."""
     async with AsyncSessionLocal() as session:
@@ -324,6 +356,10 @@ async def recover_generation_jobs() -> int:
     return len(queued)
 
 
+# JOB 8.2 — Interrupt local tasks for process shutdown.
+# Trigger: lifespan shutdown.
+# Calls: asyncio task cancellation → JOB 5.3 CancelledError branch.
+# Writes: no cancel_requested flag; workers record queued/interrupted for JOB 8.1.
 async def shutdown_generation_jobs() -> None:
     tasks = [task for task in _tasks.values() if not task.done()]
     for task in tasks:

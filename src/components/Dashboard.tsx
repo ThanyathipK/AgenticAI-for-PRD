@@ -110,10 +110,11 @@ const seedPrdIntake = async (projectId: string, projectName: string, intake: Pro
 };
 
 export default function Dashboard() {
-  // AUTH 1.3 — Frontend session owner instantiated once for the whole app
-  //            (src/hooks/useAuth.ts). It provides the LOGIN callbacks wired to
-  //            AUTH 1.1.1 below and the signed-in user every authenticated UI
-  //            branch reads (AUTH 1.6).
+  // AUTH 1.3 — Instantiate the application's session owner.
+  // Trigger: Dashboard render.
+  // Calls: useAuth supplies AUTH 1.1.1 callbacks and AUTH 1.6 user state.
+  // Writes: no session state here; Dashboard only composes the returned state.
+  // Next: authenticated identity scopes useProjectState below.
   // useAuth must resolve BEFORE useProjectState: the project list is scoped to
   // the signed-in user (empty until login, that user's projects after).
   const {
@@ -128,10 +129,11 @@ export default function Dashboard() {
     setIsAuthModalOpen,
   } = useAuth();
   const userDisplayName = authUser?.full_name || authUser?.email || 'User';
-  // AUTH 1.6 — Authenticated application state: because AUTH 1.5 flipped
-  //            authUser, this hook re-scopes the project list to that user
-  //            (`GET /api/project …`). Client-side gating only — every one of
-  //            those requests is re-authorized server-side by AUTH 7.4.
+  // AUTH 1.6 — Scope the workspace to the authenticated user.
+  // Trigger: AUTH 1.5 login or AUTH 2.3 restoration updates authUser.
+  // Input: authenticated user id.
+  // Calls: useProjectState; every project request is rechecked by AUTH 7.4.
+  // Branches: no user → empty/signed-out project state; user → owned workspace.
   const state = useProjectState(!!authUser, authUser?.id ?? null);
   const {
     projectId,
@@ -696,9 +698,10 @@ export default function Dashboard() {
             ref={previewScrollRef}
             className="flex-1 min-w-0 overflow-y-auto p-3 md:p-4 custom-scrollbar"
           >
-{/* CONFIRM 1.0 / 1.1 — Human-in-the-loop gate mount: one ConfirmationPanel per staged
-    action. onConfirm drops the card and re-reads the authoritative project state +
-    lock list; onCancel just closes it (nothing was written). */}
+{/* CONFIRM 1.3 — Dashboard completion callbacks for the CONFIRM 1.0/1.1 panels.
+    Save removes the consumed card and reloads authoritative state + locks. Discard
+    removes the card and reloads state; document-extraction status may also have reset
+    in CONFIRM 3.4. GENERATE_PRD uses the separate CONFIRM 1.8 preview below. */}
             {pendingActions.filter(action => action.action_type !== 'GENERATE_PRD').map(action => (
                 <ConfirmationPanel 
                     key={action.id} 
@@ -719,9 +722,9 @@ export default function Dashboard() {
                     }}
                     onCancel={() => {
                         setPendingActions(prev => prev.filter(a => a.id !== action.id));
-                        // ROLLBACK: the merge was only ever a draft — re-fetch the
-                        // stored state so the workspace shows exactly the version
-                        // from BEFORE the preview was shown. Nothing was saved.
+                        // Re-fetch authoritative project state after Discard. The
+                        // proposal was never applied; for document extraction, only
+                        // the source document status may have changed in CONFIRM 3.4.
                         if(projectId) loadProjectState(projectId);
                         setMessages(prev => [...prev, {
                             id: `merge-cancelled-${Date.now()}`,

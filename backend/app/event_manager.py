@@ -1,4 +1,4 @@
-"""In-memory SSE event manager with single-worker guard and bounded replay.
+"""SYNC 8.0 — In-memory SSE event manager with bounded replay.
 
 Provides a simple pub/sub mechanism where state changes publish SSE notifications
 to connected clients. Like the rate limiter, the bus is **in-process** and safe
@@ -14,9 +14,10 @@ Each project also keeps a bounded ring buffer of recent events (length
 disconnected: a browser ``EventSource`` automatically reconnects with a
 ``Last-Event-ID`` header (the last ``id:`` field it observed), and a subscribing
 client with a ``last_event_id`` is seeded with every buffered event written while
-it was away. The buffer is process-local, so a full server restart loses live
-history (a reconnecting client's project state is recovered via the ``connected``
-handshake refresh); ordering and replay are guaranteed within a process.
+it was away. The buffer and sequence counters are process-local, so restart
+loses replay history and resets ids. The server emits a ``connected`` handshake,
+but SYNC 2.5.1 currently ignores it; restart catch-up is therefore not guaranteed
+until another refresh-triggering event or explicit project load.
 """
 import asyncio
 import json
@@ -46,6 +47,8 @@ class EventManager:
         self._next_seq: Dict[str, int] = {}
         self._history_size = history_size if history_size is not None else settings.SSE_HISTORY_BUFFER_SIZE
 
+    # SYNC 8.1 — Allocate an unbounded per-client queue and seed buffered frames
+    #            whose process-local sequence is greater than Last-Event-ID.
     def subscribe(
         self, project_id: str, last_event_id: Optional[int] = None
     ) -> asyncio.Queue:
@@ -79,6 +82,13 @@ class EventManager:
                 del self._subscribers[project_id]
             logger.debug(f"SSE client unsubscribed from project {project_id}.")
 
+    # SYNC 8.2 — Publish one process-local project notification.
+    # Trigger: successful/partially successful mutation routes and JOB effects.
+    # Input: project id, event name and JSON-serializable data.
+    # Writes: monotonic in-memory sequence, bounded replay, subscriber queues.
+    # Branches: no subscribers → replay only; subscribers → await fan-out.
+    # Failure: no durable/shared broker; unaware of DB commit order, so route
+    #          publication before commit can cause a stale reconciliation pull.
     async def publish(self, project_id: str, event_type: str, data: Any) -> None:
         """Publish an event to all subscribers of a project.
 
@@ -114,6 +124,7 @@ class EventManager:
             )
 
 
+# SYNC 8.3 — Reject multi-worker use unless the explicit unsafe override is set.
 def verify_single_worker_guarantee() -> None:
     """Fail loud instead of letting live updates silently split across processes.
 

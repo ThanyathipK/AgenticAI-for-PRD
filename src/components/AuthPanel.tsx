@@ -7,10 +7,11 @@
 // The sidebar collapses to a 68px icon rail, so both states have a compact
 // rendering (icon-only, tooltips on the right) and a full one. All session
 // state comes from useAuth; this component is presentation + the two callbacks.
-// AUTH 1.1  — signed-out branch: the "Sign in" button (entry point of LOGIN).
-// AUTH 1.6  — signed-in branch: avatar + name/role chip, i.e. the visible
-//             authenticated state produced by AUTH 1.5 / AUTH 2.3.
-// AUTH 4.1  — the "Log out" buttons in both branches.
+// AUTH 1.1 — Provide the visible authentication entry and session controls.
+// Trigger: Dashboard renders the sidebar authentication panel.
+// Input: public user state and callbacks supplied by useAuth.
+// Branches: no user → sign-in action; user → AUTH 1.6 identity and AUTH 4.1 logout.
+// Writes: presentation state only; session mutation remains in useAuth.
 import { LogIn, LogOut, Settings, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import type { AuthUserPayload } from '../api/types';

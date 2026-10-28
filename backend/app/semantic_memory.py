@@ -320,10 +320,12 @@ async def remember_facts(
     return saved
 
 
-# CHAT 4.1 — Fail-open write wrapper (the only entry the routes call): gates on
-#            MEMORY_ENABLED/MEMORY_FACT_EXTRACTION_ENABLED, runs 4.1.1 → 4.1.2 and
-#            returns the count of NEW facts, or 0 on any failure (logged, never
-#            raised) so a chat turn can never break because memory failed.
+# CHAT 4.1 — Distill and store durable facts from a completed chat turn.
+# Trigger: CHAT 5.6 standalone chat or post-processing from CHAT 2.1.
+# Input: project id, user message, assistant reply, and optional source id.
+# Calls: CHAT 4.1.1 extraction → CHAT 4.1.2 dedupe/persistence.
+# Writes: semantic-memory rows and embeddings when new durable facts exist.
+# Failure: fails open and returns zero; the completed chat response is unaffected.
 async def extract_and_remember(
     project_id: str,
     user_message: str,
@@ -395,11 +397,13 @@ def score_memory(
     )
 
 
-# CHAT 3.1 — Recall (read path): embed the query (3.1.1) → load the candidate
-#            window (3.1.2) → score (3.1.3) → drop zero-cosine hits → top-k →
-#            best-effort usage telemetry (3.1.4). Returns [] on ANY failure
-#            (embeddings down, DB error, nothing stored) so prompt assembly can
-#            proceed without memory rather than erroring the chat turn.
+# CHAT 3.1 — Recall relevant semantic memories for a project query.
+# Trigger: CHAT 5.2 standalone chat memory enrichment.
+# Input: project id, query, optional top-k, and optional database session.
+# Calls: CHAT 3.1.1 embed → 3.1.2 candidates → 3.1.3 score → 3.1.4 telemetry.
+# Writes: best-effort recall telemetry only.
+# Failure: fails open with an empty list on embedding, database, or scoring errors.
+# Next: CHAT 3.2 prompt block assembly.
 async def recall(
     project_id: str,
     query: str,
@@ -454,10 +458,12 @@ async def recall(
         return []
 
 
-# CHAT 3.2 — Prompt assembly: render recalled memories as a bullet block capped at
-#            MEMORY_CONTEXT_MAX_TOKENS via count_tokens (budget hygiene, same
-#            discipline as the chat context limit). "" when there is nothing to
-#            inject, so callers append it unconditionally.
+# CHAT 3.2 — Render recalled memories into a bounded prompt block.
+# Trigger: CHAT 5.2.2 after CHAT 3.1 recall.
+# Input: ranked semantic-memory records.
+# Writes: NONE.
+# Branches: no usable memories → empty string; otherwise token-capped bullet block.
+# Next: CHAT 5.3 prompt assembly.
 def build_memory_block(memories: List[Dict[str, Any]]) -> str:
     """
     Render recalled memories as a compact prompt block, hard-capped at

@@ -10,6 +10,10 @@ from app.config import settings
 
 logger = logging.getLogger("app.services.document_ingestion")
 
+# DOC-UPLOAD 3.0 — Upload validation/conversion service used by route 2.1.
+# 3.1/3.2 define accepted extension/MIME pairs; 3.3 is the OCR-only sentinel;
+# 3.4 validates metadata, 3.4.1 checks binary signatures, 3.5 bounds bytes, and
+# 3.6 converts supported content to canonical Markdown.
 ALLOWED_FORMATS = {
     "docx": {
         "original_format": "docx",
@@ -57,6 +61,8 @@ class DocumentIngestionService:
         return {"original_format": entry["original_format"], "mime_type": mime or None}
 
     @staticmethod
+    # DOC-UPLOAD 3.4.1 — PDF/DOCX magic-byte check after extension/MIME validation.
+    # Text formats remain governed by UTF-8 replacement decoding in 3.6.
     def validate_binary_signature(raw: bytes, original_format: str) -> None:
         if original_format == "pdf" and not raw.startswith(b"%PDF-"):
             raise HTTPException(

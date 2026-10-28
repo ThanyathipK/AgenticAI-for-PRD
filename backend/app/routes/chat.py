@@ -25,9 +25,12 @@ logger = logging.getLogger("app.routes.chat")
 router = APIRouter()
 
 
-# CHAT 6.2.1 — Backend readiness route: GET /api/health. Always answers 200 (the
-#             app itself is alive); the LM Studio state travels in the payload
-#             fields, so the UI can degrade instead of erroring.
+# CHAT 6.2.1 — Return backend and inference-gateway readiness.
+# Trigger: CHAT 6.3.1 GET /api/health or an external health client.
+# Calls: CHAT 6.2 check_lm_studio_health.
+# Writes: NONE beyond the probe's in-process TTL cache.
+# Failure: always returns HTTP 200 when the backend can answer; gateway failure is
+#          represented in the response body.
 @router.get("/api/health", response_model=HealthResponse, status_code=status.HTTP_200_OK)
 async def get_health_status() -> HealthResponse:
     """
@@ -60,18 +63,14 @@ async def get_health_status() -> HealthResponse:
     }
 
 
-# CHAT 5.1 — Standalone conversation endpoint (POST /api/chat). This is the
-#            MEMORY-AWARE twin of the chat branch (CHAT 2.3): it recalls semantic
-#            memories, calls LM Studio directly and writes memories back.
-#
-#            DISCREPANCY (documented, not changed): the SPA never calls it — the
-#            client exposes no method for /api/chat (the composer goes through
-#            api.processRequirements, CHAT 1.3) — so the semantic-memory path
-#            below is currently unreachable from the product UI and only
-#            exercised by API clients / tests.
-#
-#            Guards, in order: rate limit (429) → AUTH 7.1 identity → AUTH 7.4
-#            project ownership → non-empty messages (400) → context budget (413).
+# CHAT 5.1 — Serve the standalone memory-aware conversation API.
+# Trigger: API/test client POST /api/chat; the SPA uses CHAT 1.3 instead.
+# Input: conversation messages, optional project id, AUTH 7.1 identity, and DB session.
+# Calls: guards → CHAT 5.2 memory recall → CHAT 5.3 prompt/user persistence →
+#        CHAT 5.4 LLM → CHAT 5.5/5.6/5.7 downstream effects.
+# Branches: project chat adds AUTH 7.4 ownership and memory/transcript operations.
+# Writes: conversation rows, semantic memories, and SSE event when project-scoped.
+# Failure: empty input 400, oversized context 413, LLM errors 422/502/503.
 @router.post("/api/chat", response_model=ChatResponse, status_code=status.HTTP_200_OK)
 async def post_chat_query(
     request: ChatSessionRequest,
@@ -144,6 +143,12 @@ async def post_chat_query(
         except Exception as mem_err:  # belt & braces: recall is already fail-open
             logger.warning("Memory recall skipped (%s).", mem_err)
 
+    # CHAT 5.3 — Assemble the LLM prompt and persist the newest user turn.
+    # Trigger: CHAT 5.1 guards and CHAT 5.2 optional recall complete.
+    # Input: system policy, bounded memory block, and request conversation.
+    # Calls: CHAT 7.1 for the newest project-scoped user message.
+    # Writes: one user conversation row when project_id and a user turn exist.
+    # Next: CHAT 5.4 direct LLM transport.
     system_instruction = (
         "You are an expert Technical Product Owner Assistant specializing in core banking requirement designs. "
         "Adhere to Krungsri Nimble standards, ensure high compliance, security OTP mechanics, and double-entry general ledgers. "

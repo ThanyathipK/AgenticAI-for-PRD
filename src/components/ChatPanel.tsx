@@ -143,6 +143,10 @@ function ValidationCard({
   clarificationAnswers: Record<string, string>;
   onAnswerChange: (key: string, value: string) => void;
 }) {
+  // CLARIFY 1.1 — Clarification form renderer inside the persisted audit card.
+  // Input: saved questions plus local answer drafts. Resolved questions are read-only;
+  // unresolved questions use their stable database id as the answer key, with q-<index>
+  // only for legacy/id-less payloads. The form submits through CLARIFY 1.3.
   const questions = audit.clarification_questions || [];
   const findings = audit.findings || [];
   const currentRequirements = requirements.filter(requirement =>
@@ -408,7 +412,7 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
   // (same KNOWLEDGE-ONLY contract as the DocumentLibrary upload control).
   // DOC-UPLOAD 1.1 — Upload ENTRY POINT of the whole flow: the paperclip is the ONLY way a
   //             document enters a project. It calls 1.2 directly; extraction stays a
-  //             separate, explicit action (FLOW 15).
+  //             separate, explicit action (DOC-UPLOAD 1.7 → 2.5).
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // DOC-UPLOAD 1.1.1 — Guarded click: no project ⇒ no upload (the button is also disabled
@@ -667,6 +671,9 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
                       ? 'bg-[#f4ece4] text-on-surface border-[#e8e2d9] rounded-tr-[4px]' 
                       : 'bg-white text-on-surface border-[#e8e2d9] rounded-tl-[4px] shadow-[0_2px_3px_rgba(0,0,0,0.02)]'
                   }`}>
+                    {/* CLARIFY 1.0 / AUDIT 5.3.1 — Mount the clarification form inside
+                        the persisted audit snapshot. Only its newest pending message is
+                        editable; submission follows CLARIFY 1.3 → 2.1 → 3.0. */}
                     {msg.auditResultSnapshot ? (
                       <form onSubmit={handleSubmitClarifications}>
                         <ValidationCard
@@ -808,9 +815,12 @@ export function ChatPanel({ state, userName }: { state: ProjectState; userName: 
             className="hidden"
             onChange={(e) => void handleFilePicked(e)}
           />
-          {/* CHAT 1.1 — Composer (real entry point of the CHAT flow): the textarea
-              is bound to rawInput in useChat; Enter/Send calls handleSendMessage
-              (CHAT 1.2) → api.processRequirements (CHAT 1.3). */}
+          {/* CHAT 1.1 — Collect and submit a conversational message.
+              Trigger: user presses Enter or the Send button.
+              Input: rawInput, bounded by CHAT_INPUT_MAX_LENGTH.
+              Calls: CHAT 1.2 handleSendMessage.
+              Branches: Shift+Enter inserts a line; IME composition does not submit.
+              Writes: NONE here; useChat owns message and request state. */}
           <textarea
             ref={composerRef}
             rows={1}

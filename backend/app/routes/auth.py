@@ -108,12 +108,13 @@ class RegisterResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-# AUTH 1.7 — FastAPI route: POST /api/auth/login (router mounted in app/main.py).
-#            Layer chain: axios AUTH 1.4 → [this handler] → service AUTH 1.7.1 →
-#            repository AUTH 1.7.1.1 → bcrypt AUTH 1.7.1.3 → JWT AUTH 1.7.3 →
-#            LoginResponse AUTH 1.7.4 → frontend persistence AUTH 1.5.
-#            Deliberately has NO auth dependency: obtaining a token is the point.
-#            `session` is the request-scoped DB session (app/database.py get_db).
+# AUTH 1.7 — Authenticate credentials and issue a JWT.
+# Trigger: AUTH 1.4 POST /api/auth/login.
+# Input: OAuth2 username/password form and request-scoped database session.
+# Calls: AUTH 1.7.1 authenticate_user → AUTH 1.7.3 create_access_token.
+# Writes: no database state; tokens are stateless.
+# Failure: credential failures return the same 401 response.
+# Next: AUTH 1.7.4 response → AUTH 1.5 frontend persistence.
 @router.post("/api/auth/login", response_model=LoginResponse, status_code=status.HTTP_200_OK)
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -141,6 +142,12 @@ async def login(
     #              password (1.7.1.2) and wrong password (1.7.1.3) are
     #              indistinguishable to the caller by design.
     user = await authenticate_user(form_data.username, form_data.password, session)
+
+    # AUTH 1.7.2 — Hand the verified user identity to token issuance.
+    # Trigger: AUTH 1.7.1 returns successfully.
+    # Input: authoritative UserModel loaded by email and verified by bcrypt.
+    # Writes: NONE; this step marks the successful authentication boundary.
+    # Next: AUTH 1.7.3 JWT creation.
 
     # AUTH 1.7.3 — JWT issuance (app/auth.py create_access_token): HS256, signed
     #              with JWT_SECRET_KEY, TTL = JWT_EXPIRATION_MINUTES. Stateless —
@@ -172,11 +179,12 @@ async def login(
 # ---------------------------------------------------------------------------
 
 
-# AUTH 2.3 — FastAPI route: GET /api/auth/me — the client's session-validity
-#            probe, called by AUTH 2.2 on mount. Authorization happens entirely in
-#            the dependency AUTH 7.1 (Bearer → verify_token → users-table read),
-#            so a token for a deleted account never reaches this body; the 401 it
-#            raises is what triggers AUTH 2.4.
+# AUTH 2.3 — Resolve the current public user for session restoration.
+# Trigger: AUTH 2.2 GET /api/auth/me during frontend mount.
+# Input: authenticated identity supplied by AUTH 7.1.
+# Calls: AUTH 7.1 Bearer verification and users-table resolution occur as a dependency.
+# Writes: NONE.
+# Failure: invalid token or missing user returns 401 → AUTH 2.4 local clear.
 @router.get("/api/auth/me", response_model=UserResponse, status_code=status.HTTP_200_OK)
 async def read_current_user(
     current_user: AuthenticatedUser = Depends(get_current_user),
@@ -196,11 +204,11 @@ async def read_current_user(
     )
 
 
-# AUTH 3.3 — FastAPI route: GET /api/auth/config. Deliberately anonymous (no
-#            get_current_user dependency): the client must know whether signup is
-#            available BEFORE it holds a token. Consumed by AUTH 3.2 → AUTH 3.1
-#            (gates the sign-up tab of AUTH 1.1.1) and mirrors the server-side
-#            gate enforced in AUTH 6.3.1.
+# AUTH 3.3 — Return public authentication capabilities.
+# Trigger: AUTH 3.2 GET /api/auth/config before login.
+# Input: server authentication settings; no bearer token is required.
+# Writes: NONE.
+# Next: AUTH 3.1 gates the sign-up UI; AUTH 6.3.1 independently enforces signup.
 @router.get("/api/auth/config", status_code=status.HTTP_200_OK)
 async def auth_config():
     """Public auth capabilities, so the UI can hide the sign-up form.
@@ -219,10 +227,12 @@ async def auth_config():
 # ---------------------------------------------------------------------------
 
 
-# AUTH 4.4 — FastAPI route: POST /api/auth/logout. The AUTH 7.1 dependency only
-#            identifies the caller so the event can be logged — no server state
-#            changes (the JWT is stateless, AUTH 1.7.3), so the sign-out that
-#            actually takes effect is the client-side AUTH 4.3.
+# AUTH 4.4 — Record an authenticated logout notification.
+# Trigger: AUTH 4.2 POST /api/auth/logout after AUTH 4.3 local clear.
+# Input: identity resolved by AUTH 7.1.
+# Writes: no session or token state; the route emits an audit log only.
+# Failure: a client may ignore this route's failure because local sign-out is authoritative.
+# Next: END.
 @router.post("/api/auth/logout", status_code=status.HTTP_200_OK)
 async def logout(
     current_user: AuthenticatedUser = Depends(get_current_user),
@@ -287,6 +297,15 @@ async def change_password_endpoint(
     return PasswordChangeResponse(message="Password changed successfully")
 
 
+# AUTH 8.4 — Permanently delete the authenticated account and its owned data.
+# Trigger: AUTH 8.3 DELETE /api/auth/account.
+# Input: password, literal DELETE confirmation, AUTH 7.1 identity, and DB session.
+# Calls: AUTH 8.4.1 confirmation guard → AUTH 8.4.2 password verification →
+#        AUTH 8.4.3 system-account guard → AUTH 8.5 repository deletion.
+# Branches: invalid confirmation → 400; bad password → 401; system account → 403.
+# Writes: AUTH 8.6 commits deletion of owned projects and the user row.
+# Failure: fails closed before deletion; transaction errors propagate.
+# Next: AUTH 8.6 response → AUTH 8.7 frontend session clear.
 @router.delete(
     "/api/auth/account",
     response_model=AccountDeleteResponse,
@@ -298,12 +317,14 @@ async def delete_account(
     session: AsyncSession = Depends(get_db),
 ):
     """Permanently delete the caller's account after password verification."""
+    # AUTH 8.4.1 — Require the destructive-action confirmation literal.
     if request.confirmation != "DELETE":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Type "DELETE" exactly to confirm permanent account deletion',
         )
 
+    # AUTH 8.4.2 — Re-read the user and verify the current password.
     user = await UserRepository.get_by_id(current_user.id, session)
     if user is None or not verify_password(request.password, user.password_hash):
         raise HTTPException(
@@ -311,12 +332,14 @@ async def delete_account(
             detail="Current password is incorrect",
         )
 
+    # AUTH 8.4.3 — Protect the configured bootstrap/system account.
     if str(user.id) == str(settings.SYSTEM_USER_ID):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="The protected system account cannot be deleted",
         )
 
+    # AUTH 8.6 — Commit the repository's staged account/project deletion.
     deleted_projects = await UserRepository.delete_account(user, session)
     await session.commit()
     logger.info(
@@ -332,12 +355,13 @@ async def delete_account(
 # ---------------------------------------------------------------------------
 
 
-# AUTH 6.3 — FastAPI route: POST /api/auth/register. Anonymous by design; the
-#            deployment gate below (6.3.1) is the only thing keeping it closed,
-#            and AUTH 3.3 mirrors that flag to the UI.
-#            Layer chain: useAuth.register AUTH 6.1 → api.authRegister AUTH 6.2
-#            → [this handler] → UserRepository AUTH 6.3.4/6.3.5 → users table →
-#            RegisterResponse AUTH 6.3.6 → frontend AUTH 6.4 (login chaining).
+# AUTH 6.3 — Validate and create a self-service user account.
+# Trigger: AUTH 6.2 POST /api/auth/register.
+# Input: registration payload and request-scoped database session.
+# Calls: AUTH 6.3.4 uniqueness read → AUTH 6.3.5 hash and repository insert.
+# Branches: signup disabled → 403; invalid password/role → 400; duplicate → 409.
+# Writes: one users row and transaction commit on success.
+# Next: AUTH 6.3.6 response → AUTH 6.4 normal login flow.
 @router.post(
     "/api/auth/register",
     response_model=RegisterResponse,

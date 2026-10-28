@@ -10,9 +10,8 @@ import { displayVersionAuthor, extractProjectAuthor } from "../utils/actorName";
 import { formatPrdVersionLabel } from "../utils/version";
 import { formatDateTime } from "../utils/time";
 
-// VERSION 1.3 — Diff renderer primitives: `DiffLines` paints add/del/context lines;
-//              `SectionDiffCard` (1.4) wraps one section's change kind, counters and
-//              diff. Both are presentational — the data comes from VERSION 1.2.
+// VERSION 1.3 — Diff-line renderer: paints the add/del/context tuples returned by
+//               3.7. It does not calculate or validate the comparison.
 /** Renders diff lines: green for additions, red for deletions, grey for context. */
 function DiffLines({ diffLines }: { diffLines: [string, string][] }) {
   if (diffLines.length === 0) {
@@ -39,9 +38,9 @@ function DiffLines({ diffLines }: { diffLines: [string, string][] }) {
 }
 
 /** One per-section diff card showing title, change kind, line counts and diff. */
-// VERSION 1.4 — Per-section diff card: shows the section title, the change kind
-//              (created / updated / removed / unchanged / locked_preserved) and the
-//              line diff for that part.
+// VERSION 1.4 — Per-section diff card: renders 3.8's change kind, line counts and
+//               line tuples. `locked_preserved` reflects the section's CURRENT lock
+//               state when the diff is requested, not necessarily its historical lock.
 function SectionDiffCard({ section }: {
   section: PrdVersionDiffSectionPayload;
 }) {
@@ -120,11 +119,10 @@ function ChangeTypeBadge({ changeType }: { changeType: string | undefined }) {
   );
 }
 
-// VERSION 1.0 — Version History panel (the "Versions" tab): the ledger timeline plus
-//             the diff viewer and the restore confirm. Layer chain:
-//               1.1 (ledger) → timeline selection (1.2 base picker) →
-//               1.3/1.4 (diff cards, from api.getPrdVersionDiff) →
-//               1.5 (restore, via the store's handleRestoreVersion).
+// VERSION 1.0 — Versions tab coordinator:
+//               1.1 paged timeline → automatic selection/base → 1.2 diff request
+//               → 1.3/1.4 rendering → 1.5 confirmed restore. There is no manual
+//               base picker: the loaded immediate predecessor is selected for it.
 export function VersionHistory({ state }: { state: ProjectState }) {
   const {
     versionHistory,
@@ -165,8 +163,9 @@ export function VersionHistory({ state }: { state: ProjectState }) {
   // restoring it would be a no-op, hence no Restore button on the first entry.
   const latestVersion = versionHistory[0]?.version ?? null;
 
-  // Auto-select the latest version whenever the history changes — the diff
-  // should always compare the most recent snapshot against its predecessor.
+  // VERSION 1.1.1 — Keep selecting the loaded head. Because selectedHistVersion
+  //                 is itself a dependency, choosing an older row also reruns this
+  //                 effect and is reset to latest; appending a page does the same.
   useEffect(() => {
     if (versionHistory.length > 0) {
       const latest = versionHistory[0].version; // newest first
@@ -175,7 +174,8 @@ export function VersionHistory({ state }: { state: ProjectState }) {
     }
   }, [versionHistory, selectedHistVersion, setSelectedHistVersion]);
 
-  // Auto-set base version to the immediate predecessor of the selected version.
+  // VERSION 1.2.1 — Choose the selected row's preceding LOADED row. If pagination
+  //                 has not loaded it, null delegates predecessor lookup to 3.8.
   useEffect(() => {
     if (!projectId || selectedHistVersion <= 1) { setDiffBaseVersion(null); return; }
     // Find the version immediately before the selected one (any sort order).
@@ -195,10 +195,9 @@ export function VersionHistory({ state }: { state: ProjectState }) {
     if (base === selectedHistVersion) {
       setDiff(null); setDiffError(null); return;
     }
-    // VERSION 1.2 — Diff fetch effect (the ONLY caller of api.getPrdVersionDiff):
-    //             Version 1 is fetched without an explicit base; the backend
-    //             compares it to an empty document so its created lines remain
-    //             inspectable. A 404 is treated as "nothing to compare".
+    // VERSION 1.2 — The only SPA diff caller. No predecessor means 3.8 compares
+    //               against an empty document (base 0). A 404 from a missing or
+    //               invalid target/base is intentionally displayed as no diff.
     console.log('[Diff] Fetching diff:', projectId, 'v' + selectedHistVersion, 'vs v' + base);
     setDiffLoading(true);
     setDiffError(null);

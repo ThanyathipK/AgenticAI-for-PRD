@@ -71,7 +71,7 @@ function ChangeBadge({ kind, label }: { kind: string; label?: string }) {
  */
 // CONFIRM 1.6 — Impact renderer (consumed by the panel body): shows the change
 //              counters, per-item changes and impacted PRD sections/diagrams from
-//              CONFIRM 2.2 / 4.x, with `state` distinguishing loading / ready / error
+//              CONFIRM 2.2 / 4.0, with `state` distinguishing loading / ready / error
 //              and `draft` providing the fallback counts when the preview is
 //              unavailable. Presentational only — nothing here writes.
 function ImpactAnalysisSection({
@@ -254,7 +254,8 @@ function ImpactAnalysisSection({
   // CONFIRM 1.0 — Confirmation panel = the UI of the human-in-the-loop gate. It
   //              renders ONE staged action (CONFIRM 1.7) with: Save (1.2 → 2.3),
   //              Cancel (1.4 → 2.4) and the read-only impact preview (1.5 → 1.6).
-  //              Nothing on this card has been persisted yet; the header text says so.
+  //              The pending-action row is already persisted, but its proposed project
+  //              changes are not authoritative until Save succeeds.
   // CONFIRM 1.1 — Component entry: `action` is the staged draft (proposed_changes =
   //              the full merged requirement state), `onConfirm`/`onCancel` are the
   //              Dashboard callbacks that refresh project state afterwards.
@@ -292,8 +293,9 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
     setIsWorking(true);
     try {
       // CONFIRM 2.3 — API boundary: POST /api/confirm-action/{id}?project_id=…
-      //               (CONFIRM 3.3). Errors (409 locked / 404 gone / 400 empty) surface
-      //               as a toast; the draft stays staged.
+      //               (CONFIRM 3.3). Errors (409 locked/stale, 404 gone, 410 expired,
+      //               or 400 invalid/empty) surface as a toast. Expiry is committed as
+      //               cleanup; other rejected drafts remain available for review.
       const result = await api.confirmAction(action.id, action.project_id);
       onConfirm(result);
     } catch (error) {
@@ -304,7 +306,8 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
   };
 
   // CONFIRM 1.4 — Cancel handler: discards the staged draft (CONFIRM 2.4 → 3.4).
-  //              The persisted project is untouched, so the parent only closes the card.
+  //              Proposed project changes are not applied. A document-extraction
+  //              cancellation also resets its source document to `not_extracted`.
   const handleCancel = async () => {
     if (isWorking) return;
     setIsWorking(true);
@@ -320,7 +323,7 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
   };
 
   // CONFIRM 1.5 — Impact prefetch (once per action, non-blocking): the read-only diff
-  //              (CONFIRM 2.2 → 3.2 → 4.x). A failure merely switches the section to
+  //              (CONFIRM 2.2 → 3.2 → 4.0). A failure merely switches the section to
   //              its fallback summary (draft counts) — Save/Cancel stay usable.
   // ---- Requirement Impact Analysis (READ-ONLY) -------------------------------
   // What this merge changes and which downstream artifacts are affected.
@@ -342,6 +345,8 @@ export const ConfirmationPanel: React.FC<ConfirmationPanelProps> = ({ action, on
           // occur for legacy pending actions created before the backend's
           // no-op staging guard existed. Discard it automatically so it cannot
           // block the next real requirement update.
+          // CONFIRM 1.5.1 — Legacy no-op cleanup: use the normal Cancel path (2.4 →
+          //                 3.4), then notify the parent to remove the closed card.
           if (!result.has_changes && autoDismissedAction.current !== action.id) {
             autoDismissedAction.current = action.id;
             void api.cancelAction(action.id, action.project_id)

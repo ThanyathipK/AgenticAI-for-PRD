@@ -15,6 +15,8 @@ logger = logging.getLogger("app.agents")
 _MERMAID_HEADER_RE = re.compile(r"^\s*(flowchart|graph)\s+(TD|TB|LR|RL)\b", re.IGNORECASE)
 
 
+# ARCHITECT 4.2 — Strip optional code fences and accept only supported Mermaid
+# flowchart/graph headers and directions; invalid output becomes an empty string.
 def sanitize_mermaid_diagram(text: Any) -> str:
     """Return renderable flowchart source, or an empty string when invalid."""
     clean = str(text or "").strip()
@@ -26,6 +28,9 @@ def sanitize_mermaid_diagram(text: Any) -> str:
     return clean
 
 
+# ARCHITECT 4.3 — Execute the diagram prompt and fail open.
+# Returns validated Mermaid from 4.2, or "" for model, parse, or validation failure so
+# the PRD candidate can still succeed without retaining a stale requested diagram.
 async def generate_flow_diagram(
     project_id: str,
     req_state: Dict[str, Any],

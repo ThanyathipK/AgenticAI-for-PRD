@@ -34,6 +34,18 @@ interface RunBackgroundJobOptions {
   initialPollDelayMs?: number;
 }
 
+// JOB 2.1 — Run/resume and poll durable Architect/Auditor work.
+// Trigger: Validate Requirements or Generate PRD frontend action.
+// Input: project, job type, request, AbortSignal and progress callbacks.
+// Calls: JOB 3.1 create/resume read → repeated JOB 3.2 polls.
+// Branches: completed → result; failed/cancelled → error; saved id → resume.
+// Writes: localStorage active id and caller progress/job-id state.
+// Failure: 401 preserves resumability; other resume-read failure starts a new job.
+// Details: Resume the localStorage job id
+// first; except for 401, any read failure discards that id and attempts a new job.
+// Polling backs off from 1s to 5s. Local abort stops polling only—the cancellation
+// hook must separately call JOB 3.3. Terminal rows clear localStorage; auth expiry
+// during polling intentionally leaves it for a later resume.
 export async function runBackgroundAgentJob<T>({
   projectId,
   jobType,

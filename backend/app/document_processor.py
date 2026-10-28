@@ -7,7 +7,8 @@ Separation of concerns enforced by the product intent (see ``routes/documents.py
 * Storage is separate from LLM feeding. Uploads persist the FULL converted
   markdown regardless of token size (``MAX_UPLOAD_MB`` is the only size gate).
 * Token budgets apply exclusively to the explicit "process this document"
-  path. That path routes the document to the gatherer either in one call
+  path. Embedded image bytes are removed from its LLM-only copy; the remaining
+  text routes to the gatherer either in one call
   (``token_count <= DOCUMENT_BUDGET``) or across sequential chunks (each
   ~``DOCUMENT_CHUNK_SIZE`` tokens with ``DOCUMENT_CHUNK_OVERLAP`` overlap).
 * Extraction is DRAFT-ONLY. Nothing in this module ever writes requirements,
@@ -45,6 +46,10 @@ from app.workflow_orchestration.prd_narrative import extract_headed_narrative
 
 logger = logging.getLogger("app.document_processor")
 
+# DOC-UPLOAD 6.0 — Pure extraction/proposal helpers behind route 2.5. They sanitize
+# only the LLM copy, choose full/chunked mode, gather structured output, de-duplicate
+# chunks, and build a revision-guarded proposal. Nothing in this module persists.
+
 # Complete PRD chunks can legitimately need more than the shared 3,000-token
 # completion budget. Chunk sizing above reserves room for this dedicated cap.
 document_llm = build_llm(max_tokens=settings.DOCUMENT_EXTRACTION_OUTPUT_TOKENS)
@@ -74,7 +79,7 @@ _GATHERER_INPUT_VARIABLES = [
 
 # Traceability marker stored inside a draft's ``proposed_changes`` so the
 # confirm-action flow can audit-log which document produced the merge.
-# DOC-UPLOAD 3.8 — Draft traceability markers, shared between FLOW 15 (which stamps them
+# DOC-UPLOAD 6.6 — Draft traceability markers, shared between 6.5 (which stamps them
 #             into ``proposed_changes``) and DOC-UPLOAD 2.4.2 (which matches on them when
 #             evicting the drafts of a deleted document). Keep both in sync.
 DRAFT_DOCUMENT_REF_KEY = "_document_ref"
@@ -92,7 +97,7 @@ class DocumentRouting:
 
 
 def prepare_document_for_extraction(markdown: str) -> str:
-    """Remove embedded image bytes from the text sent to the LLM.
+    """DOC-UPLOAD 6.1 — Remove embedded image bytes from the LLM-only copy.
 
     Mammoth intentionally preserves DOCX images as base64 data URIs in the
     canonical markdown.  That is useful for preview/storage but meaningless to
@@ -116,7 +121,7 @@ def prepare_document_for_extraction(markdown: str) -> str:
 
 
 def document_budget() -> int:
-    """Return the token budget available for a single document extraction pass.
+    """DOC-UPLOAD 6.2 — Return the safe input budget for one Gatherer pass.
 
     A fraction of ``MAX_CONTEXT_TOKENS`` so the system prompt + gatherer
     instructions + tool schema + output slack still fit when the chunk joins
@@ -126,7 +131,7 @@ def document_budget() -> int:
 
 
 def decide_document_mode(token_count: int) -> str:
-    """Return ``'full'`` (single pass) or ``'chunked'`` (sequential passes).
+    """DOC-UPLOAD 6.2.1 — Select one full pass or chunked passes.
 
     The DOCUMENT_BUDGET boundary (``DOCUMENT_BUDGET_FRACTION * MAX_CONTEXT_TOKENS``)
     separates the two modes — a document at or below the budget always runs in
@@ -136,7 +141,7 @@ def decide_document_mode(token_count: int) -> str:
 
 
 def route_document_tokens(token_count: int) -> DocumentRouting:
-    """Compute the routing decision (mode + predicted chunk count) for a document.
+    """DOC-UPLOAD 6.2.2 — Describe mode and predicted chunk count.
 
     Pure decision helper used by the process route and by tests at the
     DOCUMENT_BUDGET boundary. ``chunk_count`` is the number of gatherer passes
@@ -252,7 +257,7 @@ def split_markdown_into_chunks(
     overlap: Optional[int] = None,
     token_count: Optional[int] = None,
 ) -> List[str]:
-    """Split ``text`` into ordered, token-budgeted chunks with overlap.
+    """DOC-UPLOAD 6.3 — Split text into ordered token-budgeted chunks with overlap.
 
     Behavior
     --------
@@ -330,7 +335,7 @@ def split_markdown_into_chunks(
 
 
 def accumulate_document_draft(chunk_results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Collapse per-chunk ``GatheredRequirements`` outputs into ONE document draft.
+    """DOC-UPLOAD 6.4 — Collapse chunk outputs into one de-duplicated draft.
 
     Chunk overlap means the same story can appear in consecutive chunk results
     with the same ticket code or title; duplicates are collapsed here across the
@@ -418,7 +423,7 @@ def build_merge_preview(
     document_id: str,
     document_filename: str,
 ) -> Dict[str, Any]:
-    """Assemble the SINGLE merged RequirementState draft for the whole document.
+    """DOC-UPLOAD 6.5 — Build one revision-guarded full-state merge proposal.
 
     This is the payload stored in ``pending_action.proposed_changes``. It
     preserves every existing requirement and related state (so a confirm never
@@ -528,7 +533,7 @@ async def extract_requirements_from_text(
     chunk_index: int = 1,
     chunk_count: int = 1,
 ) -> Dict[str, Any]:
-    """Run the gatherer over one document chunk, returning ``GatheredRequirements``.
+    """DOC-UPLOAD 6.3.1 — Run the Gatherer over one extraction chunk.
 
     Mirrors ``agents.gatherer_node``'s LLM invocation (same prompt file, same
     ``GatheredRequirements`` schema, same ``with_structured_output`` strategy)

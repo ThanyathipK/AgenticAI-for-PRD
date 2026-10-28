@@ -9,6 +9,12 @@ interface DeleteAccountModalProps {
   onDelete: (password: string, confirmation: string) => Promise<string | null>;
 }
 
+// AUTH 8.1 — Collect explicit confirmation for permanent account deletion.
+// Trigger: authenticated user opens the account-deletion dialog.
+// Input: current password and the literal DELETE confirmation.
+// Calls: AUTH 8.2 deleteAccount callback supplied by useAuth.
+// Branches: validation/callback failure → inline error; success → close modal.
+// Writes: local form and error state only.
 export function DeleteAccountModal({
   isOpen,
   isWorking,
@@ -33,6 +39,8 @@ export function DeleteAccountModal({
   if (!isOpen) return null;
   const canDelete = Boolean(password) && confirmation === 'DELETE' && !isWorking;
 
+  // AUTH 8.1.1 — Submit the guarded deletion request.
+  // Failure: no callback occurs until both fields satisfy the client guard.
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!canDelete) return;

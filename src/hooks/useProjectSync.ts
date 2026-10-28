@@ -1,6 +1,9 @@
-// useProjectSync — project-state loading + real-time SSE sync, extracted from
-// the former useProjectState god-hook. Writes through the shared
-// `RequirementStore` and the typed `api` client.
+// SYNC 2.0 — Coordinate initial project loading and live reconciliation.
+// Trigger: selected-project change, SSE frame, or deferred preview catch-up.
+// Input: active project, RequirementStore, pending-action setter and callbacks.
+// Calls: SYNC 2.1–2.5 → project APIs and SYNC 4.1 EventSource route.
+// Writes: frontend workspace state only; SSE is a notification except progress.
+// Failure: initial load retries; live refresh warns and waits for a later trigger.
 import { useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { api } from "../api/client";
@@ -78,7 +81,10 @@ export function useProjectSync(
     editingSectionIdRef.current = store.editingSectionId;
   });
 
-  // Preview catch-up bookkeeping — the PRD preview must ALWAYS end up on the
+  // SYNC 2.2 — Preview catch-up bookkeeping. PRD/diagram updates received while
+  // editing or holding a staged MERGE are deferred and force-refetched after the
+  // hold clears. This protects the paired preview, not every store field.
+  // The PRD preview must eventually end up on the
   // latest stored version. A document that arrives while the preview is on
   // hold (the user is editing a section, or a freshly generated draft is
   // staged for confirmation) is never dropped: the flag records "a newer
@@ -102,7 +108,11 @@ export function useProjectSync(
     void refreshFromServerRef.current?.(true);
   });
 
-  // PROJECT 2.4 — Requirement-state load (opening a project). Layer chain:
+  // SYNC 2.1 / PROJECT 2.4 — Initial authoritative load. Independent pending-
+  // action, section-lock and latest-version reads start concurrently. Abort stale
+  // project transport; compare updated_at against the last APPLIED initial-load
+  // snapshot; retry up to five times. This ordering guard is not used by 2.4.
+  // Requirement-state load layer chain:
   //              2.1 trigger → 2.2 (api.getProjectState) → route 2.3 →
   //              repository 2.3.2 / init branch 2.3.3 → 2.4 store mapping.
   //              Reused verbatim by the SSE full refresh and the PRD preview
@@ -260,9 +270,9 @@ export function useProjectSync(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  // Real-time synchronization via Server-Sent Events (SSE).
-  // Replaces the previous 3s polling: the backend pushes a change event through
-  // the `/api/project/{id}/sse` stream and we refresh state once per real change.
+  // SYNC 2.3 — Project SSE subscription. Non-progress frames are coalesced into
+  // a state pull; extraction start/progress is forwarded directly. There is no
+  // periodic fallback poll. EventSource reconnects automatically with Last-Event-ID.
   useEffect(() => {
     if (!projectId || projectId === "null") return;
 
@@ -272,6 +282,9 @@ export function useProjectSync(
     prdSyncPendingRef.current = false;
     prdSyncHoldRef.current = false;
 
+    // SYNC 2.4 — Reconciliation pull. A normal call is suppressed while another
+    // is active; force may overlap it. Unlike initial load, this path does NOT
+    // compare payload.updated_at, so response ordering is not guarded globally.
     const refreshFromServer = async (force = false) => {
       if (refreshInFlight && !force) return;
       refreshInFlight = true;
@@ -474,7 +487,7 @@ export function useProjectSync(
     // this subscription (an edit finishing, the staged-draft hold clearing).
     refreshFromServerRef.current = refreshFromServer;
 
-    // Open the Server-Sent Events stream. The backend publishes a change event
+    // SYNC 2.5 — Open the authenticated stream. The backend publishes a change event
     // whenever the project state is mutated, so no periodic polling is needed.
     // EventSource cannot send an Authorization header, so the JWT travels as a
     // `?token=` query parameter — the backend's SSE dependency accepts either
@@ -511,12 +524,13 @@ export function useProjectSync(
         const message = JSON.parse(event.data);
         if (!message || !message.event) return;
 
-        // The stream's first frame is a `connected` handshake, not a state
-        // change — `loadProjectState` already fetched the full state when the
-        // project opened, so it must NOT trigger a redundant re-download.
+        // SYNC 2.5.1 — Ignore every connected handshake, including reconnects.
+        // Initial project open already loaded state, but after a server restart
+        // this means the handshake itself does not repair events lost with the
+        // process-local replay buffer; a later mutation/manual load is required.
         if (message.event === "connected") return;
 
-        // High-frequency document-extraction frames: forward them to the
+        // DOC-UPLOAD 1.7.1 — High-frequency extraction frames: forward them to the
         // DocumentLibrary so users see live chunk progress (chunk X/N) on big
         // documents, and do NOT trigger a full project-state GET. A many-chunk
         // extraction would otherwise fire one heavy state download (PRD markdown

@@ -775,6 +775,12 @@ def get_prd_template(current_user: AuthenticatedUser = Depends(get_current_user)
     }
 
 
+# VERSION 2.0 — EXPORT snapshot producer. Deterministically fills and stamps a
+#               document, then writes directly through 4.1 (not 3.6): it therefore
+#               stores no 3.1 changed_sections and does not synchronize the state
+#               counter. SemVer is predicted by 3.9; prediction failure stamps the
+#               legacy label while 4.1 defaults the row semver to 1.0.0. Insert failure
+#               is fatal (500), so this endpoint never reports an unpersisted version.
 @router.post("/api/prd/export/{project_id}", response_model=PRDExportResponse, status_code=status.HTTP_200_OK)
 async def post_prd_export_generation(
     project_id: UUID,
@@ -902,8 +908,9 @@ async def post_prd_export_generation(
         version_record = await PRDVersionRepository.create(str(project_id), {
             "generated_prd": markdown_content,
             "generated_by": "prd_export_endpoint",
-            # The stamped document label and this row carry the SAME semver;
-            # falsy (resolution failed) falls back to the repo default "1.0.0".
+            # On successful prediction the stamp and row share the SemVer. If
+            # prediction failed, the document used legacy V{n}.0 while 4.1
+            # independently falls back to row SemVer 1.0.0.
             "semver": semver,
         }, db)
         logger.info(f"[PRD EXPORT] Created PRD version {version_record['version_number']} for project {project_id}.")
@@ -1449,9 +1456,9 @@ async def convert_prd_to_markdown(
 # PRD VERSION HISTORY API
 # ==========================================
 
-# VERSION 2.1 — READ: the whole ledger (VERSION 1.1). Auth: AUTH 7.5. Returns every
-#             immutable snapshot NEWEST FIRST (repository 4.3) — this list drives the
-#             timeline, so ordering here is part of the UI contract.
+# VERSION 2.1 — LIST ledger metadata (1.1 → 4.3), newest first. `limit` bounds a
+#               page and `before_version` seeks older rows. Full generated_prd bodies
+#               are blanked below; single-snapshot/diff routes retain content access.
 @router.get("/api/project/{project_id}/prd-versions", response_model=List[PRDVersionResponse], status_code=status.HTTP_200_OK)
 async def get_prd_versions(
     project_id: str,
@@ -1461,7 +1468,7 @@ async def get_prd_versions(
     session: AsyncSession = Depends(get_db),
 ) -> List[PRDVersionResponse]:
     """
-    Retrieves all PRD versions for a project.
+    Retrieves one newest-first page of PRD-version metadata for a project.
 
     Args:
         project_id: Project UUID string.
@@ -1494,10 +1501,9 @@ async def get_prd_versions(
     return [{**v, "generated_prd": ""} for v in versions]
 
 
-# VERSION 2.2 — READ: per-section line diff for one version (VERSION 1.2).
-#             Auth: AUTH 7.5. `base_version` defaults to the immediate predecessor
-#             (resolved inside VERSION 3.8/4.2). Branches: UUID 400 → 404 when the
-#             version or its base is missing → the diff payload.
+# VERSION 2.2 — READ a section/line diff (1.2 → 3.8). Omitted base resolves to
+#               the immediate predecessor or empty base 0 for the first snapshot.
+#               Invalid UUID is 400; missing target/base or base >= target is 404.
 @router.get(
     "/api/project/{project_id}/prd-versions/{version_number}/diff",
     response_model=PrdVersionDiffResponse,
@@ -1512,9 +1518,9 @@ async def get_prd_version_diff(
 ) -> PrdVersionDiffResponse:
     """Section-level diff of one PRD version against an earlier base version.
 
-    Locked sections whose content WOULD have changed are reported as
-    ``locked_preserved`` — the ledger proves the lock contract was honoured
-    while the version still advanced.
+    A differing section locked at request time is labelled
+    ``locked_preserved``. This is a current-state display classification, not
+    proof of the lock state when either historical snapshot was recorded.
     """
     try:
         UUID(project_id)
@@ -1537,11 +1543,9 @@ async def get_prd_version_diff(
     return diff
 
 
-# VERSION 2.3 — READ: latest snapshot (repository 4.5) → 404 when the project has no
-#             ledger rows yet. Used by the export path and the PRD-preview sync.
-#             DISCREPANCY (documented, not changed): no frontend caller — the SPA reads
-#             the newest row from the VERSION 2.1 list instead (src/api/client.ts has no
-#             getLatestPrdVersion helper).
+# VERSION 2.3 — READ latest full snapshot through 4.5; 404 when no row exists.
+#               No application caller was found: the SPA gets its newest metadata from
+#               2.1, while server-side paths call 4.5 directly.
 @router.get("/api/project/{project_id}/prd-versions/latest", response_model=PRDVersionResponse, status_code=status.HTTP_200_OK)
 async def get_latest_prd_version(
     project_id: str,
@@ -1609,13 +1613,16 @@ async def get_prd_version_by_number(
     return version
 
 
-# VERSION 2.5 — WRITE (append-only restore): the snapshot's document becomes a NEW
-#             version — history is NEVER rewritten. Auth: AUTH 7.5. The restore flows
-#             through the PRD-SECTION part contract, so LOCKED parts keep their current
-#             content (the restored document honours the lock) and each part update
-#             appends a prd_section_versions row; a fresh ledger row is then recorded
-#             via VERSION 3.6/4.1. Returns the re-stitched document + new version
-#             number, which VERSION 1.5 applies.
+# VERSION 2.5 — RESTORE orchestration (1.5). Seed parts from the current document
+#               (target only when no current document); visit target-present sections;
+#               skip currently locked and identical sections; write changed unlocked
+#               sections; then stitch. Current-only sections remain. Recording through
+#               3.6 normally appends history, but its exception is caught: the document
+#               still persists and the response falls back to source number/blank
+#               semver. `preserved_locked_sections` counts all locked target sections
+#               encountered, including identical ones. Publication precedes request
+#               commit; an uncaught later failure rolls the transaction back. The
+#               owner-supplied `restored_by` query value becomes the recorded author.
 @router.post(
     "/api/project/{project_id}/prd-versions/{version_number}/restore",
     response_model=PrdVersionRestoreResponse,
@@ -1628,10 +1635,11 @@ async def restore_prd_version(
     session: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(require_project_owner),
 ) -> PrdVersionRestoreResponse:
-    """Restore the whole PRD document from a ledger version.
+    """Restore target-present unlocked sections into the current document.
 
-    APPEND-ONLY: the snapshot's content becomes a NEW version — history is
-    never rewritten. Section locks are preserved during the restore.
+    A successful ledger write appends a snapshot. If that write fails, the
+    section/document restore still completes and the response uses its fallback
+    version fields.
     """
     try:
         UUID(project_id)
@@ -1648,8 +1656,8 @@ async def restore_prd_version(
     current_document = (state or {}).get("generated_prd") or target["generated_prd"]
     sections = await ensure_sections_seeded(project_id, session, source_markdown=current_document)
 
-    # Which stored part holds which content + which are locked. Locked parts
-    # keep their current content — the ledger proves the lock was honoured.
+    # Which stored part holds which content + which are currently locked.
+    # Locked target parts are skipped regardless of whether their content differs.
     current_map = {s["section_key"]: (s.get("content") or "") for s in sections}
     locked_map = {s["section_key"]: bool(s.get("is_locked")) for s in sections}
     id_map = {s["section_key"]: s["id"] for s in sections}
@@ -1676,8 +1684,8 @@ async def restore_prd_version(
         if updated is not None:
             restored_sections += 1
 
-    # Re-stitch the document from the parts table (locked parts included with
-    # their preserved content) and record it as a NEW immutable ledger version.
+    # Re-stitch from every current part (including current-only and locked parts),
+    # then attempt to append an immutable ledger version.
     document_markdown = await assemble_document_markdown(project_id, session)
     try:
         new_version = await record_prd_version(

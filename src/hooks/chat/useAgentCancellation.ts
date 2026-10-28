@@ -10,6 +10,11 @@ interface CancelActiveAgentOptions {
   setSyncStatus: (status: string) => void;
 }
 
+// JOB 2.2 — Stop both client polling/request wait and server work.
+// Trigger: Stop button while an AbortController is active.
+// Calls: known id → JOB 3.3/4.4; no id → JOB 3.4/4.5; then abort locally.
+// Writes: clears in-memory controller/job references and updates status.
+// Failure: server cancellation is fire-and-forget and swallowed; UI still aborts.
 export function cancelActiveAgent({
   controller,
   projectId,

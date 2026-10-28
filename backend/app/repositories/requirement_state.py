@@ -146,11 +146,11 @@ class RequirementStateRepository:
             all_user_stories.extend(active_stories)
             all_acceptance_criteria.extend(flat_ac)
 
-        # CLARIFY 4.1 — Read path of the clarification questions the UI renders: the
-        #             project-state load (PROJECT 2.3.2) pulls them through the
-        #             dedicated repository (4.2) and flattens them into
-        #             requirement_state.clarification_questions, which is what the
-        #             CLARIFY 1.1/1.2 forms list and CLARIFY 3.4 later indexes.
+        # CLARIFY 4.1 — State projection for the questions rendered by CLARIFY 1.1:
+        #             load them through repository 4.2 and flatten them into
+        #             requirement_state.clarification_questions. Repository 4.2 may
+        #             repair exact legacy duplicates in-session; a committing request
+        #             persists that repair. CLARIFY 3.2/3.3 later consume this list.
         cqs = await ClarificationQuestionRepository.get_by_project(str(project_id), session)
         audits = await AuditResultRepository.get_by_project(str(project_id), session)
         latest_audit = audits[0] if audits else {}

@@ -32,9 +32,9 @@ export interface LmStudioHealth extends LmStudioHealthState {
   checkLmStudioHealth: () => Promise<void>;
 }
 
-// CHAT 6.3 — UI half of the LLM readiness check: polls GET /api/health (which
-// proxies a TTL-cached LM Studio /models probe, CHAT 6.2) every 20 s, on mount and
-// on tab focus, so an offline gateway shows a banner instead of opaque 503s.
+// CHAT 6.3 — Frontend readiness path for the local inference gateway.
+// Calls: CHAT 6.3.1 API-client read → CHAT 6.3.2 polling/state owner.
+// Writes: readiness state only; no model or backend configuration changes.
 const HEALTH_POLL_INTERVAL_MS = 20_000;
 
 const INITIAL_STATE: LmStudioHealthState = {
@@ -49,6 +49,12 @@ const INITIAL_STATE: LmStudioHealthState = {
   checkingLmStudio: true,
 };
 
+// CHAT 6.3.2 — Maintain frontend inference-readiness state.
+// Trigger: hook mount, 20-second interval, tab focus, or manual retry.
+// Calls: CHAT 6.3.1 api.fetchHealth → CHAT 6.2.1 health route.
+// Writes: backend/LM Studio readiness React state.
+// Branches: successful payload → model status; request failure → backend offline.
+// Failure: fails softly into visible offline state rather than raising to the UI.
 export function useLmStudioHealth(): LmStudioHealth {
   const [state, setState] = useState<LmStudioHealthState>(INITIAL_STATE);
   const inFlightRef = useRef(false);

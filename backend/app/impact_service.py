@@ -352,7 +352,8 @@ async def analyze_downstream(
     return impacted_sections, impacted_diagrams
 
 
-# CONFIRM 4.x — Impact analysis (READ-ONLY sub-flow behind CONFIRM 3.2). It diffs the
+# CONFIRM 4.0 — Impact calculation (the analysis itself is read-only) behind CONFIRM
+# 3.2. The route may first delete an expired pending row (CONFIRM 3.2.1). It diffs the
 # staged draft against the persisted state and derives what is affected downstream:
 #   4.1 analyze_pending_action — orchestrator (this class)
 #   4.2 diff_requirements      — requirement groups added/changed/removed + codes

@@ -83,14 +83,14 @@ export interface UseAuthResult {
   setIsAuthModalOpen: Dispatch<SetStateAction<boolean>>;
 }
 
-// AUTH 1.3 — Frontend session owner (layer: Frontend hook → API client).
-//            One source of truth for the JWT session; every entry below is a
-//            separate AUTH sub-flow:
-//              login()      → AUTH 1.3.1 → api.authLogin    → POST /api/auth/login    (AUTH 1.4 → 1.7.4)
-//              register()   → AUTH 6.1   → api.authRegister → POST /api/auth/register (AUTH 6.2 → 6.3)
-//              logout()     → AUTH 4.1   → api.authLogout   → POST /api/auth/logout   (AUTH 4.2 → 4.4)
-//              mount        → AUTH 3.1   → api.authConfig   → GET  /api/auth/config   (AUTH 3.2 → 3.3)
-//              mount/restore→ AUTH 2.1   → api.authMe       → GET  /api/auth/me       (AUTH 2.2 → 2.3)
+// AUTH 1.3 — Own the browser's authenticated session.
+// Trigger: Dashboard mounts this hook once for the application.
+// Input: login/register credentials and any JWT restored from localStorage.
+// Calls: AUTH 1.4 login, AUTH 2.2 profile validation, AUTH 3.2 capability
+//        probe, AUTH 4.2 logout, and AUTH 6.2 registration.
+// Branches: valid session → authenticated UI; missing/invalid session → signed-out UI.
+// Writes: axios Authorization header, localStorage, and React auth state.
+// Failure: capability checks fail closed; stale sessions are cleared locally.
 export function useAuth(): UseAuthResult {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUserPayload | null>(null);
@@ -98,11 +98,12 @@ export function useAuth(): UseAuthResult {
   const [signupEnabled, setSignupEnabled] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
 
-  // AUTH 3.1 — Capabilities probe on mount (layer: Frontend → API client).
-  //            Unauthenticated by design: the client must know whether signup is
-  //            available BEFORE it holds a token. Result gates the sign-up tab
-  //            offered by AUTH 1.1.1.
-  // AUTH 3.4 — Fail CLOSED: if the probe fails, signupEnabled stays false.
+  // AUTH 3.1 — Load public authentication capabilities.
+  // Trigger: useAuth mount.
+  // Calls: AUTH 3.2 api.authConfig → AUTH 3.3 GET /api/auth/config.
+  // Writes: signupEnabled React state.
+  // Failure: AUTH 3.4 fails closed; sign-up stays hidden when capability cannot
+  //          be confirmed.
   // ---- Public auth capabilities (unauthenticated) --------------------------
   useEffect(() => {
     let cancelled = false;
@@ -121,12 +122,14 @@ export function useAuth(): UseAuthResult {
     };
   }, []);
 
-  // AUTH 2.1 — Session restore on mount (layer: Frontend → API client).
-  //            Persisted JWT (AUTH 1.5 sink #2) → axios default header
-  //            (AUTH 1.5.1) → GET /api/auth/me (AUTH 2.2) which re-resolves the
-  //            token against the users table on the server (AUTH 2.3 → AUTH 7.1).
-  // AUTH 2.4 — Invalid/expired/stale token: clear the local session instead of
-  //            leaving the UI in a fake signed-in state.
+  // AUTH 2.1 — Restore and validate a persisted browser session.
+  // Trigger: useAuth mount when localStorage contains a JWT.
+  // Input: persisted JWT from AUTH 1.5.
+  // Calls: AUTH 1.5.1 setAuthToken → AUTH 2.2 api.authMe → AUTH 2.3 route →
+  //        AUTH 7.1 authorization dependency.
+  // Branches: valid token/user → restore profile; rejected token/user → AUTH 2.4.
+  // Writes: axios header and React token/user state.
+  // Failure: AUTH 2.4 clears every local session sink.
   // ---- Restore a persisted session ----------------------------------------
   // The stored token is NOT trusted on its own: GET /api/auth/me re-resolves it
   // against the users table, so a token for a deleted account (or one signed
@@ -158,10 +161,12 @@ export function useAuth(): UseAuthResult {
     };
   }, []);
 
-  // AUTH 4.3 — The actual sign-out (layer: Frontend, local-only): clears all
-  //            three session sinks together — axios default header, localStorage
-  //            and React state. The server call in AUTH 4.2 is audit-only because
-  //            the JWT is stateless (it cannot be revoked).
+  // AUTH 4.3 — Clear the authoritative browser session.
+  // Trigger: logout or rejection of a restored/deleted session.
+  // Writes: removes the axios header, localStorage JWT, and React token/user state.
+  // Failure: none; this local operation is the effective sign-out because JWTs
+  //          are stateless.
+  // Next: AUTH 1.6 signed-out UI.
   const clearSession = useCallback(() => {
     setAuthToken(null);
     writeStoredToken(null);
@@ -169,21 +174,21 @@ export function useAuth(): UseAuthResult {
     setUser(null);
   }, []);
 
-  // AUTH 1.3.1 — login(): the frontend LOGIN handler.
-  //              Layer chain: Frontend → API client (AUTH 1.4) → FastAPI route
-  //              (AUTH 1.7) → service (AUTH 1.7.1) → repository (AUTH 1.7.1.1).
-  //              Errors: the backend returns an identical 401 "Invalid
-  //              credentials" for unknown email AND wrong password (AUTH 1.7.1),
-  //              so that detail is surfaced verbatim.
+  // AUTH 1.3.1 — Authenticate credentials and establish the browser session.
+  // Trigger: AUTH 1.2 AuthModal sign-in or AUTH 6.4 post-registration login.
+  // Input: trimmed email and plaintext password.
+  // Calls: AUTH 1.4 API client → AUTH 1.7 route → AUTH 1.7.1 service.
+  // Branches: success → AUTH 1.5 persistence; rejection → inline error string.
+  // Writes: authentication progress plus token/user state on success.
+  // Failure: unknown email and wrong password intentionally surface the same 401.
   const login = useCallback(async (email: string, password: string) => {
     setIsAuthenticating(true);
     try {
       const session = await api.authLogin(email.trim(), password);
-      // AUTH 1.5 — Session persistence (response → frontend state). Three sinks,
-      //            deliberately in this order:
-      //              1) axios default Authorization header (AUTH 1.5.1)
-      //              2) localStorage — survives a reload → AUTH 2.1
-      //              3) React state — flips the sidebar chip → AUTH 1.6
+      // AUTH 1.5 — Persist an authenticated session in all browser sinks.
+      // Trigger: successful AUTH 1.3.1 login response.
+      // Writes: AUTH 1.5.1 axios header → localStorage → React token/user state.
+      // Next: AUTH 1.6 authenticated UI; localStorage later feeds AUTH 2.1.
       setAuthToken(session.access_token);
       writeStoredToken(session.access_token);
       setToken(session.access_token);
@@ -202,10 +207,12 @@ export function useAuth(): UseAuthResult {
     }
   }, []);
 
-  // AUTH 6.1 — register(): Frontend → api.authRegister (AUTH 6.2) → POST
-  //            /api/auth/register (AUTH 6.3). Discrepancy vs. the expected flow:
-  //            the register response carries NO token, so AUTH 6.4 signs the new
-  //            account in with the same credentials via AUTH 1.3.1.
+  // AUTH 6.1 — Register a new account and continue into normal login.
+  // Trigger: AUTH 1.2 AuthModal sign-up submission.
+  // Input: email, password, full name, and optional role.
+  // Calls: AUTH 6.2 api.authRegister → AUTH 6.3 route.
+  // Branches: registration error → inline message; success → AUTH 6.4.
+  // Writes: no local session until the subsequent login succeeds.
   const register = useCallback(
     async (email: string, password: string, fullName: string, role?: string) => {
       setIsAuthenticating(true);
@@ -222,10 +229,11 @@ export function useAuth(): UseAuthResult {
         setIsAuthenticating(false);
       }
 
-      // AUTH 6.4 — Register returns no token (AUTH 6.3.6), so chain straight into
-      //            the normal login flow (AUTH 1.3.1 → AUTH 1.4 → AUTH 1.7).
-      // Registration returns no token, so sign the new account in with the very
-      // credentials just created (one less round-trip for the user).
+      // AUTH 6.4 — Enter the normal login flow after account creation.
+      // Trigger: AUTH 6.3.6 returns a created user without a token.
+      // Calls: AUTH 1.3.1 with the credentials just registered.
+      // Branches: login success → authenticated UI; login failure → account-created
+      //           notice plus a request to sign in manually.
       const signInError = await login(email, password);
       if (signInError) {
         notify('Account created. Please sign in.', 'success');
@@ -236,9 +244,13 @@ export function useAuth(): UseAuthResult {
     [login],
   );
 
-  // AUTH 4.1 — logout(): sign-out handler. Layer chain: Frontend (AuthPanel
-  //            AUTH 4.1) → API client AUTH 4.2 → route AUTH 4.4 (audit log only)
-  //            → local clear AUTH 4.3 → AUTH 1.6 reverts to the signed-out UI.
+  // AUTH 4.1 — Sign out the current browser session.
+  // Trigger: AuthPanel logout action.
+  // Input: current JWT, when present.
+  // Calls: AUTH 4.3 local clear, then AUTH 4.2 best-effort server audit request.
+  // Writes: clears browser auth state immediately; server route writes no session state.
+  // Failure: server-audit failure is logged and ignored; local sign-out still completes.
+  // Next: AUTH 1.6 signed-out UI.
   const logout = useCallback(async () => {
     setIsAuthenticating(true);
     // Clear the browser session before the best-effort audit request. Besides
@@ -247,9 +259,11 @@ export function useAuth(): UseAuthResult {
     const tokenToLogout = token;
     clearSession();
     try {
-      // AUTH 4.2 — Best-effort server-side call. The JWT is stateless (AUTH 1.7.3),
-      //            so a failure here is not fatal — AUTH 4.3 is what actually signs
-      //            out — and the error is swallowed rather than shown.
+      // AUTH 4.2 — Notify the server of logout for audit logging.
+      // Trigger: AUTH 4.1 after the browser session has already been cleared.
+      // Calls: API client → AUTH 4.4 POST /api/auth/logout.
+      // Writes: no server-side session mutation because the JWT is stateless.
+      // Failure: fail softly; log and keep the completed local sign-out.
       // Best-effort: the server writes an audit-log line, but the JWT is
       // stateless, so the client-side clear below is what actually signs out.
       if (tokenToLogout) {
@@ -267,11 +281,19 @@ export function useAuth(): UseAuthResult {
     }
   }, [clearSession, token]);
 
+  // AUTH 8.2 — Request account deletion and retire the browser session.
+  // Trigger: AUTH 8.1 confirmed modal submission.
+  // Input: current password, DELETE confirmation, and current JWT.
+  // Calls: AUTH 8.3 api.authDeleteAccount → AUTH 8.4 backend route.
+  // Branches: success → AUTH 8.7 clear; failure → inline error with session retained.
+  // Writes: authentication progress and, on success, all local session sinks.
+  // Failure: missing token stops before the request; route errors remain user-visible.
   const deleteAccount = useCallback(async (password: string, confirmation: string) => {
     if (!token) return 'Your session is no longer active. Please sign in again.';
     setIsAuthenticating(true);
     try {
       await api.authDeleteAccount(password, confirmation, token);
+      // AUTH 8.7 — Clear the now-deleted account's browser session.
       clearSession();
       notify('Account and owned data deleted permanently', 'success');
       return null;

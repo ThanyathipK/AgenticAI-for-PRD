@@ -226,11 +226,12 @@ def merge_story_fields(
 # ==========================================
 # PROTECTED-STORY HELPERS
 # ==========================================
-# GATHERING 6.4 — Protected-id set (built from GATHERING 1.3's locked story UUIDs and
-#             ticket codes): a pending update on a protected story is skipped and a
-#             pending archive becomes `change_type="conflict"` with status staying
-#             active — the mechanism behind the "⚠️ locked story(ies) … stayed active"
-#             line in 4.4.1.
+# GATHERING 6.4 — Normalize a caller-supplied protected story allow-list.
+# Input: optional UUIDs and/or ticket codes; output contains both raw and canonical
+#        forms for identity checks in GATHERING 6.0.
+# Effect: protected updates remain unchanged and protected archives become conflicts.
+# Note: gatherer_node currently passes an empty list after its GATHERING 2.1 lock
+#       gate; other merge callers may supply protected IDs directly.
 def build_protected_set(protected_ids: Optional[List[str]]) -> Set[str]:
     """
     Normalizes the ``protected_ids`` allow-list (story UUIDs and/or ticket
@@ -603,7 +604,7 @@ def merge_user_stories(
 
 # GATHERING 6.5 — Projection helper: flattens the active stories' acceptance criteria
 #             into the board-level `acceptance_criteria` list (used by the gatherer's
-#             draft short-circuit 1.5.1 and by the final state assembly in 4.2).
+#             draft short-circuit 1.5.1 and by final preview assembly in 4.3).
 def collect_acceptance_criteria(stories: List[Dict[str, Any]]) -> List[Any]:
     """Flattens the ``acceptance_criteria`` of every story into a single list."""
     all_ac: List[Any] = []
@@ -613,7 +614,7 @@ def collect_acceptance_criteria(stories: List[Dict[str, Any]]) -> List[Any]:
 
 
 # GATHERING 6.6 — Shared prompt-context formatter for the backlog: the SAME rendering
-#             is used by the gatherer prompt (2.6), the semantic detector (5.2), the
+#             is used by the gatherer prompt (2.5), the semantic detector (5.2), the
 #             intent detector (INTENT 2.2) and the matcher (MATCHING 2.2), so every
 #             agent describes the stories identically.
 def format_story_context_lines(stories: List[Dict[str, Any]]) -> List[str]:

@@ -172,6 +172,8 @@ export function useChat(
   // it only follows the timeline while the user is near the bottom and shows a
   // "jump to latest" pill otherwise.)
 
+  // ARCHITECT 1.3 — Build the approved PRD-version digest supplied to template fill.
+  // Returns undefined for a new project so the backend owns the default wording.
   // Build a truthful change-history digest for the backend prompt context.
   // Every agent call used to hardcode 'No previous history.', which defeated
   // the Architect node's incremental-regeneration logic (it could never see
@@ -191,13 +193,15 @@ export function useChat(
   };
 
   // Handle Raw Conversational Input Submission
-  // CHAT 1.2 — Frontend chat entry: one handler serves the composer, the send
-  // button and the empty-state suggestion chips (CHAT 1.1). Layer chain:
-  //   1.2 → 1.3 (api.processRequirements) → route 2.1 → intent 2.2 →
-  //   GENERAL_CHAT branch 2.3 → 1.4 (UI branch on the returned intent).
-  // Local guards: no selected project → inline warning bubble (no request);
-  // blank input → no-op. The optimistic user bubble is appended BEFORE the
-  // request, and the AbortController is what the Stop button cancels.
+  // CHAT 1.2 — Persist the user turn and start shared message processing.
+  // Trigger: CHAT 1.1 composer, Send button, or suggestion chip.
+  // Input: message text and selected/overridden project id.
+  // Calls: transcript append → CHAT 1.3 api.processRequirements.
+  // Branches: no project → warning bubble; blank input → no-op; otherwise request.
+  // Writes: local timeline/loading state and durable user conversation row.
+  // Failure: request errors become user-visible bubbles; cancellation is handled
+  //          by the request AbortController.
+  // Next: CHAT 1.4 response handling.
   const handleSendMessage = async (
     textToSend?: string,
     projectIdOverride?: string,
@@ -268,10 +272,12 @@ export function useChat(
       // The backend handles intent detection internally and routes accordingly:
       //   - GENERAL_CHAT: returns conversational response directly (no agent workflow)
       //   - REQUIREMENT_REQUEST: proceeds to Gatherer workflow
-      // CHAT 1.3 — API boundary: POST /api/process-requirements, the SAME endpoint
-      //            the agent flows use. Intent detection server-side decides whether
-      //            this remains a conversation (CHAT 2.3) or enters the agent
-      //            workflow (GATHERING / AUDITOR / ARCHITECT flows).
+      // CHAT 1.3 — Cross the shared frontend-to-backend processing boundary.
+      // Trigger: CHAT 1.2 after the user turn is staged in the timeline.
+      // Input: project, raw message, current version/state, and cancellation signal.
+      // Calls: POST /api/process-requirements → CHAT 2.1.
+      // Branches: CHAT 2.2 chooses CHAT 2.3 conversation or an agent workflow.
+      // Writes: NONE at the API-client boundary.
       const data = await api.processRequirements(
         {
           project_id: projectId,
@@ -297,10 +303,13 @@ export function useChat(
         controller.signal,
       );
 
-      // CHAT 1.4 — Response branch. GENERAL_CHAT (below) is the pure-conversation
-      //            outcome: the assistant text is appended and NO requirement,
-      //            story, version or PRD state is modified. Every other intent
-      //            falls into the agent branches instead.
+      // CHAT 1.4 — Apply the backend result to the workspace UI.
+      // Trigger: CHAT 1.3 resolves successfully.
+      // Input: ProcessRequirementsResponse and detected intent.
+      // Branches: GENERAL_CHAT → append assistant text only; no-change/
+      //           clarification/agent outcomes → their dedicated UI branches.
+      // Writes: timeline, workflow status, and agent-result state as applicable.
+      // Failure: handled by the surrounding catch/finally path.
       const detectedIntent = data.detected_intent || "GENERAL_CHAT";
 
       if (data.no_changes === true) {
@@ -364,9 +373,9 @@ export function useChat(
 
         // GATHERING 8.1 — Frontend side of the handoff (UI layer): the staged merge is
         //            pushed into `pendingActions`, which renders the ConfirmationPanel
-        //            ("Merge Preview Ready" bubble below). Nothing is written until the
-        //            user confirms (CONFIRMATION flow) — Cancel discards the action,
-        //            which is why the state above is reported as "unconfirmed".
+        //            ("Merge Preview Ready" bubble below). The pending action already
+        //            exists in the database, but no final requirement/story rows are
+        //            written until CONFIRMATION; Cancel discards the staged action.
         if (isPendingMerge && pendingActionId) {
           // Store the pending merge for confirmation
           deps.setPendingActions((prev) => [
@@ -500,8 +509,8 @@ export function useChat(
   // Handle On-Demand Audit Execution
   // AUDIT 5.0 — Frontend entry of the AUDITOR flow (ChatPanel's "Validate
   //             Requirements" button). Layer chain: 5.0 → 5.1 (on-demand agent request)
-  //             → AUDIT 1.0-2.x → 5.2/5.3/5.4 (UI verdict) → answers via AUDIT 3.x or
-  //             the FLOW 10 clarification endpoint.
+  //             → AUDIT 1.x-2.8 → 5.2/5.3/5.4 (UI verdict) → combined answers via
+  //             CLARIFY 1.0–3.8 (the single-question AUDIT 3.x route remains separate).
   //             Guarded by canRunAgentActions so an empty project cannot be audited.
   const handleValidateRequirements = async () => {
     if (!deps.projectId) return;
@@ -552,10 +561,13 @@ export function useChat(
           store.setSyncStatus(`Running Technical Audit… ${stage}`),
       });
 
-      // AUDIT 5.2 — Verdict mapping (api/transforms): audit_result → UI model
-      //            (is_valid, passed/failed checks, clarification questions).
-      //            Audits are also staged as a pending merge (GATHERING 8.1 pattern),
-      //            so nothing is persisted until the user saves.
+      // AUDIT 5.2 — Map the persisted/current audit response into the UI model.
+      // Input: audit_result plus audit_auto_persisted/stale flags; operational
+      //        incompleteness is identified from the AUDIT_* failed-check codes.
+      // Persistence: AUDIT 2.8 already saved a successful current audit and its
+      //              questions; stale or operationally incomplete results are read-only.
+      // Compatibility: the pending-action branch below remains for older responses,
+      //                but the current successful audit path creates no MERGE action.
       const receivedAudit = toAuditResultFromPayload(data.audit_result);
       const pendingActionId = data.pending_action_id;
       const isPendingMerge = data.pending_merge === true;
@@ -664,9 +676,9 @@ export function useChat(
               : "Audit needs clarification.",
         );
       } else {
-        // AUDIT 5.4 — Success branch: a positive verdict bubble (no clarification
-        //            form). The audit is still only STAGED — the user's Save in the
-        //            ConfirmationPanel is what persists the verdict (CONFIRM 3.3).
+        // AUDIT 5.4 — Success branch: render a positive verdict with no clarification
+        //            form. For a current non-operational result, AUDIT 2.8 has already
+        //            persisted the verdict; no ConfirmationPanel Save is required.
         const successContent = `${verdict === "pass_with_warnings" ? "Requirements audit passed with warnings." : "Requirements audit passed."}\n${contextText}\n\n${findingTexts || "All clearly applicable mandatory controls are covered."}`;
         store.setMessages((prev) => [
           ...prev,
@@ -778,6 +790,8 @@ export function useChat(
   //             ARCHITECT 2.x-8.x → 1.5 (store + PRD tab) / 1.6 (abort-error branch).
   //             Guarded by canRunAgentActions so an empty project cannot be compiled.
   const handleGeneratePRD = async () => {
+    // ARCHITECT 1.1 — Client guard: require active requirements or an existing PRD,
+    // respect global action blockers, and leave saved artifacts untouched on rejection.
     if (!deps.projectId) return;
     const hasActiveRequirements =
       (store.structuredRequirements.requirements?.length ?? 0) > 0 ||
@@ -820,11 +834,11 @@ export function useChat(
       const request = {
         project_id: projectId,
         raw_input: "",
-        // ARCHITECT 1.2 — The on-demand trigger: empty raw_input + target_agent
+        // ARCHITECT 1.2 — The on-demand preview trigger: empty raw_input + target_agent
         //            "architect" is exactly why the pipeline bypasses the GENERAL_CHAT
         //            short-circuit (CHAT 2.3.0); on the backend it enters ROUTING 1.2 →
-        //            architect_node. `version_history_summaries` is the real digest
-        //            (1.3 helper), which is what makes the reuse guard (2.2) and the
+        //            architect_node. `version_history_summaries` is the digest from
+        //            ARCHITECT 1.3, used by the template's version-history content.
         //            version-history table in the template meaningful.
         target_agent: "architect",
         client_persists_timeline: true,
@@ -838,6 +852,8 @@ export function useChat(
         current_version: deps.currentVersion,
         version_history_summaries: buildVersionHistorySummaries(),
       };
+      // ARCHITECT 1.4 — Run/poll the cancellable background architect job.
+      // The backend builds a preview and returns a durable ARCHITECT 8.1 action ID.
       const data = await runBackgroundAgentJob<ProcessRequirementsResponse>({
         projectId,
         jobType: "architect",
@@ -901,8 +917,11 @@ export function useChat(
       );
       deps.setActiveTab("prd"); // switch tab automatically to PRD
     } catch (err) {
-      // ARCHITECT 1.6 — Abort branch (Stop pressed): the generation was terminated
-      //            server-side by the CANCELLATION flow, so no document was produced.
+      // ARCHITECT 1.6 — Client failure/recovery branches.
+      // Abort: server-side CANCELLATION stops generation. Rate/context/auth failures
+      // become targeted status messages (an auth-expired background job remains
+      // resumable). Empty-board and unexpected failures produce explicit no-save
+      // messages. Finally always clears local loading/agent state.
       if (isAbortError(err)) {
         store.setMessages((prev) => [
           ...prev,
@@ -1005,14 +1024,10 @@ export function useChat(
   // "saved" data the backend never saw and drove the misleading "(Local
   // Fallback)" messages. All failure paths now surface a truthful error instead.
 
-  // Submit Answer to Clarifications Form
-  // CLARIFY 1.3 — Frontend submit handler for BOTH clarification forms (1.1 / 1.2).
-  //             Chain: 1.3 → 1.5 (api.submitClarifications) → CLARIFY 3.x → the saved
-  //             state back here, where the audit view is refreshed:
-  //               • answers cleared, current agent node set from current_workflow_state
-  //               • auditResult.is_valid + clarification_questions updated
-  //               • full project state re-loaded (1.3 → PROJECT 2.x)
-  //             The empty-answer guard makes the button a no-op until something is typed.
+  // CLARIFY 1.3 — Submit non-empty local answers from CLARIFY 1.1. A ref prevents
+  //               duplicate submissions while the Gatherer runs. Chain: 1.3 → 2.1 →
+  //               3.0. On success, CLARIFY 1.4 reconciles question/audit state and
+  //               CLARIFY 1.5 installs or removes the combined CONFIRM draft.
   const handleSubmitClarifications = async (e: React.FormEvent) => {
     e.preventDefault();
     if (clarificationSubmitInFlightRef.current) return;
@@ -1034,14 +1049,16 @@ export function useChat(
       store.setIsProcessing(true);
       store.setCurrentAgentNode("gatherer_node");
       store.setSyncStatus("Submitting clarifications...");
-      // CLARIFY 1.5 — API boundary: POST /api/clarification/submit (CLARIFY 2.1 /
-      //             3.0) carrying the position-keyed answers (1.4). A failure leaves
-      //             the typed answers in place so the user can retry.
+      // CLARIFY 2.1 — API boundary: stable question-id keys are preferred; q-<index>
+      //               remains a legacy fallback. Failure keeps typed answers for retry.
       const res = await api.submitClarifications(
         deps.projectId ?? "",
         submittedAnswers,
       );
       if (res) {
+        // CLARIFY 1.4 — Reconcile the saved answer evidence returned by 3.8: retain
+        //               empty inputs only for unresolved questions, update the newest
+        //               pending audit card, refresh audit state, then reload the project.
         const refreshedQuestions = res.clarification_questions || [];
         const unresolvedQuestions = refreshedQuestions.filter(
           (question) => !question.is_resolved,
@@ -1089,6 +1106,10 @@ export function useChat(
           }));
         }
         if (deps.projectId) await deps.loadProjectState(deps.projectId);
+        // CLARIFY 1.5 — Mirror the server's one combined clarification-review draft.
+        //               Material requirement changes add a lightweight placeholder
+        //               until the pending-action refresh supplies the full proposal;
+        //               no-change/failure results remove any superseded preview.
         if (res.pending_action_id) {
           deps.setPendingActions((prev) => {
             const unrelated = prev.filter(
@@ -1163,8 +1184,8 @@ export function useChat(
     }
   };
 
-  // Stable persisted question IDs are used when available. The q-<index>
-  // fallback preserves compatibility for newly staged, not-yet-persisted audits.
+  // CLARIFY 1.2 — Local answer-state update. Stable persisted question IDs are used
+  //               when available; q-<index> preserves legacy/id-less compatibility.
   const handleUpdateAnswerValue = (key: string, value: string) => {
     store.setClarificationAnswers((prev) => ({
       ...prev,

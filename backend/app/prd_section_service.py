@@ -412,7 +412,7 @@ def merge_edited_section(
     return "\n".join(out)
 
 
-# ARCHITECT 2.2.2 — Alternative reuse-guard signal (2.2): recognises a document that is
+# ARCHITECT 2.6.2 — Alternative 2.6 reuse signal: recognizes a document that is
 #               the stitched output of the canonical PRD parts (the shape the frontend's
 #               splitter/stitcher produces), so a document that does not carry the
 #               template marker but IS sectioned is still reused rather than regenerated.
@@ -565,7 +565,8 @@ async def ensure_sections_seeded(
     return await PRDSectionRepository.get_by_project(project_id, session)
 
 
-# ARCHITECT 5.1 — Part-level merge (called from ARCHITECT 5.0). Ownership contract:
+# ARCHITECT 5.1 — Direct-write part merge called from ARCHITECT 5.0 when preview mode
+#             is disabled. Ownership contract:
 #             missing sections are created; existing AI-generatable UNLOCKED sections are
 #             updated; human-owned (ai_generatable=False) and locked sections are NEVER
 #             touched; every real change appends a prd_section_versions row (append-only).

@@ -22,6 +22,14 @@ logger = logging.getLogger("app.agents")
 WorkflowNode = Callable[[AgentState], Any]
 
 
+# ROUTING 1.3 — Construct and compile the single-pass LangGraph topology.
+# Trigger: app.agents module initialization.
+# Input: router, matcher, Gatherer, Auditor, Architect, and delete node callables.
+# Calls: ROUTING 1.1 START edge, ROUTING 4.1 router edge, ROUTING 4.2 matcher edge.
+# Branches: each conditional edge maps only to declared nodes or END.
+# Writes: in-memory compiled graph only; no project/database state.
+# Failure: graph configuration errors fail application import/startup.
+# Next: compiled prd_workflow invoked by the requirements pipeline.
 def build_prd_workflow(
     *,
     router_node: WorkflowNode,
@@ -41,6 +49,8 @@ def build_prd_workflow(
     workflow.add_node("architect_node", architect_node)
     workflow.add_node("delete_requirement_node", delete_requirement_node)
 
+    # ROUTING 1.1 — Register the graph's conditional START edge.
+    # Calls: ROUTING 1.2 route_on_demand for every workflow invocation.
     workflow.add_conditional_edges(
         START,
         route_on_demand,

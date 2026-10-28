@@ -46,8 +46,11 @@ logger = logging.getLogger("app.auth")
 #   AUTH 6.x  REGISTER          useAuth 6.1 → api 6.2 → route 6.3.1…6.3.6 → 6.4
 #   AUTH 7.x  AUTHORIZATION     get_current_user 7.1 (verify_token 7.1.1, repo
 #                                7.1.2, projection 7.1.3) · flexible 7.2 (+7.2.1)
-#                                · project ownership 7.4 →
+#                                · authenticated identity contract 7.3 ·
+#                                project ownership 7.4 →
 #                                require_project_owner 7.5/7.6
+#   AUTH 8.x  ACCOUNT DELETE    modal 8.1 → hook 8.2 → API 8.3 → route 8.4 →
+#                                repository 8.5 → commit/response 8.6 → clear 8.7
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -215,15 +218,15 @@ async def change_password(
     logger.info("Password changed for user: %s", user.email)
 
 
-# AUTH 1.7.1 — SERVICE layer of the LOGIN flow: the single credential-verification
-#              path behind POST /api/auth/login (route AUTH 1.7) and the only
-#              place that decides 200-vs-401 for a login attempt.
-#                AUTH 1.7.1.1 — repository READ (email → users row, AUTH 7.1.2
-#                               shares the same helper module)
-#                AUTH 1.7.1.2 — provisioning branch
-#                AUTH 1.7.1.3 — bcrypt branch
-#              All three failure branches return the identical 401 "Invalid
-#              credentials" so the endpoint cannot be used to enumerate accounts.
+# AUTH 1.7.1 — Verify login credentials against the authoritative user record.
+# Trigger: AUTH 1.7 login route.
+# Input: email, plaintext password, and request-scoped database session.
+# Calls: AUTH 1.7.1.1 email lookup → AUTH 1.7.1.2 provisioning check →
+#        AUTH 1.7.1.3 bcrypt verification.
+# Branches: unknown account, missing hash, or wrong password → identical 401.
+# Writes: NONE.
+# Failure: fails closed without revealing whether an email exists.
+# Next: AUTH 1.7.3 token issuance.
 async def authenticate_user(
     email: str,
     password: str,
@@ -301,6 +304,13 @@ class TokenData(BaseModel):
     exp: Optional[datetime] = None
 
 
+# AUTH 7.3 — Define the safe identity contract shared by protected routes.
+# Trigger: AUTH 7.1 or AUTH 7.2 resolves a valid token and current users row.
+# Input: public identity fields projected by AUTH 7.1.3.
+# Calls: consumed directly by protected routes and by AUTH 7.4 ownership checks.
+# Writes: NONE; password hashes and token internals are intentionally excluded.
+# Failure: schema validation fails closed before an invalid identity reaches a route.
+# Next: route handler or AUTH 7.4 for project-scoped operations.
 class AuthenticatedUser(BaseModel):
     """Represents an authenticated user derived from a JWT token."""
     model_config = ConfigDict(from_attributes=True)
@@ -310,11 +320,12 @@ class AuthenticatedUser(BaseModel):
     full_name: str
     role: str
 
-# AUTH 1.7.3 — JWT creation for the LOGIN flow (called by route AUTH 1.7 only).
-#              Claims: sub (user id) / email / role + exp + iat; signed HS256 with
-#              JWT_SECRET_KEY (resolver above) and TTL ACCESS_TOKEN_EXPIRE_MINUTES.
-#              No server-side session row and no jti, so the token cannot be
-#              revoked — the reason AUTH 4.x logout is client-side only.
+# AUTH 1.7.3 — Create the signed access token returned by login.
+# Trigger: successful AUTH 1.7.1 authentication.
+# Input: user id, email, role, and optional expiry override.
+# Writes: NONE; the JWT contains sub/email/role/exp/iat and has no session row.
+# Failure: signing errors propagate to the login route.
+# Next: AUTH 1.7.4 LoginResponse.
 def create_access_token(
     user_id: str,
     email: str,
@@ -344,11 +355,12 @@ def create_access_token(
 # ---------------------------------------------------------------------------
 
 
-# AUTH 7.1.1 — JWT verification gate for every authenticated request: decodes and
-#              validates signature + expiry (401 "Could not validate credentials")
-#              and requires sub/email/role (401 "Invalid token payload"). Shared by
-#              AUTH 7.1, 7.2 and 7.3. Claims are never trusted for identity —
-#              AUTH 7.1.2 re-reads the users table afterwards.
+# AUTH 7.1.1 — Validate and decode a JWT before database identity resolution.
+# Trigger: AUTH 7.1 or AUTH 7.2 authentication dependency.
+# Input: raw JWT string.
+# Branches: valid required claims → TokenData; invalid signature/expiry/claims → 401.
+# Writes: NONE.
+# Next: AUTH 7.1.2 users-table lookup.
 def verify_token(token: str) -> TokenData:
     """Verify and decode a JWT token, returning the TokenData payload."""
     try:
@@ -394,12 +406,14 @@ def to_authenticated_user(user: UserModel) -> AuthenticatedUser:
     )
 
 
-# AUTH 7.1 — AUTHORIZATION dependency for every Bearer-protected route. This is
-#            where an authenticated request "begins" from the backend's point of
-#            view: AUTH 2.3 (auth/me) and every project route depend on it. Chain:
-#              7.1.1 verify_token → 7.1.2 repository READ (users) → 7.1.3 projection
-#            Note: no is_active/disabled-account check exists yet (the users table
-#            has no such column), so revocation currently means deleting the row.
+# AUTH 7.1 — Authenticate a Bearer-protected backend request.
+# Trigger: FastAPI dependency resolution for an authenticated route.
+# Input: Authorization header and request-scoped database session.
+# Calls: AUTH 7.1.1 verify_token → AUTH 7.1.2 UserRepository.get_by_id →
+#        AUTH 7.1.3 public identity projection.
+# Branches: missing/invalid token or missing user → 401; valid user → route handler.
+# Writes: NONE.
+# Failure: fails closed; JWT claims alone are never accepted as current identity.
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
     session: AsyncSession = Depends(get_db),
@@ -469,12 +483,13 @@ class UserResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-# AUTH 7.4 — PROJECT-OWNERSHIP gate. Called directly by routes whose project id
-#            arrives in the request BODY (a FastAPI dependency cannot read it) and
-#            wrapped by AUTH 7.5 / 7.6 for path- or query-scoped routes.
-#              AUTH 7.4.1 — malformed id → 404 (never 400, so ids are not probed)
-#              AUTH 7.4.2 — repository READ: SELECT projects WHERE id=…
-#              AUTH 7.4.3 — missing row → 404; different owner → 403
+# AUTH 7.4 — Enforce ownership of a project-scoped operation.
+# Trigger: direct service call for body IDs or AUTH 7.5/AUTH 7.6 dependencies.
+# Input: project id, authenticated user, and database session.
+# Calls: AUTH 7.4.2 projects-table lookup.
+# Branches: malformed/missing project → 404; different owner → 403; owner → continue.
+# Writes: NONE.
+# Failure: fails closed before the protected route performs domain work.
 async def verify_project_access(
     project_id: str,
     current_user: AuthenticatedUser,

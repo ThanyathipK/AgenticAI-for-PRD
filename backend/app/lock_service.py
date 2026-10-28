@@ -1,6 +1,10 @@
-"""
-Generic Artifact Locking Service
-Provides lock/unlock functionality for all project artifacts.
+"""LOCK 5.0 — Generic locking for requirements and PRD sections only.
+
+The service verifies artifact/project association, mutates lock columns, and
+best-effort appends an artifact event. Lock ownership is the supplied string,
+not an authenticated user id. Reads are not row-locked, so concurrent lock or
+unlock requests can race; database transaction commit is owned by the route
+dependency.
 """
 import logging
 from datetime import datetime, timezone
@@ -30,7 +34,8 @@ class LockService:
     Lock and unlock requirements and PRD sections.
     """
 
-    # Mapping of artifact types to their models and lock column names
+    # LOCK 5.0.1 — The complete supported-type map. `project` and `document` are
+    #              unsupported even though some older comments/callers name them.
     ARTIFACT_CONFIG: ClassVar[Dict[str, Dict[str, Any]]] = {
         "requirement": {
             "model": RequirementModel,
@@ -105,7 +110,15 @@ class LockService:
         locked_by: str = "user",
         project_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
+        """LOCK 5.1 — Apply a generic artifact lock.
+
+        Trigger: LOCK 4.1 or LOCK 4.6.
+        Input: supported type, artifact UUID, project id and supplied owner label.
+        Calls: ownership resolution and ArtifactEventLogRepository.
+        Branches: same owner -> no-op; different owner -> ArtifactLockError.
+        Writes: lock columns plus best-effort event log; caller owns commit.
+        Failure: invalid/absent/wrong-project artifact fails closed.
+
         Lock an artifact to prevent modifications.
         
         Args:
@@ -213,7 +226,14 @@ class LockService:
         unlocked_by: str = "user",
         project_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
+        """LOCK 5.2 — Clear a generic artifact lock.
+
+        Trigger: LOCK 4.2 or LOCK 4.7.
+        Branches: unlocked -> no-op; different nonnull owner -> PermissionError;
+            null owner -> clearable by any supplied label.
+        Writes: clears lock columns plus best-effort event log; caller owns commit.
+        Failure: invalid/absent/wrong-project artifact fails closed.
+
         Unlock an artifact to allow modifications.
         
         Args:
@@ -312,7 +332,8 @@ class LockService:
 
     @staticmethod
     async def get_lock_status(artifact_type: str, artifact_id: str, session: AsyncSession, project_id: Optional[str] = None) -> Dict[str, Any]:
-        """
+        """LOCK 5.3 — Read serialized lock metadata after project association check.
+
         Get the lock status of an artifact.
         
         Args:

@@ -108,7 +108,8 @@ async def list_prd_sections(
 
 # PRD-SECTION 2.2 — WRITE: edit ONE part (PRD-SECTION 1.3). The most guarded write in
 #             the app, in this order:
-#               2.2.0 locks: project (2.0.1) → document (2.0.2) → (section, in 4.4)
+#               2.2.0 lock: section only, enforced in repository 4.4. Generic
+#                     LOCK supports no project/document artifact types.
 #               2.2.1 review_status validation → 422 (PRD-SECTION 3.1.1)
 #               2.2.2 section lookup → 404
 #               2.2.3 reconcile with the latest document (so the merge base is the
@@ -137,8 +138,8 @@ async def update_prd_section(
     """
     Edit ONE part of the PRD.
 
-    Enforces project > document > section locks, appends an immutable version
-    row for the part, then re-stitches and persists the full document.
+    Enforces the section lock, appends an immutable version row for the part,
+    then re-stitches and persists the full document.
     """
     await _validate_project(project_id)
     await _ensure_sections_for_write(project_id, session)
@@ -379,7 +380,7 @@ async def revert_prd_section(
     }
 
 
-# PRD-SECTION 2.4 — Per-part LOCK (PRD-SECTION 1.4): blocks 2.2/2.3 AND excludes the part
+# LOCK 4.6 / PRD-SECTION 2.4 — Per-part LOCK (PRD-SECTION 1.4): blocks 2.2/2.3 AND excludes the part
 #             from AI regeneration (ARCHITECT 5.1's sync). Auth: AUTH 7.5; branches: 400
 #             UUID → 404 section → 409 already locked → SSE "artifact_locked".
 @router.post("/api/project/{project_id}/prd/sections/{section_key}/lock", response_model=Dict, status_code=status.HTTP_200_OK)
@@ -418,7 +419,7 @@ async def lock_prd_section(
     return {"status": "locked", "artifact": lock_info}
 
 
-# PRD-SECTION 2.5 — Per-part UNLOCK: re-enables editing and AI regeneration. Branches:
+# LOCK 4.7 / PRD-SECTION 2.5 — Per-part UNLOCK: re-enables editing and AI regeneration. Branches:
 #             403 when the caller may not release the lock (PermissionError from the lock
 #             service), 404 section → SSE "artifact_unlocked".
 @router.post("/api/project/{project_id}/prd/sections/{section_key}/unlock", response_model=Dict, status_code=status.HTTP_200_OK)

@@ -346,7 +346,7 @@ def serialize_conversation_message(m: ConversationMessageModel) -> Dict[str, Any
     }
 
 
-# DOC-UPLOAD 3.7 — Serialization shared by every document read/write (4.1/4.2/4.3): the
+# DOC-UPLOAD 4.6 — Serialization shared by every document read/write (4.1/4.2/4.3): the
 #             markdown body is included ONLY when include_markdown=True, which is the
 #             difference between the list endpoint (2.2) and the preview endpoint (2.3).
 def serialize_document(doc: DocumentModel, *, include_markdown: bool = False) -> Dict[str, Any]:

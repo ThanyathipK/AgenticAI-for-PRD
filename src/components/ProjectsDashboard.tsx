@@ -8,8 +8,8 @@
 //
 //   - KPI cards   -> Total projects / Pending in review / Revised or rework /
 //                    Approved, all derived from the user-selected project status
-//   - Tab pills   -> All / In review with HPO / In review with PO / Draft /
-//                    Approved / Revised / ★ Flagged (dashboard-only marker —
+//   - Tab pills   -> All / Draft / HPO Review / PO Review / Approved /
+//                    Revised / ★ Flagged (dashboard-only marker —
 //                    independent of the sidebar pin)
 //   - Table rows  -> star = flag toggle (separate is_flagged field), user-editable
 //                    workflow status badge (PUT /api/projects/{id}/status),
@@ -45,8 +45,8 @@ import { formatRelativeUpdated } from '../utils/time';
 
 const STATUS_OPTIONS: ReadonlyArray<{ value: ProjectStatus; label: string }> = [
   { value: 'draft', label: 'Draft' },
-  { value: 'in_review_hpo', label: 'In review: HPO' },
-  { value: 'in_review_po', label: 'In review: PO' },
+  { value: 'in_review_hpo', label: 'HPO Review' },
+  { value: 'in_review_po', label: 'PO Review' },
   { value: 'approved', label: 'Approved' },
   { value: 'revised', label: 'Revised' },
 ];
@@ -85,9 +85,9 @@ type TableTab = 'all' | ProjectStatus | 'flagged';
 
 const TABLE_TABS: ReadonlyArray<{ key: TableTab; label: string }> = [
   { key: 'all', label: 'All' },
-  { key: 'in_review_hpo', label: 'In review with HPO' },
-  { key: 'in_review_po', label: 'In review with PO' },
   { key: 'draft', label: 'Draft' },
+  { key: 'in_review_hpo', label: 'HPO Review' },
+  { key: 'in_review_po', label: 'PO Review' },
   { key: 'approved', label: 'Approved' },
   { key: 'revised', label: 'Revised' },
   { key: 'flagged', label: '★ Flagged' },
@@ -458,7 +458,7 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
           </div>
 
           {/* PROJECTS TABLE CONTAINER */}
-          <div className="bg-surface border border-outline rounded-[12px] overflow-hidden">
+          <div className="bg-surface border border-outline rounded-[12px] overflow-visible">
             {/* HEADER TABS */}
             <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-outline">
               <span className="text-[15px] font-bold text-on-surface mr-2">Projects</span>
@@ -480,10 +480,11 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
               </div>
             </div>
 
-            {/* TABLE CONTENT — md and up: the table scrolls horizontally inside
-                this container only, never the page. Below md the same rows are
-                rendered as stacked cards (see below) so no control is clipped. */}
-            <div className="hidden md:block overflow-x-auto">
+            {/* TABLE CONTENT — md and up. The wrapper deliberately allows
+                overflow so a status menu remains selectable even when only one
+                or two rows leave too little table height for the popover. Below
+                md the same rows render as stacked cards. */}
+            <div className="hidden md:block overflow-visible">
               <table className="w-full border-collapse text-left">
                 <thead>
                   <tr>
@@ -531,7 +532,7 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
                               {p.description}
                             </span>
                           )}
-                          <ApprovalTime value={p.last_approved_at} />
+                          {status === 'approved' && <ApprovalTime value={p.last_approved_at} />}
                         </td>
                         <td className="px-5 py-4 border-b border-outline">
                           <div className="relative" data-status-menu>
@@ -625,7 +626,7 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
                         <div className="min-w-0">
                           <span className="font-bold text-[14px] text-on-surface block break-words">{p.name}</span>
                           {p.description && <span className="mt-0.5 block text-[12px] text-on-surface-variant break-words">{p.description}</span>}
-                          <ApprovalTime value={p.last_approved_at} />
+                          {status === 'approved' && <ApprovalTime value={p.last_approved_at} />}
                           <span className="text-[12px] text-on-surface-variant">
                             {formatRelativeUpdated(p.updated_at)}
                           </span>

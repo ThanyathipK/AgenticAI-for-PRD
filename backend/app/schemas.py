@@ -115,11 +115,16 @@ class MermaidDiagramResult(BaseModel):
 # 4. REQUIREMENT INTENT DETECTION SCHEMA
 # ==========================================
 
-# INTENT 5.1 — Response contract of the detector (INTENT 2.x) and of the
-#             /api/intent-detector endpoint (INTENT 4.1). `intent` is described by
-#             a free-text enum (not a Literal), so the runtime vocabulary lives in
-#             the VALID_INTENTS list (INTENT 2.0.1) and in prompts/intent.md — the
-#             three copies are not structurally linked.
+# INTENT 5.0 — Schema boundary for intent classification.
+# Trigger: model-output parsing and FastAPI request/response validation.
+# Writes: NONE; schemas validate data without performing workflow operations.
+
+# INTENT 5.1 — Define the shared intent-classification response contract.
+# Trigger: INTENT 2.6 structured output and INTENT 4.1 FastAPI response validation.
+# Input: intent, confidence, reason, and legacy reasoning alias.
+# Writes: NONE.
+# Contract note: intent remains a string; INTENT 2.0.1 and prompts/intent.md carry
+#                duplicate vocabulary definitions that are not structurally linked.
 class RequirementIntentDetectionResult(BaseModel):
     intent: str = Field(
         ..., 
@@ -147,11 +152,11 @@ class WorkflowRoutingResult(BaseModel):
 # 6. REQUIREMENT MATCHER SCHEMA
 # ==========================================
 
-# MATCHING 5.2 — Response contract of the matcher (MATCHING 2.x) and of
-#             /api/requirement-matcher (MATCHING 5.1). `action` and `status` are
-#             enforced at runtime by MATCHING 2.3.2 (presence) and normalized to
-#             upper-case in 2.4; the allowed values live in prompts/matcher.md, not
-#             in a Literal here.
+# MATCHING 5.2 — Shared semantic-service and direct-API response contract.
+# Producers: MATCHING 2.0 and MATCHING 5.1.
+# Consumers: MATCHING 1.x, MATCHING 3.x, and direct API callers.
+# Validation: MATCHING 2.3.2 requires action/status and MATCHING 2.4 normalizes
+#             them; allowed semantic values are instructed by prompts/matcher.md.
 class RequirementMatcherResult(BaseModel):
     matched_requirement_id: Optional[str] = Field(None, description="The matched requirement/ticket code (e.g. US-001) if applicable, or null.")
     confidence: float = Field(default=1.0, description="Confidence score from 0.0 to 1.0")
@@ -183,11 +188,14 @@ class ProcessRequirementsRequest(BaseModel):
     )
 
 
+# Generic lock/unlock contract. `locked_by` is an arbitrary client label;
+# authentication/project ownership is enforced separately by LOCK 4.x.
 class ArtifactLockRequest(BaseModel):
     """Request body for locking/unlocking any artifact."""
     locked_by: Optional[str] = Field(default="user", description="Identifier of who is locking/unlocking the artifact.")
 
 
+# Equivalent input for legacy requirement-specific LOCK 4.4/4.5.
 class RequirementLockRequest(BaseModel):
     """Request body for locking/unlocking a requirement."""
     locked_by: Optional[str] = Field(default="user", description="Identifier of who is locking/unlocking the requirement.")
@@ -483,6 +491,8 @@ class RequirementLockResponse(BaseModel):
     """Payload returned when locking/unlocking a requirement."""
     status: str = Field(..., description="'locked' or 'unlocked'.")
     requirement: RequirementDetail = Field(..., description="The affected requirement record.")
+# VERSION 5.1 — Persisted section summary emitted by 3.1/3.6. Its lock label
+#               describes the lock set used when the snapshot was calculated.
 class PRDVersionChangedSection(BaseModel):
     """One per-section change record attached to a PRD version snapshot."""
     model_config = ConfigDict(extra="allow")
@@ -493,6 +503,8 @@ class PRDVersionChangedSection(BaseModel):
     changed: bool = Field(False, description="True when the snapshot actually changed (or protected) this part.")
 
 
+# VERSION 5.2 — Ledger-row contract for list/latest/by-number. Route 2.1
+#               deliberately returns generated_prd as an empty string.
 class PRDVersionResponse(BaseModel):
     """Immutable PRD version record."""
     model_config = ConfigDict(extra="allow")
@@ -513,6 +525,8 @@ class PRDVersionResponse(BaseModel):
     created_at: str = Field("", description="ISO8601 creation timestamp.")
 
 
+# VERSION 5.3 — View-time section diff from 3.8. Unlike 5.1, change_kind is
+#               recomputed with current locks whenever a diff is requested.
 class PrdVersionDiffSection(BaseModel):
     """Line-level diff of ONE section between two PRD versions."""
     model_config = ConfigDict(extra="allow")
@@ -529,6 +543,7 @@ class PrdVersionDiffSection(BaseModel):
     )
 
 
+# VERSION 5.4 — Diff envelope; base_version is synthetic 0 for the first row.
 class PrdVersionDiffResponse(BaseModel):
     """Diff between two PRD versions, section by section."""
     model_config = ConfigDict(extra="allow")
@@ -548,12 +563,14 @@ class PRDExportResponse(BaseModel):
     mermaid_diagram: str = Field(..., description="Generated Mermaid diagram source.")
 
 
+# Generic mutation envelope; nested artifact is LOCK 5.3 metadata.
 class ArtifactLockResponse(BaseModel):
     """Payload returned when locking/unlocking/reading a generic artifact."""
     status: str = Field(..., description="Operation status: 'locked', 'unlocked' or 'lock_status'.")
     artifact: Dict[str, Any] = Field(..., description="Lock metadata for the artifact.")
 
 
+# Generic status projection returned directly by LOCK 4.3.
 class LockStatusResponse(BaseModel):
     """Lock metadata returned by the artifact lock-status endpoint."""
     artifact_type: str = Field(..., description="Type of artifact queried.")
@@ -863,14 +880,15 @@ class ProcessRequirementsResponse(BaseModel):
 # The full converted markdown is ALWAYS persisted; token limits apply solely to
 # the explicit, user-confirmed extraction path (see routes/documents.py).
 
+# DOC-UPLOAD 5.0 — Public response contracts for document routes 2.1–2.5.
 # DOC-UPLOAD 5.1 — Upload/list response shape (2.1, 2.2). extra="allow" is what lets the
 #             route append the 3.3 needs-OCR `message` onto a `failed` record without a
 #             second schema.
 class UploadedDocumentResponse(BaseModel):
     """A single uploaded-document record, as serialized by ``serialize_document``.
 
-    ``content_markdown`` is omitted from list/detail responses unless
-    ``include_markdown=True`` (the dedicated get-markdown endpoint).
+    ``content_markdown`` is omitted from upload/list responses. The dedicated
+    get-markdown endpoint uses DocumentMarkdownResponse and includes the full body.
     """
     model_config = ConfigDict(extra="allow")
 
@@ -905,6 +923,7 @@ class DocumentMarkdownResponse(BaseModel):
 
 
 class DocumentProcessResponse(BaseModel):
+    # DOC-UPLOAD 5.3 — Extraction handoff shape for 2.5, including cancellation.
     """Payload returned by ``POST .../documents/{document_id}/process``.
 
     The extraction is DRAFT-ONLY: nothing is written to the requirements,
@@ -922,7 +941,7 @@ class DocumentProcessResponse(BaseModel):
     document_id: str = Field(..., description="Source document UUID string.")
 
 
-# DOC-UPLOAD 5.3 — Delete confirmation shape (2.4). Requirements already extracted and
+# DOC-UPLOAD 5.4 — Delete confirmation shape (2.4). Requirements already extracted and
 #             confirmed from the removed document are NOT affected.
 class DocumentDeleteResponse(BaseModel):
     """Confirmation returned by ``DELETE .../documents/{document_id}``.
@@ -1018,18 +1037,17 @@ class PrdSectionRevertResponse(BaseModel):
     restored_from_version: int = Field(..., description="Version number the content was restored from.")
 
 
+# VERSION 5.5 — Restore response consumed by 1.5. Usually reports a new ledger
+#               row; after caught 3.6 failure it reports source number/blank semver
+#               while still returning the persisted stitched document.
 class PrdVersionRestoreResponse(BaseModel):
-    """Result of restoring the whole PRD document from a ledger version.
-
-    APPEND-ONLY: the restore is recorded as a NEW version; history is never
-    rewritten and locked sections are preserved untouched.
-    """
+    """Result of restoring available target sections into the current PRD."""
     restored_from_version: int = Field(..., description="Ledger version number the document was restored from.")
-    new_version_number: int = Field(..., description="The NEW version number appended for this restore.")
-    semver: str = Field("", description="Semantic version of the NEW appended snapshot.")
-    document_markdown: str = Field(..., description="Full PRD markdown after the restore (locked sections preserved).")
+    new_version_number: int = Field(..., description="Appended version number, or source number if ledger recording failed.")
+    semver: str = Field("", description="Appended snapshot semver; blank if ledger recording failed.")
+    document_markdown: str = Field(..., description="Stitched PRD after target restore; current-only/locked sections remain.")
     restored_sections: int = Field(0, description="Number of unlocked PRD parts whose content was replaced.")
-    preserved_locked_sections: int = Field(0, description="Number of locked PRD parts left untouched by the restore.")
+    preserved_locked_sections: int = Field(0, description="Number of locked target parts encountered and left untouched.")
 
 
 # --------------------------------------------------------------------------

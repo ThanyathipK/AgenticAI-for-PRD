@@ -651,9 +651,9 @@ export interface PrdSectionUpdateResponse {
 //
 // EVERY document change — an AI regeneration or a manual part edit/revert —
 // appends an immutable `prd_versions` snapshot. The version ALWAYS advances,
-// and each snapshot carries `change_type` ('ai' | 'manual'), a change summary
-// and the per-section change records (incl. `locked_preserved` markers proving
-// the lock contract was honoured).
+// and a service-recorded snapshot carries `change_type`, a summary and computed
+// section records. Direct export rows may omit section records; a
+// `locked_preserved` marker records the calculation-time classification only.
 // ----------------------------------------------------------------------------
 
 export interface PrdVersionChangedSection {
@@ -702,11 +702,11 @@ export interface PrdVersionDiffPayload {
 export interface PrdVersionRestorePayload {
   /** Ledger version number the document was restored from. */
   restored_from_version: number;
-  /** The NEW version number appended for this restore (append-only ledger). */
+  /** Appended version, or the source version when ledger recording failed. */
   new_version_number: number;
-  /** Semantic version of the NEW appended snapshot. */
+  /** Appended snapshot SemVer; blank when ledger recording failed. */
   semver: string;
-  /** Full PRD markdown after the restore (locked sections preserved). */
+  /** Stitched PRD; current-only and locked sections remain. */
   document_markdown: string;
   restored_sections: number;
   preserved_locked_sections: number;
@@ -848,6 +848,8 @@ export interface RegenerationResultPayload {
   error_message?: string;
 }
 
+// Durable job wire shape. DISCREPANCY: runtime JOB 4.1 also returns
+// `job_type: "auditor"`, but this union currently omits it (documented, not fixed).
 export interface GenerationJobPayload<T = unknown> {
   id: string;
   project_id: string;

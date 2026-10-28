@@ -62,12 +62,13 @@ def _retry_backoff(attempt: int, retry_after: Optional[str] = None) -> float:
     return LM_INFERENCE_RETRY_BACKOFF_SECONDS * attempt
 
 
-# CHAT 6.1 — LLM transport shared by the chat paths (CHAT 5.4 direct, CHAT 4.1.1
-#            fact extraction) and by the agent flows: OpenAI-compatible
-#            POST {LM_STUDIO_URL}/chat/completions over httpx, non-streaming.
-#            Retries 429/5xx up to LM_INFERENCE_RETRY_ATTEMPTS with a capped
-#            Retry-After/linear back-off, then raises the domain errors mapped to
-#            503 (unreachable) / 502 (gateway) / 422 (unparsable JSON).
+# CHAT 6.1 — Send a non-streaming inference request to LM Studio.
+# Trigger: CHAT 5.4, CHAT 4.1.1, and other agent/model services.
+# Input: prompt messages, optional response schema, and generation-token budget.
+# Calls: OpenAI-compatible /chat/completions endpoint over httpx.
+# Branches: transient 429/5xx/network errors retry with bounded backoff.
+# Writes: NONE outside gateway traffic and logs.
+# Failure: raises typed unavailable, gateway, or output-parsing errors for callers.
 async def call_lm_studio(
     prompt_messages: List[Dict[str, str]],
     response_format_schema: Any = None,
@@ -208,10 +209,13 @@ def reset_lm_studio_health_cache() -> None:
     _health_cache_ts = 0.0
 
 
-# CHAT 6.2 — LM Studio readiness probe (GET /models, TTL-cached so repeated UI
-#            polls cannot hammer the gateway). Never raises: an offline/slow
-#            gateway is reported as online=False + error text. Consumed by the
-#            health route (CHAT 6.2.1) and the app lifespan startup probe.
+# CHAT 6.2 — Probe LM Studio readiness with a bounded TTL cache.
+# Trigger: CHAT 6.2.1 health route or application startup probe.
+# Input: optional HTTP client factory for tests.
+# Calls: OpenAI-compatible GET /models.
+# Writes: in-process readiness cache only.
+# Failure: never raises; returns online=false plus error details.
+# Next: CHAT 6.2.1 response → CHAT 6.3.1/6.3.2 frontend path.
 async def check_lm_studio_health(client_factory: Any = None) -> Dict[str, Any]:
     """
     Probe LM Studio's OpenAI-compatible ``GET /models`` endpoint.

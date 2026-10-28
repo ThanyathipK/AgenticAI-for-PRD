@@ -274,6 +274,8 @@ class RegenerationRunModel(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
 
+# JOB 7.1 — Durable lifecycle row. The partial unique index permits only one
+#           queued/running/cancelling job per project, regardless of job type.
 class GenerationJobModel(Base):
     """Persistent background execution record for long-running AI work."""
     __tablename__ = "generation_jobs"
@@ -398,10 +400,9 @@ class PRDDocumentModel(Base):
 class PRDVersionModel(Base):
     """
     Dedicated immutable PRD version repository.
-    EVERY change to the document — an AI regeneration ("Generate PRD") or a
-    manual part edit / revert — creates a new version record, whether or not
-    the content actually changed (a click always advances the version so the
-    audit trail never collapses). Never overwrites previous versions.
+    Stores immutable snapshots when a producer successfully records a version.
+    Recording identical content is allowed; some producer paths catch recording
+    failures and can therefore persist document state without a matching row.
     """
     __tablename__ = "prd_versions"
     __table_args__ = (
@@ -425,8 +426,8 @@ class PRDVersionModel(Base):
     # JSON list of per-section change records computed at snapshot time:
     #   [{"section_key": "business_overview", "title": "...", "change_kind":
     #    "created"|"updated"|"unchanged"|"locked_preserved", "changed": bool}]
-    # Locked sections appear as "locked_preserved" so the ledger proves the
-    # lock contract was honoured while the version still advanced.
+    # A differing key in the lock set used at calculation time appears as
+    # "locked_preserved"; this field does not retain the lock record itself.
     changed_sections = Column(JSON, nullable=True)
     # Semantic Version (MAJOR.MINOR.PATCH) for this snapshot, derived from the
     # per-section change records:

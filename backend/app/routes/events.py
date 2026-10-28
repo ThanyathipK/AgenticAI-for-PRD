@@ -29,6 +29,13 @@ logger = logging.getLogger("app.routes.events")
 router = APIRouter()
 
 
+# SYNC 4.1 — Stream owner-scoped project notifications.
+# Trigger: SYNC 2.5 EventSource connection/reconnection.
+# Input: project, flexible JWT, optional Last-Event-ID.
+# Calls: SYNC 8.1 subscribe/replay; then dequeue live frames.
+# Writes: NONE durable; holds one process-local subscriber queue.
+# Branches: initial connected frame; data with id; 15s timeout heartbeat.
+# Failure: invalid project → 400; disconnect/error → unsubscribe and END.
 @router.get("/api/project/{project_id}/sse", status_code=status.HTTP_200_OK)
 async def stream_project_events(
     project_id: str,
