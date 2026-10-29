@@ -194,16 +194,17 @@ async def update_prd_section(
         # PRD-SECTION 5.2 — Repository write (7.4): append the previous content as a
         #                 prd_section_versions row, then materialize the new content.
         #                 ArtifactLockError surfaces here as 409.
-        # A manual save makes the part HUMAN-OWNED (content_source='human',
-        # ai_generatable=False) so the next "Generate PRD" PRESERVES it — the
-        # Architect only regenerates ai_generatable parts. Passing
-        # ai_generatable=True hands the part back to the AI.
+        # A manual save records human authorship but does NOT silently remove
+        # the part from AI regeneration. Locking is the protection mechanism;
+        # an unlocked AI-managed part may be replaced by a later generation.
+        # Non-AI template parts keep their existing ai_generatable=False value
+        # because an omitted override is passed through as None.
         updated = await PRDSectionRepository.update_content(
             section["id"], project_id, edited_content, session,
             changed_by=actor_name,
             change_summary=payload.change_summary,
             review_status=payload.review_status,
-            content_source="ai" if payload.ai_generatable else "human",
+            content_source="ai" if payload.ai_generatable is True else "human",
             ai_generatable=payload.ai_generatable,
         )
     except Exception as lock_err:

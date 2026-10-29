@@ -421,6 +421,9 @@ export interface RequirementStatePayload {
   diagram_generated_at?: string | null;
   current_workflow_state?: string | null;
   version_number?: number;
+  requirements_revision?: number;
+  prd_source_requirements_revision?: number | null;
+  prd_is_stale?: boolean;
   updated_at?: string | null;
   conversation_history?: ConversationMessagePayload[];
   pending_action_id?: string | null;

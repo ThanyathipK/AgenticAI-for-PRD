@@ -315,6 +315,26 @@ def test_generated_multiline_fields_use_visible_table_cell_breaks():
     assert r"1. Customer submits a request\newline 2. Officer reviews it" in body
 
 
+def test_original_template_combined_scope_cell_survives_export_rebuild():
+    saved = """### 2. Product Scope & Functional Requirements
+| Scope<br>Definition (In<br>vs. Out) | Scope In<br>1. Included transfer<br>2. Included status<br>Scope out<br>1. Legacy branch flow |  |  |
+| --- | --- | --- | --- |
+"""
+
+    fields = extract_manual_export_fields(saved)
+
+    assert fields["scope_present"] is True
+    assert fields["scope_in"] == ["Included transfer", "Included status"]
+    assert fields["scope_out"] == ["Legacy branch flow"]
+
+    body = fill_template_body(
+        data={"scope_in": fields["scope_in"], "scope_out": fields["scope_out"]},
+    )
+    assert "Included transfer" in body
+    assert "Included status" in body
+    assert "Legacy branch flow" in body
+
+
 def test_reimported_launch_cell_is_split_and_deduplicated():
     saved = """### 3. Technical & Operational Considerations
 | Launch & Rollout Plan | Release plan:1. Release plan:1. Dependencies:1. KSA availability<br>2. KSA availability<br>3. CDA availability |
@@ -396,6 +416,129 @@ def test_document_load_ignores_template_nfr_example_but_keeps_real_nfr_details()
         extract_manual_export_fields(detailed)["narrative"]["non_functional"]
         == "API responses must have p95 latency below 500 ms"
     )
+
+
+def test_expected_tps_customer_volume_template_label_survives_export():
+    saved = """### 3. Technical & Operational Considerations
+| Expected<br>TPS/Customer<br>volume | 1. 2,500 transactions per second<br>2. 80,000 customers |
+| --- | --- |
+"""
+
+    fields = extract_manual_export_fields(saved)
+
+    assert fields["narrative"]["tps_volume"] == (
+        "2,500 transactions per second\n80,000 customers"
+    )
+    body = fill_template_body(data={}, narrative=fields["narrative"])
+    assert "2,500 transactions per second" in body
+    assert "80,000 customers" in body
+
+
+def test_every_manual_template_field_round_trips_to_export():
+    saved = r"""PRODUCT REQUIREMENT
+## Nimble by Krungsri
+PMO No: PMO-ALL-01
+PMO Name: Manual Export Project
+Author: Field Owner
+
+### Stakeholders
+|Role|Name|
+|---|---|
+|Product Owner|Owner A|
+|Technical Product Owner|Owner B|
+|Solution Architecture|Architect C|
+|System Analyst|Analyst D|
+|Engineering Manager|Manager E|
+|Project Manager|Manager F|
+|Quality Assurance Lead|QA G|
+|Performance QA Lead|Perf H|
+
+### Reviews
+|Role|Name|Signature|Date|
+|---|---|---|---|
+|Product Owner|Reviewer One|Approved PO|2026-10-28|
+|Head of Product<br>Management|Reviewer Two|Approved HPO|2026-10-29|
+
+### 1. Business & Strategic Overview
+|Introduction &<br>Executive Summary|Summary with A \| B routing|
+|---|---|
+|Problem Statement|1. Problem alpha<br>2. Problem beta|
+|Business Objectives|1. Objective alpha|
+|Expected Benefit|1. Benefit alpha|
+|Success Metrics|1. Metric alpha|
+|Target Audience &<br>user Personas|1. Persona alpha|
+
+### 2. Product Scope & Functional Requirements
+|User Story Mapping & Functional Requirements|Epic Name: Epic Alpha|||
+|---|---|---|---|
+||User Story (System Focus)|Functional Requirement (FR)|Acceptance Criteria|
+||As a Operator<br><br>I want to submit transfer<br><br>So that settlement begins|FR 1.1: US-001: Submit transfer|AC 1.1: Transfer is accepted<br>AC 1.2: Audit is recorded|
+|User Flow & Wireframes|1. Open form<br>2. Submit form|||
+|Scope Definition (In vs. Out)|Scope In<br>1. Included alpha<br>Scope out<br>1. Excluded beta|||
+
+### 3. Technical & Operational Considerations
+|Non-Functional<br>Requirements|1. Latency below 500 ms|
+|---|---|
+|Expected<br>TPS/Customer<br>volume|1. 2,500 TPS|
+|Growth<br>prediction<br>Y0Y%|1. 25 percent|
+|Launch &<br>Rollout Plan|Release plan: Pilot alpha<br>Dependencies: Dependency beta<br>Go-to-market: Market gamma|
+
+### 4. Appendix
+|Open<br>Questions &<br>Risks|1. Risk alpha||
+|---|---|---|
+|Assumptions|1. Assumption alpha||
+|Glossary|||
+||Term|Definition|
+||Settlement|Settlement definition|
+|Related<br>Documents|1. API specification||
+"""
+
+    intake = extract_intake_fields(saved)
+    manual = extract_manual_export_fields(saved)
+    body = fill_template_body(
+        project_id="project-all",
+        project_name=intake["pmo_name"],
+        pmo_no=intake["pmo_no"],
+        author=intake["author"],
+        stakeholders=intake["stakeholders"],
+        business_topics=intake["business_topics"],
+        reviews=manual["reviews"],
+        data={
+            "epic_name": manual["epic_name"],
+            "user_stories": manual["functional_rows"],
+            "scope_in": manual["scope_in"],
+            "scope_out": manual["scope_out"],
+        },
+        narrative=manual["narrative"],
+    )
+
+    expected_fragments = (
+        "PMO-ALL-01", "Manual Export Project", "Field Owner",
+        "Owner A", "Owner B", "Architect C", "Analyst D", "Manager E",
+        "Manager F", "QA G", "Perf H", "Reviewer One", "Approved PO",
+        "Summary with A", "B routing", "Problem alpha", "Problem beta",
+        "Objective alpha", "Benefit alpha", "Metric alpha", "Persona alpha",
+        "Epic Alpha", "Operator", "submit transfer", "settlement begins",
+        "Transfer is accepted", "Audit is recorded", "Open form", "Submit form",
+        "Included alpha", "Excluded beta", "Latency below 500 ms", "2,500 TPS",
+        "25 percent", "Pilot alpha", "Dependency beta", "Market gamma",
+        "Risk alpha", "Assumption alpha", "Settlement definition", "API specification",
+    )
+    for fragment in expected_fragments:
+        assert fragment in body, fragment
+
+    preview = prd_to_markdown(body)
+    preview_intake = extract_intake_fields(preview)
+    preview_manual = extract_manual_export_fields(preview)
+    assert preview_intake["business_topics"]["Introduction & Executive Summary"] == (
+        "Summary with A | B routing"
+    )
+    assert preview_manual["narrative"]["tps_volume"] == "2,500 TPS"
+    assert preview_manual["narrative"]["growth"] == "25 percent"
+    assert preview_manual["narrative"]["related_documents"] == "API specification"
+    assert preview_manual["narrative"]["glossary"] == [
+        ("Settlement", "Settlement definition")
+    ]
 
 
 def test_preview_and_download_strip_only_raw_template_defaults():

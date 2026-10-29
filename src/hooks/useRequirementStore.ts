@@ -127,6 +127,7 @@ export interface RequirementStore {
   editBuffer: string;
   mermaidDiagram: string;
   diagramGeneratedAt: string | null;
+  prdIsStale: boolean;
   versionHistory: VersionHistory[];
   currentVersion: number;
   lockedArtifacts: Record<string, ArtifactLockState>;
@@ -148,6 +149,7 @@ export interface RequirementStore {
   setEditBuffer: Dispatch<SetStateAction<string>>;
   setMermaidDiagram: Dispatch<SetStateAction<string>>;
   setDiagramGeneratedAt: Dispatch<SetStateAction<string | null>>;
+  setPrdIsStale: Dispatch<SetStateAction<boolean>>;
   setVersionHistory: Dispatch<SetStateAction<VersionHistory[]>>;
   setCurrentVersion: Dispatch<SetStateAction<number>>;
   setLockedArtifacts: Dispatch<
@@ -212,6 +214,7 @@ export function useRequirementStore(
   const [diagramGeneratedAt, setDiagramGeneratedAt] = useState<string | null>(
     null,
   );
+  const [prdIsStale, setPrdIsStale] = useState<boolean>(false);
   const [versionHistory, setVersionHistory] = useState<VersionHistory[]>(
     INITIAL_VERSION_HISTORY,
   );
@@ -387,8 +390,8 @@ export function useRequirementStore(
         );
         setPrdMarkdown(res.document_markdown);
         setPrdMarkdownDisplay(res.document_markdown);
-        // Refresh per-part lock/version/ownership metadata (version_number
-        // advanced; a manual save flips the part to human-owned -> "Manual").
+        // Refresh per-part lock/version/ownership metadata. Manual authorship
+        // is recorded, while AI eligibility remains unchanged.
         setSectionLocks((prev) => ({
           ...prev,
           [sectionId]: {
@@ -415,11 +418,7 @@ export function useRequirementStore(
               null,
           },
         }));
-        setSyncStatus(
-          res.section.ai_generatable === false
-            ? "Section saved. Marked Manual; Generate PRD will preserve it."
-            : "Section saved & versioned.",
-        );
+        setSyncStatus("Section saved & versioned. Lock it to prevent AI regeneration.");
       } catch (err) {
         // The section endpoint is authoritative. Falling back to a whole-document
         // write on lock/conflict/network errors can overwrite newer remote edits.
@@ -583,10 +582,8 @@ export function useRequirementStore(
     }
   };
 
-  // PRD-SECTION 2.5 — Hand a MANUAL part back to the AI. A manual save marks the
-  //             part human-owned so "Generate PRD" preserves it; this action
-  //             flips that flag back (content unchanged) so the Architect may
-  //             regenerate the part again on the next run.
+  // PRD-SECTION 2.5 — Compatibility action for legacy parts that were marked
+  //             non-generatable by the former manual-save ownership rule.
   const handleHandSectionToAi = async (sectionId: string) => {
     if (!projectId) return;
     const section = sections.find((s) => s.id === sectionId);
@@ -645,6 +642,7 @@ export function useRequirementStore(
     setPrdMarkdownDisplay("");
     setMermaidDiagram("");
     setDiagramGeneratedAt(null);
+    setPrdIsStale(false);
     setCurrentVersion(1);
     setCurrentAgentNode(null);
     setMessages([]);
@@ -671,6 +669,7 @@ export function useRequirementStore(
     editBuffer,
     mermaidDiagram,
     diagramGeneratedAt,
+    prdIsStale,
     versionHistory,
     currentVersion,
     lockedArtifacts,
@@ -690,6 +689,7 @@ export function useRequirementStore(
     setEditBuffer,
     setMermaidDiagram,
     setDiagramGeneratedAt,
+    setPrdIsStale,
     setVersionHistory,
     setCurrentVersion,
     setLockedArtifacts,

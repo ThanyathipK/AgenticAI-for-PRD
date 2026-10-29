@@ -16,7 +16,7 @@ Rules:
 - If applicability of a potentially important control is unknown, ask one concise clarification question rather than failing or inventing an answer.
 - Consolidate repetitive questions.
 - Questions from project uploads must carry `Project file` provenance with exact filename and section. Questions based only on requirement analysis must have no citation; the application labels them `System analysis` with the analyzed requirement/story.
-- Treat supplied resolved clarification answers as audit evidence. Do not assume an unanswered clarification is resolved merely because it is absent from this run's output.
+- Treat supplied resolved clarification answers as authoritative audit evidence. Before creating a question, compare it with every resolved decision; do not ask for a fact, threshold, owner, state, or behavior already supplied in an answer. A genuinely narrower missing detail may produce a new question, but its wording must identify only that still-missing detail. Do not assume an unanswered clarification is resolved merely because it is absent from this run's output.
 - Be concise and order findings by impact and severity. Preserve all distinct issues and necessary clarification questions; consolidate repetitions.
 - Keep all generated prose plain and direct. Do not add decorative symbols, emojis, generic AI introductions, unnecessary em dashes or arrows, excessive bold text, or excessive Markdown formatting.
 - Do not repeat the same issue for multiple stories when one project-level finding is accurate.

@@ -2921,6 +2921,9 @@ async def auditor_node(state: AgentState) -> WorkflowNodeOutcome:
         ],
         "business_goals": req_state.get("business_goals", []),
         "actors": req_state.get("actors", []),
+        # Project-level clarification decisions remain authoritative evidence
+        # even for document-only projects that do not yet have requirement rows.
+        "prd_narrative": req_state.get("prd_narrative", {}),
         # Knowledge documents are evidence for validation, not requirements.
         # Keeping them in a separate field ensures Validate can cross-reference
         # their actual content without silently converting/persisting anything.
@@ -3691,7 +3694,11 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
     }
     generated_prd = fill_template_body(
         project_id=project_id,
-        project_name=req_state.get("project_name", "") or "",
+        project_name=(
+            saved_intake.get("pmo_name")
+            or req_state.get("project_name", "")
+            or ""
+        ),
         pmo_no=saved_intake.get("pmo_no"),
         author=saved_intake.get("author") or "Product Owner",
         status=format_project_status(req_state.get("project_status")),

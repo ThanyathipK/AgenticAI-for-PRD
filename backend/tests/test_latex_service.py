@@ -632,6 +632,23 @@ class TestPrdToMarkdownPreview:
         assert "| Mobile onboarding | Branch counter changes |" in normalized
         assert normalized == saved.strip()
 
+    def test_saved_product_scope_story_breaks_are_not_changed_on_reload(self):
+        saved = """### 2. Product Scope & Functional Requirements
+
+| User Story Mapping & Functional Requirements | Epic Name: Saved epic |  |  |
+| --- | --- | --- | --- |
+|  | **User Story (System Focus)** | **Functional Requirement (FR)** | **Acceptance Criteria** |
+|  | As a User<br><br>I want to keep this edit<br><br>So that it reloads | FR 1.1: The system must keep this edit | AC 1.1: Saved criterion |
+
+#### Scope Definition (In vs. Out)
+
+| Scope In (Included) | Scope Out (Excluded) |
+| --- | --- |
+| 1. Saved scope | 1. Excluded scope |
+"""
+
+        assert prd_to_markdown(saved) == saved.strip()
+
     def test_markdown_passthrough(self):
         assert prd_to_markdown(MARKDOWN_PRD) == MARKDOWN_PRD.strip()
 

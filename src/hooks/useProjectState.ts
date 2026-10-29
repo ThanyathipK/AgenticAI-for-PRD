@@ -126,6 +126,8 @@ export interface ProjectState {
   prdDiagramGenerationFailed: boolean;
   clearPrdGenerationNotices: () => void;
   diagramGeneratedAt: string | null;
+  /** True when requirements changed after the currently saved PRD was generated. */
+  prdIsStale: boolean;
   // Finding #40: LM Studio connectivity health (polled via GET /api/health)
   backendOnline: boolean | null;
   lmStudioOnline: boolean | null;
@@ -194,7 +196,7 @@ export interface ProjectState {
   sectionLocks: Record<string, PrdSectionLockState>;
   /** Lock/unlock ONE PRD part — blocks edits + AI regeneration when locked. */
   handleToggleSectionLock: (sectionId: string) => Promise<void>;
-  /** Hand a MANUAL (human-owned) PRD part back to AI regeneration. */
+  /** Re-enable AI regeneration for a legacy non-generatable PRD part. */
   handleHandSectionToAi: (sectionId: string) => Promise<void>;
   /** Restore target-present unlocked parts; current-only/locked parts remain.
    *  Resolves to true for any successful route response, including ledger fallback. */
@@ -574,6 +576,7 @@ export function useProjectState(
     setActiveView: ui.setActiveView,
     mermaidDiagram: store.mermaidDiagram,
     diagramGeneratedAt: store.diagramGeneratedAt,
+    prdIsStale: store.prdIsStale,
     versionHistory: store.versionHistory,
     selectedHistVersion: ui.selectedHistVersion,
     setSelectedHistVersion: ui.setSelectedHistVersion,

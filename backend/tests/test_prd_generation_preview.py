@@ -202,8 +202,17 @@ async def test_approve_materializes_preview_and_creates_one_version(preview_proj
     assert result["requirement_state"]["generated_diagrams"] == "flowchart LR\nA --> C"
     assert result["requirement_state"]["version_number"] == 1
     assert "Real-time settlement" in result["requirement_state"]["generated_prd"]
+    assert result["requirement_state"]["prd_source_requirements_revision"] == 3
+    assert result["requirement_state"]["prd_is_stale"] is False
     assert await session.get(PendingActionModel, action.id) is None
     assert await session.scalar(select(func.count()).select_from(PRDVersionModel)) == 1
+
+    await RequirementStateRepository.save_or_update(
+        project_id, {"requirements_revision": 4}, session
+    )
+    changed = await RequirementStateRepository.get_by_project_id(project_id, session)
+    assert changed["prd_source_requirements_revision"] == 3
+    assert changed["prd_is_stale"] is True
 
 
 @pytest.mark.asyncio

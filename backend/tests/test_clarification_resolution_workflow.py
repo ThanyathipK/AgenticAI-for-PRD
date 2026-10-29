@@ -30,7 +30,44 @@ def _question(index, source_reference):
 
 
 @pytest.mark.asyncio
-async def test_answers_are_batched_without_empty_proposal_or_automatic_reaudit(
+async def test_direct_final_answer_moves_project_to_audit_pending(
+    client, db_session, seeded_project
+):
+    from app.repositories import RequirementStateRepository
+
+    await RequirementStateRepository.save_or_update(
+        seeded_project,
+        {
+            "clarification_questions": [{
+                "question_text": "What timeout applies?",
+                "checklist_category": "Timeouts",
+                "target_user_story_id": "PAY-001",
+                "is_resolved": False,
+            }],
+            "validation_status": "invalid",
+            "current_workflow_state": "WAITING_CLARIFICATION",
+        },
+        db_session,
+    )
+    await db_session.commit()
+    question = (await client.get(f"/api/project/{seeded_project}")).json()[
+        "clarification_questions"
+    ][0]
+
+    response = await client.post(
+        f"/api/audit/respond/{question['id']}",
+        json={"answer_text": "The request timeout is 120 seconds."},
+    )
+
+    assert response.status_code == 200, response.text
+    reloaded = (await client.get(f"/api/project/{seeded_project}")).json()
+    assert reloaded["clarification_questions"][0]["is_resolved"] is True
+    assert reloaded["validation_status"] == "invalid"
+    assert reloaded["current_workflow_state"] == "AUDIT_PENDING"
+
+
+@pytest.mark.asyncio
+async def test_answers_are_batched_into_complete_proposal_without_automatic_reaudit(
     client, db_session, seeded_project, monkeypatch
 ):
     import app.agents as agents
@@ -166,12 +203,18 @@ async def test_answers_are_batched_without_empty_proposal_or_automatic_reaudit(
     pending_count = await db_session.scalar(
         select(func.count()).select_from(PendingActionModel)
     )
-    assert pending_count == 0
-    assert submitted.json()["pending_merge"] is False
-    assert "no requirement fields changed" in submitted.json()["proposal_no_change_reason"]
+    assert pending_count == 1
+    assert submitted.json()["pending_merge"] is True
+    first_action = await db_session.scalar(select(PendingActionModel))
+    first_decisions = first_action.proposed_changes["prd_narrative"][
+        "clarification_decisions"
+    ]
+    assert {item["answer"] for item in first_decisions} == {
+        f"Approved answer {index}" for index in range(5)
+    }
 
-    # Answering the remaining question still creates no empty merge window and
-    # does not trigger Auditor.
+    # Answering the remaining question replaces the prior draft with one complete
+    # proposal that still contains all earlier answers, without triggering Auditor.
     gatherer_batches.clear()
     final_submit = await client.post(
         "/api/clarification/submit",
@@ -185,7 +228,16 @@ async def test_answers_are_batched_without_empty_proposal_or_automatic_reaudit(
     assert [len(items) for items, _context in gatherer_batches] == [1]
     assert await db_session.scalar(
         select(func.count()).select_from(PendingActionModel)
-    ) == 0
+    ) == 1
+    replacement = await db_session.scalar(select(PendingActionModel))
+    replacement_answers = {
+        item["answer"]
+        for item in replacement.proposed_changes["prd_narrative"][
+            "clarification_decisions"
+        ]
+    }
+    assert all(f"Approved answer {index}" in replacement_answers for index in range(5))
+    assert "The checker role is mandatory." in replacement_answers
 
     final_state = (await client.get(f"/api/project/{seeded_project}")).json()
     assert all(q["is_resolved"] for q in final_state["clarification_questions"])
@@ -244,11 +296,15 @@ async def test_gatherer_failure_saves_answers_and_stages_review_warning(
     assert reloaded["clarification_questions"][0]["user_answer"] == (
         "Operations checker verifies it."
     )
-    assert body["pending_merge"] is False
-    assert body["pending_action_id"] is None
+    assert body["pending_merge"] is True
+    assert body["pending_action_id"] is not None
     assert await db_session.scalar(
         select(func.count()).select_from(PendingActionModel)
-    ) == 0
+    ) == 1
+    pending = await db_session.scalar(select(PendingActionModel))
+    assert pending.proposed_changes["prd_narrative"]["clarification_decisions"][0][
+        "answer"
+    ] == "Operations checker verifies it."
 
 
 @pytest.mark.asyncio

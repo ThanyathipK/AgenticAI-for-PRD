@@ -1210,6 +1210,13 @@ def _normalize_template_table_semantics(markdown: str) -> str:
         source = pattern.sub(lambda match: match.group(1) + transform(match.group(2)), source)
 
     def _product(body: str) -> str:
+        # A saved/manual Markdown section already uses the canonical two-column
+        # scope table. Return it byte-for-byte before any Pandoc-repair rules
+        # run. In particular, flattening its ``<br>`` markers made save-time
+        # reconciliation see a concurrent rewrite and could discard Section 2
+        # edits when the project was loaded again.
+        if "| Scope In (Included) | Scope Out (Excluded) |" in body:
+            return body
         # Wrapped words are one semantic label, not separate requirements.
         body = re.sub(
             r"\|\s*Mapping\s*&\s*\|\s*\|\s*\|\s*\|\s*\n"
@@ -1252,8 +1259,6 @@ def _normalize_template_table_semantics(markdown: str) -> str:
         # A stored Markdown document may already contain that table after a
         # user edit; never parse it a second time or its header/value cells
         # would be mistaken for flattened LaTeX content and shifted columns.
-        if "| Scope In (Included) | Scope Out (Excluded) |" in body:
-            return body
         lines = body.splitlines()
         scope_start = next((
             index for index, line in enumerate(lines)

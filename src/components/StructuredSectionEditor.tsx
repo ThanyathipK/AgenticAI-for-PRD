@@ -1,3 +1,5 @@
+import { useEffect, useState, type TextareaHTMLAttributes } from 'react';
+
 interface StructuredSectionEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -18,6 +20,40 @@ interface StructuredTextBlock {
   value: string;
   prefix?: string;
   headingLevel?: number;
+}
+
+/**
+ * Keep the user's in-progress whitespace locally. The Markdown model normalizes
+ * table padding, which would otherwise erase a just-typed trailing space before
+ * the next character (and make Space/Enter appear broken).
+ */
+function EditableTextarea({ value, onChange, onFocus, onBlur, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const externalValue = String(value ?? '');
+  const [draft, setDraft] = useState(externalValue);
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(externalValue);
+  }, [externalValue, focused]);
+
+  return (
+    <textarea
+      {...props}
+      value={draft}
+      onFocus={(event) => {
+        setFocused(true);
+        onFocus?.(event);
+      }}
+      onBlur={(event) => {
+        setFocused(false);
+        onBlur?.(event);
+      }}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        onChange?.(event);
+      }}
+    />
+  );
 }
 
 const normalizeTableBoundary = (line: string) => line
@@ -223,6 +259,119 @@ export function StructuredSectionEditor({ value, onChange, sectionId }: Structur
   const lines = value.split('\n');
   const tables = findTables(lines);
 
+  const updateCell = (lineIndex: number, cellIndex: number, nextValue: string) => {
+    const nextLines = [...lines];
+    const cells = splitRow(nextLines[lineIndex]);
+    cells[cellIndex] = storageValue(nextValue);
+    nextLines[lineIndex] = `| ${cells.join(' | ')} |`;
+    onChange(nextLines.join('\n'));
+  };
+
+  if (sectionId === 'appendix') {
+    const normalizedLabel = (cell: string) => cleanLabel(cell).replace(/\s+/g, ' ').toLowerCase();
+    const fieldDefinitions = [
+      { label: 'Open Questions & Risks', key: 'open questions & risks' },
+      { label: 'Assumptions', key: 'assumptions' },
+      { label: 'Related Documents', key: 'related documents' },
+    ];
+    const fields = fieldDefinitions.map(field => ({
+      ...field,
+      lineIndex: lines.findIndex(line => (
+        isTableLine(line) && normalizedLabel(splitRow(line)[0] ?? '') === field.key
+      )),
+    }));
+    const glossaryIndex = lines.findIndex(line => (
+      isTableLine(line) && normalizedLabel(splitRow(line)[0] ?? '') === 'glossary'
+    ));
+    const relatedIndex = fields.find(field => field.key === 'related documents')?.lineIndex ?? -1;
+    const glossaryRows = lines
+      .map((line, lineIndex) => ({ line, lineIndex }))
+      .filter(({ line, lineIndex }) => {
+        if (!isTableLine(line) || glossaryIndex < 0 || lineIndex <= glossaryIndex) return false;
+        if (relatedIndex >= 0 && lineIndex >= relatedIndex) return false;
+        const cells = splitRow(line);
+        if (isSeparatorRow(line) || cells.length < 3) return false;
+        const term = normalizedLabel(cells[cells.length - 2] ?? '');
+        const definition = normalizedLabel(cells[cells.length - 1] ?? '');
+        return !(term === 'term' && definition === 'definition');
+      });
+
+    const renderField = (field: typeof fields[number]) => {
+      if (field.lineIndex < 0) return null;
+      const cells = splitRow(lines[field.lineIndex]);
+      const fieldValue = displayValue(cells[1] ?? '');
+      return (
+        <div key={field.key} className="bg-white">
+          <div className="border-b border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700">
+            {field.label}
+          </div>
+          <label className="block bg-white">
+            <span className="block border-b border-slate-100 bg-slate-50/70 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              Details
+            </span>
+            <EditableTextarea
+              aria-label={`${field.label} details`}
+              value={fieldValue}
+              onChange={(event) => updateCell(field.lineIndex, 1, event.target.value)}
+              rows={Math.max(2, fieldValue.split('\n').length)}
+              className="min-h-[76px] w-full resize-y bg-white px-3 py-2.5 text-sm leading-relaxed text-slate-700 outline-none transition focus:bg-orange-50/30 focus:ring-2 focus:ring-inset focus:ring-orange-500/20"
+              placeholder={`Enter ${field.label.toLowerCase()}`}
+            />
+          </label>
+        </div>
+      );
+    };
+
+    return (
+      <div className="space-y-4">
+        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          {renderField(fields[0])}
+          {renderField(fields[1])}
+          {glossaryIndex >= 0 && (
+            <div className="border-y border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700">
+              Glossary
+            </div>
+          )}
+          {glossaryRows.map(({ line, lineIndex }, entryIndex) => {
+            const cells = splitRow(line);
+            const termIndex = cells.length - 2;
+            const definitionIndex = cells.length - 1;
+            return (
+              <div key={lineIndex} className="bg-white">
+                <div className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700">
+                  Glossary entry {entryIndex + 1}
+                </div>
+                <div className="grid grid-cols-1 divide-y divide-slate-200 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+                  {[
+                    { label: 'Term', index: termIndex },
+                    { label: 'Definition', index: definitionIndex },
+                  ].map(column => (
+                    <label key={column.label} className="min-w-0 bg-white">
+                      <span className="block border-b border-slate-100 bg-slate-50/70 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                        {column.label}
+                      </span>
+                      <EditableTextarea
+                        aria-label={`Glossary entry ${entryIndex + 1} ${column.label.toLowerCase()}`}
+                        value={displayValue(cells[column.index] ?? '')}
+                        onChange={(event) => updateCell(lineIndex, column.index, event.target.value)}
+                        rows={2}
+                        className="min-h-[76px] w-full resize-y bg-white px-3 py-2.5 text-sm leading-relaxed text-slate-700 outline-none transition focus:bg-orange-50/30 focus:ring-2 focus:ring-inset focus:ring-orange-500/20"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {renderField(fields[2])}
+        </section>
+        <p className="text-[11px] text-slate-500">
+          Empty Appendix fields remain editable. Line breaks are preserved in the saved PRD and exports.
+        </p>
+      </div>
+    );
+  }
+
   if (tables.length === 0) {
     const blocks = parseStructuredTextBlocks(lines);
     const editableBlocks = blocks.filter(block => block.kind !== 'heading');
@@ -231,7 +380,7 @@ export function StructuredSectionEditor({ value, onChange, sectionId }: Structur
       const nextLines = [...lines];
       const replacement = block.kind === 'paragraph'
         ? nextValue.split('\n')
-        : [`${block.prefix ?? ''}${nextValue.replace(/\r?\n/g, ' ')}`];
+        : [`${block.prefix ?? ''}${storageValue(nextValue)}`];
       nextLines.splice(block.start, block.end - block.start + 1, ...replacement);
       onChange(nextLines.join('\n'));
     };
@@ -256,8 +405,8 @@ export function StructuredSectionEditor({ value, onChange, sectionId }: Structur
                 <span className="border-b border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700 sm:border-b-0 sm:border-r">
                   {block.label}
                 </span>
-                <textarea
-                  value={block.value}
+                <EditableTextarea
+                  value={displayValue(block.value)}
                   onChange={(event) => updateBlock(block, event.target.value)}
                   rows={1}
                   className="min-h-[42px] w-full resize-y bg-white px-3 py-2.5 text-sm leading-relaxed text-slate-700 outline-none transition focus:bg-orange-50/30 focus:ring-2 focus:ring-inset focus:ring-orange-500/20"
@@ -279,9 +428,9 @@ export function StructuredSectionEditor({ value, onChange, sectionId }: Structur
             return (
               <label key={`${block.start}-list-item`} className="flex items-start gap-2 text-sm text-slate-700">
                 <span className="min-w-5 pt-2.5 text-right font-semibold text-slate-500">{marker}</span>
-                <textarea
+                <EditableTextarea
                   aria-label={block.label}
-                  value={block.value}
+                  value={displayValue(block.value)}
                   onChange={(event) => updateBlock(block, event.target.value)}
                   rows={1}
                   className="min-h-[40px] flex-1 resize-y rounded-md border border-transparent bg-transparent px-2 py-2 leading-relaxed outline-none transition hover:border-slate-200 hover:bg-white focus:border-orange-400 focus:bg-white focus:ring-2 focus:ring-orange-500/15"
@@ -291,7 +440,7 @@ export function StructuredSectionEditor({ value, onChange, sectionId }: Structur
             );
           }
           return (
-            <textarea
+            <EditableTextarea
               key={`${block.start}-paragraph`}
               aria-label={block.label}
               value={block.value}
@@ -313,14 +462,6 @@ export function StructuredSectionEditor({ value, onChange, sectionId }: Structur
       </div>
     );
   }
-
-  const updateCell = (lineIndex: number, cellIndex: number, nextValue: string) => {
-    const nextLines = [...lines];
-    const cells = splitRow(nextLines[lineIndex]);
-    cells[cellIndex] = storageValue(nextValue);
-    nextLines[lineIndex] = `| ${cells.join(' | ')} |`;
-    onChange(nextLines.join('\n'));
-  };
 
   return (
     <div className="space-y-4">
@@ -344,31 +485,44 @@ export function StructuredSectionEditor({ value, onChange, sectionId }: Structur
             ? header
             : embeddedHeaders[cellIndex] || header || '',
         );
-        const isScopeComparison =
-          headers[0]?.toLowerCase().startsWith('scope in')
-          && headers[1]?.toLowerCase().startsWith('scope out');
         const sectionHeading = lines
           .slice(0, table.start)
           .reverse()
           .find(line => /^#{1,3}\s+/.test(line.trim()))
           ?.trim()
           .replace(/^#{1,3}\s+/, '') ?? '';
+        const precedingHeading = lines
+          .slice(0, table.start)
+          .reverse()
+          .find(line => /^#{4,6}\s+/.test(line.trim()));
+        const precedingHeadingLabel = precedingHeading
+          ?.trim()
+          .replace(/^#{4,6}\s+/, '') ?? '';
+        // Imported/Pandoc Markdown can discard the empty right-hand header of
+        // the scope table. The nearby fixed heading still identifies it, so
+        // keep treating it as a two-column Scope In/Scope Out editor.
+        const isScopeComparison = (
+          headers[0]?.toLowerCase().startsWith('scope in')
+          && (
+            headers[1]?.toLowerCase().startsWith('scope out')
+            || precedingHeadingLabel.toLowerCase().includes('scope definition')
+          )
+        ) || precedingHeadingLabel.toLowerCase().includes('scope definition');
+        if (isScopeComparison) {
+          headers[0] = 'Scope In (Included)';
+          headers[1] = 'Scope Out (Excluded)';
+        }
         const hasFixedFirstColumn =
           !isScopeComparison && (
             sectionId === 'title'
-            ||
-            headers[0]?.toLowerCase() === 'appendix item'
+            || headers[0]?.toLowerCase() === 'appendix item'
             || sectionHeading === 'Version History'
             || sectionHeading === 'Reviews'
             || sectionHeading.includes('Appendix')
             || sectionHeading.includes('Product Scope & Functional Requirements')
           );
-        const precedingHeading = lines
-          .slice(0, table.start)
-          .reverse()
-          .find(line => /^#{4,6}\s+/.test(line.trim()));
         const tableTitle = precedingHeading
-          ? precedingHeading.trim().replace(/^#{4,6}\s+/, '')
+          ? precedingHeadingLabel
           : tables.length === 1 ? 'Section fields' : `Table ${tableIndex + 1}`;
         // Several official-template tables place the first editable field row
         // immediately before the Markdown separator. Only true column-label
@@ -378,7 +532,12 @@ export function StructuredSectionEditor({ value, onChange, sectionId }: Structur
           ...rowsAfterSeparator,
         ].filter(lineIndex => (
           lineIndex !== embeddedHeaderRow
-          && splitRow(lines[lineIndex]).some(cell => cleanLabel(cell).length > 0)
+          && (
+            splitRow(lines[lineIndex]).some(cell => cleanLabel(cell).length > 0)
+            // An empty Scope In/Scope Out row is still the editable value row.
+            // Dropping it made a blank project show headings with no boxes.
+            || (isScopeComparison && lineIndex > table.separator)
+          )
         ));
         return (
           <section key={`${table.start}-${table.end}`} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -389,24 +548,57 @@ export function StructuredSectionEditor({ value, onChange, sectionId }: Structur
             )}
             <div className="divide-y divide-slate-200">
               {dataRows.map((lineIndex, rowIndex) => {
-                const cells = splitRow(lines[lineIndex]);
+                const parsedCells = splitRow(lines[lineIndex]);
                 const isTemplateLeadRow = lineIndex === headerRowIndex && !conventionalHeader;
-                const rowLabel = cleanLabel(cells[0] || '').toLowerCase();
+                const rowLabel = cleanLabel(parsedCells[0] || '').toLowerCase();
                 const isSingleValueTemplateRow = [
                   'user flow & wireframes',
+                  'wireframes',
                   'scope definition (in vs. out)',
                   'open questions & risks',
                   'assumptions',
                   'related documents',
                 ].includes(rowLabel);
+                // Pandoc can collapse an empty merged template row to only its
+                // label cell (not even an empty value cell remains). Supply the
+                // editable value slot in the UI; updateCell will materialize it
+                // back into the Markdown row on the first keystroke.
+                const minimumCellCount = isScopeComparison ? 2 : isSingleValueTemplateRow ? 2 : 0;
+                const cells = minimumCellCount > parsedCells.length
+                  ? [...parsedCells, ...Array(minimumCellCount - parsedCells.length).fill('')]
+                  : parsedCells;
                 const isStructuralLabelRow = rowLabel === 'glossary';
+                if (isSingleValueTemplateRow && !isScopeComparison) {
+                  const fieldLabel = cleanLabel(cells[0]) || `Field ${rowIndex + 1}`;
+                  const fieldValue = displayValue(cells[1] ?? '');
+                  return (
+                    <div key={lineIndex} className="bg-white">
+                      <div className="border-b border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700">
+                        {fieldLabel}
+                      </div>
+                      <label className="block bg-white">
+                        <span className="block border-b border-slate-100 bg-slate-50/70 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                          Details
+                        </span>
+                        <EditableTextarea
+                          aria-label={`${fieldLabel} details`}
+                          value={fieldValue}
+                          onChange={(event) => updateCell(lineIndex, 1, event.target.value)}
+                          rows={Math.max(2, fieldValue.split('\n').length)}
+                          className="min-h-[58px] w-full resize-y bg-white px-3 py-2.5 text-sm leading-relaxed text-slate-700 outline-none transition focus:bg-orange-50/30 focus:ring-2 focus:ring-inset focus:ring-orange-500/20"
+                          placeholder={`Enter ${fieldLabel.toLowerCase()}`}
+                        />
+                      </label>
+                    </div>
+                  );
+                }
                 if (cells.length === 2 && !isScopeComparison) {
                   return (
                     <div key={lineIndex} className="grid grid-cols-1 bg-white sm:grid-cols-[minmax(170px,0.38fr)_1fr]">
                       <div className="border-b border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700 sm:border-b-0 sm:border-r">
                         {cleanLabel(cells[0]) || headers[0] || `Field ${rowIndex + 1}`}
                       </div>
-                      <textarea
+                      <EditableTextarea
                         value={displayValue(cells[1])}
                         onChange={(event) => updateCell(lineIndex, 1, event.target.value)}
                         rows={Math.max(1, displayValue(cells[1]).split('\n').length)}
@@ -432,14 +624,21 @@ export function StructuredSectionEditor({ value, onChange, sectionId }: Structur
                       if (cellIndex === 0 && hasFixedFirstColumn) {
                         return null;
                       }
-                      if (isTemplateLeadRow && cellIndex > 0 && !cell.trim()) {
+                      if (
+                        isTemplateLeadRow
+                        && cellIndex > 0
+                        && !cell.trim()
+                        && !(isSingleValueTemplateRow && cellIndex === 1)
+                      ) {
                         return null;
                       }
                       if (
                         (sectionId === 'product_scope' || sectionId === 'appendix')
+                        && !isScopeComparison
                         && rowLabel
                         && cellIndex > 0
                         && !cell.trim()
+                        && !(isSingleValueTemplateRow && cellIndex === 1)
                       ) {
                         return null;
                       }
@@ -452,12 +651,15 @@ export function StructuredSectionEditor({ value, onChange, sectionId }: Structur
                       const inlineField = cell.match(/^([^:]{2,40}:)\s*(.*)$/);
                       const editorLabel = inlineField
                         ? cleanLabel(inlineField[1]).replace(/:$/, '')
-                        : columnLabel;
+                        : isSingleValueTemplateRow && cellIndex === 1
+                          ? 'Details'
+                          : columnLabel;
                       const editorValue = inlineField ? inlineField[2] : cell;
                       return (
                         <label key={cellIndex} className="min-w-0 bg-white">
                           <span className="block border-b border-slate-100 bg-slate-50/70 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{editorLabel}</span>
-                          <textarea
+                          <EditableTextarea
+                            aria-label={editorLabel}
                             value={displayValue(editorValue)}
                             onChange={(event) => updateCell(
                               lineIndex,

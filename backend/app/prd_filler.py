@@ -223,6 +223,35 @@ def extract_cover_fields(markdown: str) -> Dict[str, str]:
     return fields
 
 
+def _split_markdown_table_row(line: str) -> List[str]:
+    r"""Split one Markdown row without treating an escaped ``\|`` as a column.
+
+    The structured editor escapes literal pipes in user values.  The export
+    readers previously used ``str.split('|')``, which silently truncated such
+    values and shifted every following cell during PDF/DOCX reconstruction.
+    """
+    source = str(line or "").strip()
+    if source.startswith("|"):
+        source = source[1:]
+    if source.endswith("|") and not source.endswith(r"\|"):
+        source = source[:-1]
+    cells: List[str] = []
+    current: List[str] = []
+    escaped = False
+    for character in source:
+        if character == "|" and not escaped:
+            cells.append("".join(current))
+            current = []
+            continue
+        current.append(character)
+        if character == "\\":
+            escaped = not escaped
+        else:
+            escaped = False
+    cells.append("".join(current))
+    return cells
+
+
 STAKEHOLDER_ROLES = (
     "Product Owner", "Technical Product Owner", "Solution Architecture",
     "System Analyst", "Engineering Manager", "Project Manager",
@@ -322,7 +351,7 @@ def strip_template_only_details(document: str) -> str:
     cleaned_lines = []
     for line in source.splitlines():
         if line.strip().startswith("|"):
-            cells = line.strip().strip("|").split("|")
+            cells = _split_markdown_table_row(line)
             if len(cells) >= 2:
                 row_label = re.sub(
                     r"\s+", " ", cells[0].replace("<br>", " ").replace("**", "")
@@ -357,7 +386,7 @@ def extract_intake_fields(markdown: str) -> Dict[str, Any]:
         if current_section not in {"stakeholders", "business"}:
             continue
         cells = [cell.strip().replace("\\|", "|").replace("<br>", "\n")
-                 for cell in raw_line.strip().strip("|").split("|")]
+                 for cell in _split_markdown_table_row(raw_line)]
         if len(cells) < 2:
             continue
         # Preview tables use ``<br>`` inside the two long business labels
@@ -413,7 +442,13 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
         return value.strip()
 
     def label(value: str) -> str:
-        normalized = clean_cell(value).replace("&\n", "& ").replace("\n", " ").replace("-", " ")
+        normalized = (
+            clean_cell(value)
+            .replace("&\n", "& ")
+            .replace("\n", " ")
+            .replace("-", " ")
+            .replace("/", " ")
+        )
         return re.sub(r"\s+", " ", normalized).strip().lower()
 
     def list_items(value: str) -> List[str]:
@@ -478,13 +513,9 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
             continue
         if not raw_line.strip().startswith("|"):
             continue
-        table_line = raw_line.strip()
-        # Remove one Markdown table boundary on each side, not every leading
-        # delimiter. Appendix glossary rows intentionally begin with an empty
-        # first cell (``| | Term | Definition |``); ``strip('|')`` shifted
-        # those cells left and silently discarded the glossary on export.
-        table_content = table_line[1:-1] if table_line.endswith("|") else table_line[1:]
-        cells = [clean_cell(cell) for cell in table_content.split("|")]
+        # Keep empty leading cells (used by the Appendix glossary) and literal
+        # escaped pipes inside user text while separating real table columns.
+        cells = [clean_cell(cell) for cell in _split_markdown_table_row(raw_line)]
         if not cells or all(re.fullmatch(r"[-: ]*", cell) for cell in cells):
             continue
 
@@ -520,6 +551,27 @@ def extract_manual_export_fields(markdown: str) -> Dict[str, Any]:
                 result["narrative"]["user_flow"] = (
                     value if not is_template_only_detail(value) else "TBD"
                 )
+                continue
+            if label(cells[0]) == "scope definition (in vs. out)":
+                # The untouched official template stores both lists in one
+                # populated value cell. Structured manual editing preserves
+                # that shape, so accept it as well as the normalized two-column
+                # Scope In / Scope Out table handled below.
+                combined = clean_cell(cells[1])
+                parts = re.split(
+                    r"(?im)^\s*scope\s+out(?:\s*\([^)]*\))?\s*:?[ \t]*$",
+                    combined,
+                    maxsplit=1,
+                )
+                scope_in_source = re.sub(
+                    r"(?im)^\s*scope\s+in(?:\s*\([^)]*\))?\s*:?[ \t]*$",
+                    "",
+                    parts[0],
+                    count=1,
+                )
+                result["scope_present"] = True
+                result["scope_in"] = list_items(scope_in_source)
+                result["scope_out"] = list_items(parts[1]) if len(parts) > 1 else []
                 continue
             if "functional requirement (fr)" in joined_labels and "acceptance criteria" in joined_labels:
                 result["functional_table_present"] = True

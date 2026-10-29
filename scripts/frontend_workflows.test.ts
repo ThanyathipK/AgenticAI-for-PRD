@@ -322,6 +322,83 @@ test("product scope keeps Scope In and Scope Out as separate editable fields", (
   assert.doesNotMatch(markup, /\| --- \|/);
 });
 
+test("blank product scope exposes wireframe and both scope inputs", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(StructuredSectionEditor, {
+      sectionId: "product_scope",
+      value: [
+        "### 2. Product Scope & Functional Requirements",
+        "| User Story Mapping & Functional Requirements | Epic Name: |  |  |",
+        "| --- | --- | --- | --- |",
+        "|  | **User Story (System Focus)** | **Functional Requirement (FR)** | **Acceptance Criteria** |",
+        "| User Flow & Wireframes |  |  |  |",
+        "#### Scope Definition (In vs. Out)",
+        "| Scope In (Included) | Scope Out (Excluded) |",
+        "| --- | --- |",
+        "|  |  |",
+      ].join("\n"),
+      onChange: () => {},
+    }),
+  );
+
+  assert.match(markup, /aria-label="User Flow &amp; Wireframes details"/);
+  assert.match(markup, /aria-label="Scope In \(Included\)"/);
+  assert.match(markup, /aria-label="Scope Out \(Excluded\)"/);
+});
+
+test("imported product scope repairs split Wireframes and a collapsed Scope Out column", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(StructuredSectionEditor, {
+      sectionId: "product_scope",
+      value: [
+        "### 2. Product Scope & Functional Requirements",
+        "| Wireframes |",
+        "| --- |",
+        "|  |",
+        "#### Scope Definition (In vs. Out)",
+        "| Scope In (Included) |",
+        "| --- |",
+        "| Existing scope in |",
+      ].join("\n"),
+      onChange: () => {},
+    }),
+  );
+
+  assert.match(markup, /aria-label="Wireframes details"/);
+  assert.match(markup, /aria-label="Scope In \(Included\)"/);
+  assert.match(markup, /aria-label="Scope Out \(Excluded\)"/);
+  assert.equal((markup.match(/<textarea/g) ?? []).length, 3);
+});
+
+test("blank appendix template rows still expose an editable value field", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(StructuredSectionEditor, {
+      sectionId: "appendix",
+      value: [
+        "### 4. Appendix",
+        "|Open<br>Questions &<br>Risks|",
+        "|---|",
+        "|Assumptions|||",
+        "|Glossary|||",
+        "||Term|Definition|",
+        "||TBD|TBD|",
+        "|Related<br>Documents|||",
+      ].join("\n"),
+      onChange: () => {},
+    }),
+  );
+
+  assert.match(
+    markup,
+    /Open Questions &amp; Risks[\s\S]*aria-label="Open Questions &amp; Risks details"[\s\S]*Assumptions/,
+  );
+  assert.match(markup, /aria-label="Assumptions details"/);
+  assert.match(markup, /aria-label="Related Documents details"/);
+  assert.match(markup, /aria-label="Glossary entry 1 term"/);
+  assert.match(markup, /aria-label="Glossary entry 1 definition"/);
+  assert.ok((markup.match(/<textarea/g) ?? []).length >= 4);
+});
+
 test("version history preserves an older row selected by the user", () => {
   const loaded = [7, 6, 5, 4];
   assert.equal(resolveLoadedVersionSelection(loaded, 5, false), 5);

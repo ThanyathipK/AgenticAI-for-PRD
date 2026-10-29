@@ -190,6 +190,7 @@ export function useProjectSync(
         store.setPrdMarkdown(loadedPrd);
         store.setMermaidDiagram(payload.generated_diagrams || "");
         store.setDiagramGeneratedAt(payload.diagram_generated_at || null);
+        store.setPrdIsStale(payload.prd_is_stale === true);
         store.setCurrentAgentNode(payload.current_workflow_state || null);
         // Requirements, audit findings and the bounded chat timeline come from
         // one response and are committed together. In particular, do this
@@ -457,6 +458,7 @@ export function useProjectSync(
               store.setMermaidDiagram(diagram);
             }
             store.setDiagramGeneratedAt(payload.diagram_generated_at || null);
+            store.setPrdIsStale(payload.prd_is_stale === true);
           }
 
           // 7. Sync active agent node

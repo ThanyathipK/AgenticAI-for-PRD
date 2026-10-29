@@ -490,6 +490,27 @@ async def post_audit_resolution_reply(
         # The question vanished between the ownership lookup and the write.
         raise HTTPException(status_code=404, detail=f"Clarification question {question_id} not found")
 
+    # A direct answer is still audit evidence, not a fresh verdict. Keep the
+    # validation invalid until Validate runs again, but do not leave a project
+    # stuck in WAITING_CLARIFICATION after its final open question was answered.
+    project_questions = await ClarificationQuestionRepository.get_by_project(
+        str(project_id), session
+    )
+    unresolved = [
+        question for question in project_questions
+        if not question.get("is_resolved", False)
+    ]
+    await RequirementStateRepository.save_or_update(
+        str(project_id),
+        {
+            "validation_status": "invalid",
+            "current_workflow_state": (
+                "WAITING_CLARIFICATION" if unresolved else "AUDIT_PENDING"
+            ),
+        },
+        session,
+    )
+
     # AUDIT 3.3 — Commit the answer, then publish clarification_answered after success.
     try:
         await session.commit()
@@ -512,6 +533,64 @@ async def post_audit_resolution_reply(
         "resolved_at": updated.get("updated_at") or datetime.now(timezone.utc).isoformat(),
         "is_resolved": bool(updated.get("is_resolved")),
     }
+
+
+def _append_clarification_evidence(
+    proposed_requirements: List[Dict[str, Any]],
+    submitted_envelopes: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Preserve every stakeholder answer in its proposed requirement group.
+
+    The Gatherer remains responsible for producing readable requirement edits,
+    but a valid answer may never disappear merely because the model omitted it
+    from ``proposed_requirements``.  A compact, deterministic decision ledger in
+    the requirement description gives the Auditor and Architect authoritative
+    evidence on the next run and makes the review proposal complete.
+    """
+    requirements = copy.deepcopy(proposed_requirements)
+    if not requirements:
+        return requirements
+
+    def normalize(value: Any) -> str:
+        return " ".join(str(value or "").casefold().split())
+
+    by_requirement: Dict[str, Dict[str, Any]] = {}
+    story_to_requirement: Dict[str, Dict[str, Any]] = {}
+    for requirement in requirements:
+        if not isinstance(requirement, dict):
+            continue
+        for key in (requirement.get("requirement_code"), requirement.get("id")):
+            if key:
+                by_requirement[normalize(key)] = requirement
+        for story in requirement.get("user_stories") or []:
+            if not isinstance(story, dict):
+                continue
+            for key in (story.get("ticket_code"), story.get("id")):
+                if key:
+                    story_to_requirement[normalize(key)] = requirement
+
+    fallback = next((item for item in requirements if isinstance(item, dict)), None)
+    for item in submitted_envelopes:
+        answer = str(item.get("answer") or "").strip()
+        question = str(item.get("question") or "Clarification decision").strip()
+        if not answer or not fallback:
+            continue
+        target_key = normalize(
+            item.get("target_requirement_id") or item.get("target_user_story_id")
+        )
+        target = (
+            by_requirement.get(target_key)
+            or story_to_requirement.get(target_key)
+            or fallback
+        )
+        description = str(target.get("description") or "").strip()
+        # The exact answer is the durable idempotency key. Re-submitting an
+        # already incorporated decision must not append duplicate paragraphs.
+        if normalize(answer) in normalize(description):
+            continue
+        decision = f"Clarification decision — {question}: {answer}"
+        target["description"] = f"{description}\n\n{decision}".strip()
+    return requirements
 
 
 # CLARIFY 3.0 — Answer intake for persisted Auditor/Matcher/Gatherer questions.
@@ -643,6 +722,25 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
     if not submitted_envelopes:
         raise HTTPException(status_code=400, detail="At least one non-empty clarification answer is required")
 
+    # Rebuild the deterministic evidence set from every resolved row, not only
+    # this request's inputs. A later partial submission replaces the older
+    # review draft, so omitting earlier answers here would silently remove them
+    # from the replacement proposal before they were approved.
+    decision_envelopes = [
+        {
+            "question_id": str(question.get("id") or ""),
+            "question": question.get("question_text"),
+            "answer": str(question.get("user_answer") or "").strip(),
+            "target_requirement_id": (
+                question.get("target_requirement_id")
+                or question.get("target_user_story_id")
+            ),
+            "target_user_story_id": question.get("target_user_story_id"),
+        }
+        for question in questions
+        if question.get("is_resolved") and str(question.get("user_answer") or "").strip()
+    ]
+
     # CLARIFY 3.4 — Keep LM Studio calls small and coherent: group by requirement/story/topic,
     # then cap every call at four answer envelopes. Results are folded into one
     # draft and therefore one explicit confirmation action.
@@ -684,8 +782,8 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
                 # no-change review rather than making the form look nonfunctional.
                 logger.exception("Clarification Gatherer batch failed; retaining submitted answers")
                 proposal_generation_warning = (
-                    "Answers were saved, but the Gatherer could not create a requirement-change draft. "
-                    "Review the saved answers and retry the proposal after LM Studio is available."
+                    "Answers were saved in a deterministic requirement-change draft, but the Gatherer "
+                    "could not improve its wording. Review the complete saved-answer proposal before approval."
                 )
                 classifications.extend({
                     "question_id": str(item["question_id"]),
@@ -722,7 +820,36 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
     proposal_state["_base_requirements_revision"] = int(
         saved_state.get("requirements_revision") or 1
     )
-    proposal_state["requirements"] = list(proposed_by_code.values())
+    proposal_state["requirements"] = _append_clarification_evidence(
+        list(proposed_by_code.values()), decision_envelopes
+    )
+    proposal_narrative = copy.deepcopy(saved_state.get("prd_narrative") or {})
+    existing_decisions = list(proposal_narrative.get("clarification_decisions") or [])
+    known_decisions = {
+        (
+            " ".join(str(item.get("question") or "").casefold().split()),
+            " ".join(str(item.get("answer") or "").casefold().split()),
+        )
+        for item in existing_decisions if isinstance(item, dict)
+    }
+    for item in decision_envelopes:
+        decision = {
+            "question": item.get("question"),
+            "answer": item.get("answer"),
+            "target_requirement_id": (
+                item.get("target_requirement_id")
+                or item.get("target_user_story_id")
+            ),
+        }
+        key = (
+            " ".join(str(decision["question"] or "").casefold().split()),
+            " ".join(str(decision["answer"] or "").casefold().split()),
+        )
+        if key not in known_decisions:
+            known_decisions.add(key)
+            existing_decisions.append(decision)
+    proposal_narrative["clarification_decisions"] = existing_decisions
+    proposal_state["prd_narrative"] = proposal_narrative
     proposal_state["user_stories"] = [
         story for req in proposal_state["requirements"] for story in (req.get("user_stories") or [])
     ]
@@ -742,7 +869,10 @@ async def post_clarification_submit(payload: Dict[str, Any], current_user: Authe
             "[CLARIFICATION][REVIEW] replaced %d older combined clarification draft(s) for project=%s",
             len(removed_drafts), project_id,
         )
-    has_requirement_changes = proposal_state["requirements"] != current_requirements
+    has_requirement_changes = (
+        proposal_state["requirements"] != current_requirements
+        or proposal_narrative != (saved_state.get("prd_narrative") or {})
+    )
     pending_action = None
     if has_requirement_changes:
         pending_action = await PendingActionRepository.create(

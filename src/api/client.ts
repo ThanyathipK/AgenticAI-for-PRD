@@ -204,8 +204,9 @@ export const api = {
       base_content: options?.base_content,
       review_status: options?.review_status,
       change_summary: options?.change_summary,
-      // Omitted => backend default False => the manual save makes the part
-      // HUMAN-OWNED so "Generate PRD" preserves it. Pass true to hand it back.
+      // Omitted => preserve the section's existing AI eligibility. Manual
+      // authorship and regeneration protection are separate; use Lock to
+      // protect the section from a future Generate PRD run.
       ai_generatable: options?.ai_generatable,
       updated_by: options?.updated_by ?? 'user',
     }),

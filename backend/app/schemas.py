@@ -483,6 +483,12 @@ class RequirementStateResponse(BaseModel):
     current_workflow_state: str = Field("gatherer_node", description="Current multi-agent workflow node.")
     version_number: int = Field(1, description="Current immutable PRD version number.")
     requirements_revision: int = Field(1, description="Monotonic revision for requirement gathering and edits.")
+    prd_source_requirements_revision: Optional[int] = Field(
+        None, description="Requirement revision used to build the saved PRD."
+    )
+    prd_is_stale: bool = Field(
+        False, description="True when requirements changed after the saved PRD was built."
+    )
     updated_at: Optional[str] = Field(None, description="ISO8601 timestamp of the last update.")
     conversation_history: List[ConversationMessageResponse] = Field(default_factory=list, description="Persisted conversation messages for the project.")
 
@@ -977,12 +983,11 @@ class PrdSectionUpdate(BaseModel):
         None, description="Optional new review status: 'draft' | 'satisfied' | 'approved'."
     )
     updated_by: str = Field("user", description="Identifier of who is editing the section.")
-    ai_generatable: bool = Field(
-        False,
-        description="Ownership of this part after the edit. A manual save defaults "
-        "to False (human-owned) so the Architect NEVER regenerates it — this is "
-        "what keeps manual edits alive across the next 'Generate PRD'. Pass True "
-        "to hand the part back to the AI.",
+    ai_generatable: Optional[bool] = Field(
+        None,
+        description="Optional explicit AI-eligibility override. Ordinary manual saves "
+        "leave the existing value unchanged; locking is what protects an editable "
+        "section from regeneration.",
     )
     change_summary: Optional[str] = Field(None, description="Optional human-readable change note stored with the version.")
 

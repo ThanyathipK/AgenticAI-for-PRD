@@ -179,6 +179,7 @@ export default function Dashboard() {
     lockableRequirements,
     refreshLockableRequirements,
     handleGeneratePRD,
+    prdMarkdown,
     prdGenerationFailed,
     prdDiagramGenerationFailed,
     clearPrdGenerationNotices,
@@ -188,6 +189,19 @@ export default function Dashboard() {
   // The query itself lives in useProjects; this only controls whether the
   // search input row is revealed and keeps it focused when opened.
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
+  const [isGenerateWarningOpen, setIsGenerateWarningOpen] = useState<boolean>(false);
+
+  const requestGeneratePRD = async (): Promise<void> => {
+    const hasExistingDocument = Boolean(prdMarkdown.trim());
+    const hasExistingPreview = pendingActions.some(
+      action => action.action_type === 'GENERATE_PRD',
+    );
+    if (hasExistingDocument || hasExistingPreview) {
+      setIsGenerateWarningOpen(true);
+      return;
+    }
+    await handleGeneratePRD();
+  };
   const searchInputRef = useRef<HTMLInputElement>(null);
   const previewScrollRef = useRef<HTMLDivElement>(null);
   const previousPendingActionIdsRef = useRef<Set<string>>(new Set());
@@ -676,7 +690,10 @@ export default function Dashboard() {
       <div id="split-container" className="flex-1 min-w-0 min-h-0 flex flex-col md:flex-row overflow-hidden bg-white" ref={splitContainerRef}>
         
         {/* LEFT PANEL: Conversational Timeline & Human-In-The-Loop */}
-        <ChatPanel state={state} userName={userDisplayName} />
+        <ChatPanel
+          state={{ ...state, handleGeneratePRD: requestGeneratePRD }}
+          userName={userDisplayName}
+        />
 
         {/* RESIZABLE DIVIDER */}
         <div
@@ -739,13 +756,13 @@ export default function Dashboard() {
 
             {hasPrdGenerationFailed && (
               <PRDGenerationFailure
-                onRetry={handleGeneratePRD}
+                onRetry={requestGeneratePRD}
                 previousDraftRetained={hasPrdGenerationPreview}
               />
             )}
             {!hasPrdGenerationFailed && activeTab === 'prd' && prdDiagramGenerationFailed && (
               <PRDGenerationFailure
-                onRetry={handleGeneratePRD}
+                onRetry={requestGeneratePRD}
                 previousDraftRetained={hasPrdGenerationPreview}
                 diagramOnly
               />
@@ -776,7 +793,7 @@ export default function Dashboard() {
                     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                   }]);
                 }}
-                onRegenerate={handleGeneratePRD}
+                onRegenerate={requestGeneratePRD}
                 onBackToRequirements={() => setActiveTab('trace')}
               />
             ))}
@@ -923,6 +940,21 @@ export default function Dashboard() {
           handleDeleteProject (6.1 → api 6.2 → route 6.3); a false result keeps
           the modal open when the server refuses. */}
       {/* DELETE PROJECT CONFIRM MODAL (styled replacement for native confirm()) */}
+      <ConfirmModal
+        isOpen={isGenerateWarningOpen}
+        title="Generate a new PRD draft?"
+        description="AI generation may replace manual changes in unlocked AI-managed sections. Locked sections and non-AI sections are preserved. Your currently saved PRD remains available in version history."
+        confirmLabel="Generate draft"
+        pendingLabel="Starting..."
+        onConfirm={async () => {
+          // Close the warning as soon as the generation job is accepted by the
+          // UI; the workspace already exposes progress and cancellation.
+          void handleGeneratePRD();
+          return true;
+        }}
+        onClose={() => setIsGenerateWarningOpen(false)}
+      />
+
       <ConfirmModal
         isOpen={!!projectPendingDelete}
         title="Delete Project"

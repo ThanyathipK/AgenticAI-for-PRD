@@ -21,7 +21,7 @@ const SECTIONS = [
     ['Generate PRD', 'Generate PRD builds a draft from the currently saved project artifacts. The existing saved PRD remains unchanged while the draft is in preview.'],
     ['PRD clarity level', 'Clarity evaluates the complete PRD, not individual requirements. High requires a specific business domain, actors or end-to-end flows, explicit constraints, and either one measurable target or two operational control areas. Medium requires a named system or business domain plus either actors/flows or an explicit constraint. Low is reserved for generic, mostly empty, or template-only content. A generic word such as “API” does not count as a named technology, and template guidance does not increase the level.'],
     ['Approve, regenerate, or discard', 'Approve & save PRD creates the next semantic version. Regenerate replaces the unsaved draft. Discard removes the draft without changing the saved PRD.'],
-    ['Edit sections', 'PRD sections can be edited individually. A saved manual edit creates a new immutable PRD version and marks that section as human-owned.'],
+    ['Edit sections', 'PRD sections can be edited individually. A saved manual edit creates a new immutable PRD version. Unlocked AI-managed sections may change on the next generation.'],
     ['Lock reviewed content', 'Lock a requirement or PRD section to protect it from later AI changes. Unlock it when further editing or regeneration is required.'],
   ] },
   { number: '4', title: 'Exploring, versioning, and exporting', items: [

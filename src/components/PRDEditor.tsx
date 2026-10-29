@@ -35,6 +35,7 @@ export function PRDEditor({ state }: { state: ProjectState }) {
     handleToggleSectionLock,
     currentVersion,
     versionHistory,
+    prdIsStale,
   } = state;
   const currentSemVer = versionHistory.find(version => version.version === currentVersion)?.semVersion;
 
@@ -63,10 +64,24 @@ export function PRDEditor({ state }: { state: ProjectState }) {
         <div className="mb-3 flex flex-wrap items-center gap-2 no-print">
           <div className="mr-auto text-[10px] font-bold tracking-[0.12em] text-[#a89b91]">KRUNGSRI NIMBLE CONFIDENTIAL</div>
           {prdMarkdown && <span className="text-[10px] font-mono text-on-surface-variant">{formatPrdVersionLabel(currentSemVer, currentVersion)}</span>}
-          {prdMarkdown && <span className="rounded-full border border-outline bg-surface px-2 py-0.5 text-[10px] font-semibold text-on-surface-variant">Saved</span>}
+          {prdMarkdown && (
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+              prdIsStale
+                ? 'border-amber-300 bg-amber-50 text-amber-800'
+                : 'border-outline bg-surface text-on-surface-variant'
+            }`}>
+              {prdIsStale ? 'Outdated — regenerate required' : 'Saved'}
+            </span>
+          )}
           {prdMarkdown && <PrdClarityStatus markdown={prdMarkdown} />}
         </div>
         
+        {prdMarkdown && prdIsStale && (
+          <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 no-print">
+            Requirements changed after this PRD was generated. Generate and approve a new PRD before review or export.
+          </div>
+        )}
+
         {!prdMarkdown ? (
           <div className="flex flex-col items-center justify-center py-20 text-center text-on-surface-variant no-print">
             <FileText className="w-12 h-12 text-primary/40 mb-4 animate-pulse" />

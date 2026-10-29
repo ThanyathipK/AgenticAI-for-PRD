@@ -1,3 +1,4 @@
+import copy
 import logging
 from datetime import datetime, timezone
 from typing import List
@@ -568,12 +569,16 @@ async def confirm_action(
             change_type="ai",
             change_summary="Approved generated PRD preview.",
         )
+        prd_narrative = copy.deepcopy(proposed_changes.get("prd_narrative") or {})
+        prd_narrative["_generation"] = {
+            "source_requirements_revision": expected_requirements_revision,
+        }
         persisted_state = await RequirementStateRepository.save_or_update(
             project_id,
             {
                 "generated_prd": final_prd,
                 "generated_diagrams": proposed_changes.get("generated_diagrams") or "",
-                "prd_narrative": proposed_changes.get("prd_narrative") or {},
+                "prd_narrative": prd_narrative,
                 "current_workflow_state": "COMPLETED",
                 "version_number": version_record["version_number"],
             },

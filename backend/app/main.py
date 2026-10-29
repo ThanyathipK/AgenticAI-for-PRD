@@ -71,24 +71,6 @@ async def lifespan(app: FastAPI):
     if recovered_jobs:
         logger.info("Recovered %d queued generation job(s) after restart.", recovered_jobs)
 
-    # Backfill: parts whose newest history row is a human manual edit become
-    # human-owned, so manual edits saved before the ownership flag existed are
-    # not overwritten by the next "Generate PRD". Idempotent + fail-soft: a
-    # bookkeeping failure must never block the app from booting.
-    try:
-        from app.database import AsyncSessionLocal
-        from app.repositories.prd_section import PRDSectionRepository
-        async with AsyncSessionLocal() as session:
-            flipped = await PRDSectionRepository.mark_manually_edited_as_human_owned(session)
-            if flipped:
-                await session.commit()
-                logger.info(
-                    "[PRD SECTIONS] Marked %d manually-edited part(s) as human-owned "
-                    "(protected from AI regeneration).", flipped,
-                )
-    except Exception as backfill_err:  # pragma: no cover - defensive
-        logger.warning("PRD section ownership backfill failed: %s", backfill_err)
-
     # Finding #40 — startup check: probe LM Studio without crashing the app.
     # The health probe never raises; this extra guard is belt-and-braces.
     try:

@@ -198,6 +198,31 @@ class RequirementStateRepository:
         elif model.generated_diagrams and model.__dict__.get("updated_at"):
             diagram_generated_at = model.__dict__["updated_at"].isoformat()
 
+        prd_narrative = model.prd_narrative or {}
+        generation_meta = (
+            prd_narrative.get("_generation", {})
+            if isinstance(prd_narrative, dict)
+            else {}
+        )
+        prd_source_requirements_revision = generation_meta.get(
+            "source_requirements_revision"
+        )
+        current_requirements_revision = int(model.requirements_revision or 1)
+        prd_is_stale = bool(
+            generated_prd
+            and (
+                (
+                    prd_source_requirements_revision is None
+                    and current_requirements_revision > 1
+                )
+                or (
+                    prd_source_requirements_revision is not None
+                    and int(prd_source_requirements_revision)
+                    < current_requirements_revision
+                )
+            )
+        )
+
         return {
             "project_id": str(model.project_id),
             "project_name": project_name,
@@ -208,7 +233,9 @@ class RequirementStateRepository:
             "actors": model.actors,
             "user_stories": all_user_stories if all_user_stories else [],
             "acceptance_criteria": all_acceptance_criteria if all_acceptance_criteria else [],
-            "prd_narrative": model.prd_narrative or {},
+            "prd_narrative": prd_narrative,
+            "prd_source_requirements_revision": prd_source_requirements_revision,
+            "prd_is_stale": prd_is_stale,
             "clarification_questions": cqs if cqs else [],
             "validation_status": model.validation_status,
             "passed_checks": latest_audit.get("passed_checks", []),

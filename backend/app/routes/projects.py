@@ -1204,7 +1204,10 @@ async def _fill_official_export_template(
     document = CanonicalPRD(
         metadata=PRDMetadata(
             project_id=project_id,
-            project_name=str(project.get("name") or payload.project_name or ""),
+            project_name=(
+                saved_intake.get("pmo_name")
+                or str(project.get("name") or payload.project_name or "")
+            ),
             pmo_no=saved_intake.get("pmo_no"),
             author=saved_intake.get("author") or "Product Owner",
             status=format_project_status(project.get("status")),
