@@ -154,7 +154,6 @@ Current numbered groups:
 - `AUTH 2.x`: stored-session restoration
 - `AUTH 3.x`: public authentication-capability/configuration probe
 - `AUTH 4.x`: logout
-- `AUTH 5.x`: password change and account operations
 - `AUTH 6.x`: registration
 - `AUTH 7.x`: JWT authentication and project authorization dependencies
 - `AUTH 8.x`: permanent account deletion

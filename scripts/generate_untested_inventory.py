@@ -151,7 +151,7 @@ def priority_section(untested: list[Function]) -> list[str]:
         "|---:|---|---:|---|",
     ]
     suggestions = {
-        "Authentication": "expired/invalid tokens, password change, flexible auth, ownership denial",
+        "Authentication": "expired/invalid tokens, flexible auth, account deletion, ownership denial",
         "Background jobs": "recovery, cancellation races, terminal failure serialization",
         "Locking": "ownership checks, optimistic rollback, locked mutation rejection",
         "Impact analysis": "requirement/story diffs, dangling references, downstream summaries",

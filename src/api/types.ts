@@ -916,7 +916,7 @@ export interface AuthConfigPayload {
   token_expiration_minutes: number;
 }
 
-/** Response from POST /api/auth/logout and /api/auth/change-password. */
+/** Response from POST /api/auth/logout. */
 export interface AuthMessageResponse {
   message: string;
 }

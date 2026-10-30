@@ -9,7 +9,7 @@ so no live Supabase connection is touched):
   case-insensitive lookup, UUID coercion safety on ``get_by_id``;
 * :mod:`app.auth` — hashing, credential verification, JWT round-trip, and the
   bootstrap account's "no password provisioned" diagnosis;
-* ``/api/auth/*`` routes — login, ``/me``, config, register, change-password;
+* ``/api/auth/*`` routes — login, ``/me``, config, register, logout, and account deletion;
 * :func:`app.migrations.seed_default_user` — the startup seeder must leave the
   system account LOGINABLE (bcrypt hash written / back-filled), which is what
   previously made every login attempt return 401.
@@ -495,50 +495,6 @@ async def test_register_is_gated_by_signup_enabled(client, monkeypatch):
     )
 
     assert resp.status_code == 403
-
-
-@pytest.mark.asyncio
-async def test_change_password_persists_the_new_hash(client, db_session):
-    await _create_user(db_session, email="ba@bank.com")
-    login = await client.post(
-        "/api/auth/login", data={"username": "ba@bank.com", "password": PASSWORD}
-    )
-    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
-
-    changed = await client.post(
-        "/api/auth/change-password",
-        json={"old_password": PASSWORD, "new_password": "Rotated-Pass-2"},
-        headers=headers,
-    )
-    assert changed.status_code == 200, changed.text
-
-    # The write reached the database: the old password no longer works and the
-    # new one does.
-    old_login = await client.post(
-        "/api/auth/login", data={"username": "ba@bank.com", "password": PASSWORD}
-    )
-    new_login = await client.post(
-        "/api/auth/login", data={"username": "ba@bank.com", "password": "Rotated-Pass-2"}
-    )
-    assert old_login.status_code == 401
-    assert new_login.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_change_password_rejects_wrong_old_password(client, db_session):
-    await _create_user(db_session, email="ba@bank.com")
-    login = await client.post(
-        "/api/auth/login", data={"username": "ba@bank.com", "password": PASSWORD}
-    )
-    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
-
-    resp = await client.post(
-        "/api/auth/change-password",
-        json={"old_password": "wrong", "new_password": "Rotated-Pass-2"},
-        headers=headers,
-    )
-
-    assert resp.status_code == 400
 
 
 @pytest.mark.asyncio

@@ -41,7 +41,7 @@ Agentic AI turns plain-English banking product briefs into **audited, versioned,
 - **Performance observability** — every API response includes an `X-Request-ID` correlation value and a browser-readable `Server-Timing: app;dur=<milliseconds>` measurement
 - **Rate limiting** — in-process sliding-window limiter guards the LLM-facing endpoints (chat, workflow, document extraction) with per-IP 429s (Finding #39)
 - **LM Studio health check & graceful degradation** — the backend probes the local gateway at startup and on every `/api/health` call; the chat header shows an **LLM Offline** pill when the local server is down (auto-refreshing, no restart needed) instead of failing with opaque 503s (Finding #40)
-- **JWT authentication & role-based accounts** — self-service sign-up (`SIGNUP_ENABLED`, canonical roles only), `POST /api/auth/login` (OAuth2 password flow), `/api/auth/me`, password change, and bcrypt-hashed credentials stored in `users.password_hash`; projects are **scoped to the signed-in owner**, so each account sees only its own workspace
+- **JWT authentication & role-based accounts** — self-service sign-up (`SIGNUP_ENABLED`, canonical roles only), `POST /api/auth/login` (OAuth2 password flow), `/api/auth/me`, and bcrypt-hashed credentials stored in `users.password_hash`; projects are **scoped to the signed-in owner**, so each account sees only its own workspace
 - **Semantic memory for the standalone chat API** — project-bound calls to `POST /api/chat` distil durable facts/decisions, embed them through `LM_STUDIO_EMBEDDING_MODEL`, and recall the top-k by blended cosine relevance + recency decay. This path is fail-open. The current SPA composer uses `/api/process-requirements`, so it does not yet consume this memory layer
 - **Requirement Traceability Matrix** — derived, read-only view linking Requirements ↔ User Stories ↔ Acceptance Criteria ↔ PRD sections ↔ diagrams, with a project-wide coverage/gap report
 - **Dependency-aware partial regeneration** — a persisted artifact graph links requirements → stories → criteria → PRD sections/diagrams; the Traceability tab previews the transitive blast radius and regenerates only affected, unlocked AI-owned targets while recording each scoped run
@@ -285,7 +285,7 @@ Then edit the settings that matter:
   `00000000-0000-0000-0000-000000000000` because it also owns every project created without an
   authenticated caller. Set `SYSTEM_USER_PASSWORD`, otherwise `POST /api/auth/login` cannot work for it;
   the value is bcrypt-hashed into `users.password_hash`, and an already-provisioned password is never
-  overwritten (rotate it through `POST /api/auth/change-password`).
+  overwritten after provisioning.
 - **Semantic memory** (optional, on by default) — `MEMORY_ENABLED`, `MEMORY_FACT_EXTRACTION_ENABLED`,
   `MEMORY_TOP_K` (6), `MEMORY_CONTEXT_MAX_TOKENS` (800), `MEMORY_CANDIDATE_LIMIT` (400),
   `MEMORY_RELEVANCE_WEIGHT` (0.7 cosine / 0.3 recency), `MEMORY_RECENCY_HALF_LIFE_DAYS` (30) and
@@ -605,7 +605,6 @@ The backend is a FastAPI app; full interactive documentation (with request/respo
 | `GET` | `/api/auth/me` | Current user resolved from the Bearer token (the **database is the source of truth**, not the token claims) |
 | `GET` | `/api/auth/config` | Public capability probe (`signup_enabled`, `token_expiration_minutes`) so the UI can hide the sign-up form |
 | `POST` | `/api/auth/logout` | Audit-logged logout (JWTs are stateless, so this is primarily client-side) |
-| `POST` | `/api/auth/change-password` | Rotate the caller's password (also how the seeded system account is rotated) |
 | `DELETE` | `/api/auth/account` | Permanently delete the authenticated account after current-password verification and exact `DELETE` confirmation; owned projects and their requirements, documents, chats, and PRDs are removed transactionally, while historical actor references use the schema's anonymizing `SET NULL` behavior |
 
 > Project endpoints are protected by the `get_current_user` dependency and **scoped to the signed-in owner** — a caller only ever sees their own projects. Auth is header-based (`Authorization: Bearer <token>`, never cookies), which is why the CORS setup must never use `"*"` with credentials.

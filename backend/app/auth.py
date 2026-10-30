@@ -41,8 +41,6 @@ logger = logging.getLogger("app.auth")
 #   AUTH 2.x  SESSION RESTORE   GET  /api/auth/me        (2.1 → 2.2 → 2.3 → 2.4)
 #   AUTH 3.x  CAPABILITIES      GET  /api/auth/config    (3.1 → 3.2 → 3.3 → 3.4)
 #   AUTH 4.x  LOGOUT            AuthPanel 4.1 → useAuth.logout → 4.2 → 4.3 → 4.4
-#   AUTH 5.x  CHANGE PASSWORD   POST /api/auth/change-password (service 5.1/5.2;
-#                                no frontend caller — see the note at AUTH 5.1)
 #   AUTH 6.x  REGISTER          useAuth 6.1 → api 6.2 → route 6.3.1…6.3.6 → 6.4
 #   AUTH 7.x  AUTHORIZATION     get_current_user 7.1 (verify_token 7.1.1, repo
 #                                7.1.2, projection 7.1.3) · flexible 7.2 (+7.2.1)
@@ -121,8 +119,7 @@ security_scheme = HTTPBearer()
 # ---------------------------------------------------------------------------
 
 
-# AUTH 1.7.1.3 — Bcrypt verification step of the LOGIN flow (called by AUTH 1.7.1);
-#                reused as AUTH 5.2.2 (old-password check on change-password).
+# AUTH 1.7.1.3 — Bcrypt verification step of the LOGIN flow (called by AUTH 1.7.1).
 #                Returns False — never raises — for an empty or malformed stored
 #                hash so a bad row produces a 401 instead of a 500.
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -142,8 +139,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-# AUTH 6.3.5 (hashing step) — bcrypt hashing for registration (route AUTH 6.3);
-#                reused as AUTH 5.2.3 (new hash on change-password). Cost factor
+# AUTH 6.3.5 (hashing step) — bcrypt hashing for registration. Cost factor
 #                comes from pwd_context above (bcrypt__rounds=12).
 def get_password_hash(password: str) -> str:
     """Hash a plaintext password using bcrypt."""
@@ -163,59 +159,6 @@ def password_hash_is_usable(hashed_password: Optional[str]) -> bool:
     instead of a permanent, unexplainable 401.
     """
     return bool((hashed_password or "").strip())
-
-
-# AUTH 5.2 — Service layer for POST /api/auth/change-password (route AUTH 5.1).
-#            No frontend caller exists (see the AUTH 5.1 discrepancy note).
-#              AUTH 5.2.1 — repository READ: UserRepository.get_by_id → 400 when
-#                           the row is gone (app.repositories.user)
-#              AUTH 5.2.2 — verify_password (AUTH 1.7.1.3) on the OLD password
-#              AUTH 5.2.3 — get_password_hash + UserRepository.set_password_hash
-#                           + commit → users table UPDATE
-async def change_password(
-    user_id: str,
-    old_password: str,
-    new_password: str,
-    session: AsyncSession,
-) -> None:
-    """
-    Change a user's password after verifying the old password.
-
-    Args:
-        user_id: ID of the user whose password is being changed.
-        old_password: Current plaintext password (must verify).
-        new_password: New plaintext password (stored bcrypt-hashed).
-        session: Active database session (committed on success).
-
-    Raises:
-        HTTPException 400: If the user does not exist or the old
-            password is incorrect.
-    """
-    # AUTH 5.2.1 — Repository READ (users table) via UserRepository.get_by_id;
-    #              a non-UUID id or missing row becomes a 400 below.
-    user = await UserRepository.get_by_id(user_id, session)
-
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User not found",
-        )
-
-    # AUTH 5.2.2 — Bcrypt check of the OLD password (AUTH 1.7.1.3 helper) → 400.
-    if not verify_password(old_password, user.password_hash):
-        logger.warning(
-            "Failed password change (wrong old password) for user %s", user_id
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Old password is incorrect",
-        )
-
-    # AUTH 5.2.3 — WRITE: re-hash (AUTH 6.3.5 helper), repository UPDATE +
-    #              commit (users.password_hash).
-    await UserRepository.set_password_hash(user, get_password_hash(new_password), session)
-    await session.commit()
-    logger.info("Password changed for user: %s", user.email)
 
 
 # AUTH 1.7.1 — Verify login credentials against the authoritative user record.

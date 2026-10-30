@@ -5,10 +5,10 @@
 > an endpoint, component, hook, callback, or another tested function. Use runtime
 > coverage to determine whether a listed function is actually unexecuted.
 
-- Production named functions detected: **803**
-- No direct test reference found: **433**
-- Backend candidates: **349**
-- Frontend candidates: **84**
+- Production named functions detected: **813**
+- No direct test reference found: **434**
+- Backend candidates: **347**
+- Frontend candidates: **87**
 
 Anonymous callbacks and Python dunder methods are excluded.
 
@@ -20,46 +20,43 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 | Priority | Area | Direct-reference gaps | Suggested next coverage |
 |---:|---|---:|---|
-| 1 | Authentication | 15 | expired/invalid tokens, password change, flexible auth, ownership denial |
+| 1 | Authentication | 12 | expired/invalid tokens, flexible auth, account deletion, ownership denial |
 | 2 | Background jobs | 2 | recovery, cancellation races, terminal failure serialization |
 | 3 | Locking | 9 | ownership checks, optimistic rollback, locked mutation rejection |
 | 4 | Impact analysis | 13 | requirement/story diffs, dangling references, downstream summaries |
-| 5 | Exports | 82 | DOCX/PDF endpoint failures, conversion fallback, download error handling |
+| 5 | Exports | 81 | DOCX/PDF endpoint failures, conversion fallback, download error handling |
 
 ### Authentication
 
-- `backend/app/auth.py:64` — `_resolve_jwt_secret`
-- `backend/app/auth.py:172` — `change_password`
-- `backend/app/auth.py:383` — `to_authenticated_user`
-- `backend/app/auth.py:403` — `get_current_user`
-- `backend/app/auth.py:525` — `require_project_owner`
-- `backend/app/auth.py:542` — `_resolve_user_from_raw_token`
-- `backend/app/auth.py:562` — `get_current_user_flexible`
-- `backend/app/auth.py:591` — `require_project_owner_flexible`
-- `backend/app/repositories/user.py:131` — `UserRepository.set_password_hash`
-- `backend/app/repositories/user.py:139` — `UserRepository.delete_account`
-- `backend/app/routes/auth.py:179` — `read_current_user`
-- `backend/app/routes/auth.py:203` — `auth_config`
-- `backend/app/routes/auth.py:257` — `change_password_endpoint`
-- `backend/app/routes/auth.py:293` — `delete_account`
+- `backend/app/auth.py:65` — `_resolve_jwt_secret`
+- `backend/app/auth.py:338` — `to_authenticated_user`
+- `backend/app/auth.py:360` — `get_current_user`
+- `backend/app/auth.py:483` — `require_project_owner`
+- `backend/app/auth.py:500` — `_resolve_user_from_raw_token`
+- `backend/app/auth.py:520` — `get_current_user_flexible`
+- `backend/app/auth.py:549` — `require_project_owner_flexible`
+- `backend/app/repositories/user.py:147` — `UserRepository.delete_account`
+- `backend/app/routes/auth.py:174` — `read_current_user`
+- `backend/app/routes/auth.py:198` — `auth_config`
+- `backend/app/routes/auth.py:249` — `delete_account`
 - `src/hooks/useAuth.ts:31` — `tokenStorage`
 
 ### Background jobs
 
-- `backend/app/routes/generation_jobs.py:46` — `start_regeneration_job`
+- `backend/app/routes/generation_jobs.py:70` — `start_regeneration_job`
 - `src/hooks/chat/backgroundJobs.ts:10` — `activeJobKey`
 
 ### Locking
 
-- `backend/app/lock_service.py:54` — `LockService._resolve_artifact_project_id`
-- `backend/app/lock_service.py:76` — `LockService._verify_project_ownership`
-- `backend/app/lock_service.py:354` — `LockService._serialize_lock_metadata`
-- `backend/app/lock_service.py:365` — `LockService.raise_if_locked`
-- `backend/app/lock_service.py:388` — `LockService.raise_if_locked_model`
-- `backend/app/routes/lock.py:176` — `get_artifact_lock_status`
-- `backend/app/routes/lock.py:230` — `get_pending_actions`
-- `backend/app/routes/lock.py:263` — `get_action_impact`
-- `src/hooks/useArtifactLocks.ts:53` — `isListableRequirement`
+- `backend/app/lock_service.py:57` — `LockService._resolve_artifact_project_id`
+- `backend/app/lock_service.py:79` — `LockService._verify_project_ownership`
+- `backend/app/lock_service.py:373` — `LockService._serialize_lock_metadata`
+- `backend/app/lock_service.py:384` — `LockService.raise_if_locked`
+- `backend/app/lock_service.py:407` — `LockService.raise_if_locked_model`
+- `backend/app/routes/lock.py:195` — `get_artifact_lock_status`
+- `backend/app/routes/lock.py:250` — `get_pending_actions`
+- `backend/app/routes/lock.py:284` — `get_action_impact`
+- `src/hooks/useArtifactLocks.ts:57` — `isListableRequirement`
 
 ### Impact analysis
 
@@ -70,12 +67,12 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 - `backend/app/impact_service.py:94` — `diff_requirements`
 - `backend/app/impact_service.py:146` — `diff_stories`
 - `backend/app/impact_service.py:177` — `diff_stories._record`
-- `backend/app/impact_service.py:267` — `analyze_downstream`
-- `backend/app/impact_service.py:349` — `ImpactService.analyze_pending_action`
-- `src/components/ConfirmationPanel.tsx:31` — `asArray`
-- `src/components/ConfirmationPanel.tsx:39` — `ChangeBadge`
-- `src/components/ConfirmationPanel.tsx:73` — `ImpactAnalysisSection`
-- `src/components/ConfirmationPanel.tsx:231` — `ConfirmationPanel`
+- `backend/app/impact_service.py:292` — `analyze_downstream`
+- `backend/app/impact_service.py:369` — `ImpactService.analyze_pending_action`
+- `src/components/ConfirmationPanel.tsx:35` — `asArray`
+- `src/components/ConfirmationPanel.tsx:43` — `ChangeBadge`
+- `src/components/ConfirmationPanel.tsx:77` — `ImpactAnalysisSection`
+- `src/components/ConfirmationPanel.tsx:262` — `ConfirmationPanel`
 
 ### Exports
 
@@ -91,48 +88,47 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 - `backend/app/latex_docx_native.py:456` — `_shade`
 - `backend/app/latex_docx_native.py:465` — `_fill_cell`
 - `backend/app/latex_docx_native.py:474` — `_render_table`
-- `backend/app/latex_docx_native.py:578` — `_spacer`
-- `backend/app/latex_docx_native.py:591` — `_add_heading`
-- `backend/app/latex_docx_native.py:605` — `_render_enum`
-- `backend/app/latex_docx_native.py:612` — `_render_cover_titles`
-- `backend/app/latex_docx_native.py:694` — `_render_text`
-- `backend/app/latex_docx_native.py:708` — `_render_body`
-- `backend/app/latex_docx_native.py:742` — `_add_page_field`
-- `backend/app/latex_docx_native.py:756` — `_add_cs_font`
-- `backend/app/latex_docx_native.py:784` — `_new_document`
-- `backend/app/latex_service.py:107` — `_enable_aptos_for_tectonic`
-- `backend/app/latex_service.py:124` — `_find_binary`
-- `backend/app/latex_service.py:140` — `tectonic_bin`
-- `backend/app/latex_service.py:144` — `pandoc_bin`
-- `backend/app/latex_service.py:178` — `_strip_code_fence`
-- `backend/app/latex_service.py:191` — `has_markdown_structure`
-- `backend/app/latex_service.py:240` — `_repair_newline_artifact`
-- `backend/app/latex_service.py:268` — `_escape_raw_dollars`
-- `backend/app/latex_service.py:334` — `_repair_missing_row_terminators`
-- `backend/app/latex_service.py:354` — `_repair_missing_row_terminators._fix_block`
-- `backend/app/latex_service.py:452` — `_load_template_preamble_and_footer`
-- `backend/app/latex_service.py:551` — `_take_braced_group`
-- `backend/app/latex_service.py:568` — `_rewrite_command`
-- `backend/app/latex_service.py:605` — `_keep_in_cell_rowbreaks`
-- `backend/app/latex_service.py:700` — `preprocess_latex_for_pandoc._unwrap_last`
-- `backend/app/latex_service.py:703` — `preprocess_latex_for_pandoc._unwrap_shortstack`
-- `backend/app/latex_service.py:758` — `_extract_latex_body`
-- `backend/app/latex_service.py:854` — `_run`
-- `backend/app/latex_service.py:951` — `convert_markdown_to_docx`
-- `backend/app/latex_service.py:1012` — `soffice_bin`
-- `backend/app/latex_service.py:1104` — `_demote_headings`
-- `backend/app/latex_service.py:1138` — `_clean_html_cell`
-- `backend/app/latex_service.py:1150` — `_html_table_to_gfm`
-- `backend/app/latex_service.py:1167` — `_normalize_pandoc_gfm`
-- `backend/app/latex_service.py:1177` — `_normalize_pandoc_gfm._sub`
-- `backend/app/latex_service.py:1185` — `_normalize_template_table_semantics`
-- `backend/app/latex_service.py:1196` — `_normalize_template_table_semantics._section`
-- `backend/app/latex_service.py:1203` — `_normalize_template_table_semantics._product`
-- `backend/app/latex_service.py:1281` — `_normalize_template_table_semantics._technical`
-- `backend/app/latex_service.py:1291` — `_normalize_template_table_semantics._business`
-- `backend/app/latex_service.py:1306` — `_normalize_template_table_semantics._appendix`
-- `backend/app/latex_service.py:1323` — `is_markdown_table_separator`
-- `backend/app/latex_service.py:1356` — `_prd_to_markdown_cached`
+- `backend/app/latex_docx_native.py:579` — `_spacer`
+- `backend/app/latex_docx_native.py:592` — `_add_heading`
+- `backend/app/latex_docx_native.py:606` — `_render_enum`
+- `backend/app/latex_docx_native.py:613` — `_render_cover_titles`
+- `backend/app/latex_docx_native.py:695` — `_render_text`
+- `backend/app/latex_docx_native.py:709` — `_render_body`
+- `backend/app/latex_docx_native.py:745` — `_add_page_field`
+- `backend/app/latex_docx_native.py:759` — `_add_cs_font`
+- `backend/app/latex_docx_native.py:787` — `_new_document`
+- `backend/app/latex_service.py:109` — `_enable_aptos_for_tectonic`
+- `backend/app/latex_service.py:126` — `_find_binary`
+- `backend/app/latex_service.py:142` — `tectonic_bin`
+- `backend/app/latex_service.py:146` — `pandoc_bin`
+- `backend/app/latex_service.py:180` — `_strip_code_fence`
+- `backend/app/latex_service.py:193` — `has_markdown_structure`
+- `backend/app/latex_service.py:242` — `_repair_newline_artifact`
+- `backend/app/latex_service.py:270` — `_escape_raw_dollars`
+- `backend/app/latex_service.py:336` — `_repair_missing_row_terminators`
+- `backend/app/latex_service.py:356` — `_repair_missing_row_terminators._fix_block`
+- `backend/app/latex_service.py:456` — `_load_template_preamble_and_footer`
+- `backend/app/latex_service.py:556` — `_take_braced_group`
+- `backend/app/latex_service.py:573` — `_rewrite_command`
+- `backend/app/latex_service.py:610` — `_keep_in_cell_rowbreaks`
+- `backend/app/latex_service.py:705` — `preprocess_latex_for_pandoc._unwrap_last`
+- `backend/app/latex_service.py:708` — `preprocess_latex_for_pandoc._unwrap_shortstack`
+- `backend/app/latex_service.py:763` — `_extract_latex_body`
+- `backend/app/latex_service.py:859` — `_run`
+- `backend/app/latex_service.py:1020` — `soffice_bin`
+- `backend/app/latex_service.py:1113` — `_demote_headings`
+- `backend/app/latex_service.py:1147` — `_clean_html_cell`
+- `backend/app/latex_service.py:1159` — `_html_table_to_gfm`
+- `backend/app/latex_service.py:1176` — `_normalize_pandoc_gfm`
+- `backend/app/latex_service.py:1186` — `_normalize_pandoc_gfm._sub`
+- `backend/app/latex_service.py:1194` — `_normalize_template_table_semantics`
+- `backend/app/latex_service.py:1205` — `_normalize_template_table_semantics._section`
+- `backend/app/latex_service.py:1212` — `_normalize_template_table_semantics._product`
+- `backend/app/latex_service.py:1295` — `_normalize_template_table_semantics._technical`
+- `backend/app/latex_service.py:1305` — `_normalize_template_table_semantics._business`
+- `backend/app/latex_service.py:1320` — `_normalize_template_table_semantics._appendix`
+- `backend/app/latex_service.py:1337` — `is_markdown_table_separator`
+- `backend/app/latex_service.py:1370` — `_prd_to_markdown_cached`
 - `backend/app/routes/projects.py:73` — `_duplicate_project_name_detail`
 - `backend/app/routes/projects.py:86` — `get_projects`
 - `backend/app/routes/projects.py:117` — `search_projects`
@@ -146,34 +142,34 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 - `backend/app/routes/projects.py:639` — `append_project_conversation`
 - `backend/app/routes/projects.py:676` — `update_project_requirement_state`
 - `backend/app/routes/projects.py:757` — `get_prd_template`
-- `backend/app/routes/projects.py:779` — `post_prd_export_generation`
-- `backend/app/routes/projects.py:963` — `_safe_filename_stem`
-- `backend/app/routes/projects.py:990` — `_latest_stored_prd_source`
-- `backend/app/routes/projects.py:1020` — `_markdown_export_narrative`
-- `backend/app/routes/projects.py:1083` — `_fill_official_export_template`
-- `backend/app/routes/projects.py:1201` — `_export_prd_bytes`
-- `backend/app/routes/projects.py:1249` — `_export_prd_bytes._pdf_export`
-- `backend/app/routes/projects.py:1343` — `export_prd_pdf`
-- `backend/app/routes/projects.py:1367` — `export_prd_docx`
-- `backend/app/routes/projects.py:1387` — `convert_prd_to_markdown`
-- `backend/app/routes/projects.py:1439` — `get_prd_versions`
-- `backend/app/routes/projects.py:1489` — `get_prd_version_diff`
-- `backend/app/routes/projects.py:1529` — `get_latest_prd_version`
-- `backend/app/routes/projects.py:1563` — `get_prd_version_by_number`
-- `src/hooks/useProjectState.ts:226` — `useProjectState`
+- `backend/app/routes/projects.py:786` — `post_prd_export_generation`
+- `backend/app/routes/projects.py:983` — `_safe_filename_stem`
+- `backend/app/routes/projects.py:1012` — `_latest_stored_prd_source`
+- `backend/app/routes/projects.py:1042` — `_markdown_export_narrative`
+- `backend/app/routes/projects.py:1105` — `_fill_official_export_template`
+- `backend/app/routes/projects.py:1237` — `_export_prd_bytes`
+- `backend/app/routes/projects.py:1289` — `_export_prd_bytes._pdf_export`
+- `backend/app/routes/projects.py:1385` — `export_prd_pdf`
+- `backend/app/routes/projects.py:1410` — `export_prd_docx`
+- `backend/app/routes/projects.py:1431` — `convert_prd_to_markdown`
+- `backend/app/routes/projects.py:1483` — `get_prd_versions`
+- `backend/app/routes/projects.py:1532` — `get_prd_version_diff`
+- `backend/app/routes/projects.py:1570` — `get_latest_prd_version`
+- `backend/app/routes/projects.py:1604` — `get_prd_version_by_number`
+- `src/hooks/useProjectState.ts:233` — `useProjectState`
 
 ## Backend Python
 
 ### `backend/app/agents.py`
 
-- `_previous_requirement_identity` — line 600
-- `_prd_follows_krungsri_template` — line 628
-- `_resolve_epic_name` — line 732
-- `gatherer_node._requirement_order` — line 1831
-- `_audit_checklist_batches` — line 2393
-- `_deterministic_audit_fallback` — line 2408
-- `_quality_texts` — line 2472
-- `auditor_node.run_passes` — line 2856
+- `_previous_requirement_identity` — line 618
+- `_prd_follows_krungsri_template` — line 646
+- `_resolve_epic_name` — line 755
+- `gatherer_node._requirement_order` — line 1892
+- `_audit_checklist_batches` — line 2479
+- `_deterministic_audit_fallback` — line 2496
+- `_quality_texts` — line 2560
+- `auditor_node.run_passes` — line 2974
 
 ### `backend/app/audit_checklist.py`
 
@@ -186,21 +182,20 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `backend/app/auth.py`
 
-- `_resolve_jwt_secret` — line 64
-- `change_password` — line 172
-- `to_authenticated_user` — line 383
-- `get_current_user` — line 403
-- `require_project_owner` — line 525
-- `_resolve_user_from_raw_token` — line 542
-- `get_current_user_flexible` — line 562
-- `require_project_owner_flexible` — line 591
+- `_resolve_jwt_secret` — line 65
+- `to_authenticated_user` — line 338
+- `get_current_user` — line 360
+- `require_project_owner` — line 483
+- `_resolve_user_from_raw_token` — line 500
+- `get_current_user_flexible` — line 520
+- `require_project_owner_flexible` — line 549
 
 ### `backend/app/config.py`
 
-- `contains_placeholder` — line 28
-- `Settings.normalize_debug_mode` — line 307
-- `Settings.cors_origins_list` — line 330
-- `Settings.trusted_proxy_ip_list` — line 335
+- `contains_placeholder` — line 29
+- `Settings.normalize_debug_mode` — line 308
+- `Settings.cors_origins_list` — line 331
+- `Settings.trusted_proxy_ip_list` — line 336
 
 ### `backend/app/database.py`
 
@@ -208,16 +203,16 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `backend/app/dependency_graph_service.py`
 
-- `_node_id` — line 24
-- `_artifact_ref` — line 28
-- `_active_items` — line 32
-- `detect_changed_artifacts.artifact_maps` — line 46
-- `rebuild_dependency_graph.add_node` — line 134
-- `rebuild_dependency_graph.add_edge` — line 148
+- `_node_id` — line 23
+- `_artifact_ref` — line 27
+- `_active_items` — line 31
+- `detect_changed_artifacts.artifact_maps` — line 45
+- `rebuild_dependency_graph.add_node` — line 133
+- `rebuild_dependency_graph.add_edge` — line 147
 
 ### `backend/app/document_processor.py`
 
-- `prepare_document_for_extraction.replace_markdown_image` — line 106
+- `prepare_document_for_extraction.replace_markdown_image` — line 111
 
 ### `backend/app/impact_service.py`
 
@@ -228,8 +223,8 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 - `diff_requirements` — line 94
 - `diff_stories` — line 146
 - `diff_stories._record` — line 177
-- `analyze_downstream` — line 267
-- `ImpactService.analyze_pending_action` — line 349
+- `analyze_downstream` — line 292
+- `ImpactService.analyze_pending_action` — line 369
 
 ### `backend/app/input_validation.py`
 
@@ -250,51 +245,50 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 - `_shade` — line 456
 - `_fill_cell` — line 465
 - `_render_table` — line 474
-- `_spacer` — line 578
-- `_add_heading` — line 591
-- `_render_enum` — line 605
-- `_render_cover_titles` — line 612
-- `_render_text` — line 694
-- `_render_body` — line 708
-- `_add_page_field` — line 742
-- `_add_cs_font` — line 756
-- `_new_document` — line 784
+- `_spacer` — line 579
+- `_add_heading` — line 592
+- `_render_enum` — line 606
+- `_render_cover_titles` — line 613
+- `_render_text` — line 695
+- `_render_body` — line 709
+- `_add_page_field` — line 745
+- `_add_cs_font` — line 759
+- `_new_document` — line 787
 
 ### `backend/app/latex_service.py`
 
-- `_enable_aptos_for_tectonic` — line 107
-- `_find_binary` — line 124
-- `tectonic_bin` — line 140
-- `pandoc_bin` — line 144
-- `_strip_code_fence` — line 178
-- `has_markdown_structure` — line 191
-- `_repair_newline_artifact` — line 240
-- `_escape_raw_dollars` — line 268
-- `_repair_missing_row_terminators` — line 334
-- `_repair_missing_row_terminators._fix_block` — line 354
-- `_load_template_preamble_and_footer` — line 452
-- `_take_braced_group` — line 551
-- `_rewrite_command` — line 568
-- `_keep_in_cell_rowbreaks` — line 605
-- `preprocess_latex_for_pandoc._unwrap_last` — line 700
-- `preprocess_latex_for_pandoc._unwrap_shortstack` — line 703
-- `_extract_latex_body` — line 758
-- `_run` — line 854
-- `convert_markdown_to_docx` — line 951
-- `soffice_bin` — line 1012
-- `_demote_headings` — line 1104
-- `_clean_html_cell` — line 1138
-- `_html_table_to_gfm` — line 1150
-- `_normalize_pandoc_gfm` — line 1167
-- `_normalize_pandoc_gfm._sub` — line 1177
-- `_normalize_template_table_semantics` — line 1185
-- `_normalize_template_table_semantics._section` — line 1196
-- `_normalize_template_table_semantics._product` — line 1203
-- `_normalize_template_table_semantics._technical` — line 1281
-- `_normalize_template_table_semantics._business` — line 1291
-- `_normalize_template_table_semantics._appendix` — line 1306
-- `is_markdown_table_separator` — line 1323
-- `_prd_to_markdown_cached` — line 1356
+- `_enable_aptos_for_tectonic` — line 109
+- `_find_binary` — line 126
+- `tectonic_bin` — line 142
+- `pandoc_bin` — line 146
+- `_strip_code_fence` — line 180
+- `has_markdown_structure` — line 193
+- `_repair_newline_artifact` — line 242
+- `_escape_raw_dollars` — line 270
+- `_repair_missing_row_terminators` — line 336
+- `_repair_missing_row_terminators._fix_block` — line 356
+- `_load_template_preamble_and_footer` — line 456
+- `_take_braced_group` — line 556
+- `_rewrite_command` — line 573
+- `_keep_in_cell_rowbreaks` — line 610
+- `preprocess_latex_for_pandoc._unwrap_last` — line 705
+- `preprocess_latex_for_pandoc._unwrap_shortstack` — line 708
+- `_extract_latex_body` — line 763
+- `_run` — line 859
+- `soffice_bin` — line 1020
+- `_demote_headings` — line 1113
+- `_clean_html_cell` — line 1147
+- `_html_table_to_gfm` — line 1159
+- `_normalize_pandoc_gfm` — line 1176
+- `_normalize_pandoc_gfm._sub` — line 1186
+- `_normalize_template_table_semantics` — line 1194
+- `_normalize_template_table_semantics._section` — line 1205
+- `_normalize_template_table_semantics._product` — line 1212
+- `_normalize_template_table_semantics._technical` — line 1295
+- `_normalize_template_table_semantics._business` — line 1305
+- `_normalize_template_table_semantics._appendix` — line 1320
+- `is_markdown_table_separator` — line 1337
+- `_prd_to_markdown_cached` — line 1370
 
 ### `backend/app/llm_client.py`
 
@@ -310,35 +304,35 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `backend/app/lock_service.py`
 
-- `LockService._resolve_artifact_project_id` — line 54
-- `LockService._verify_project_ownership` — line 76
-- `LockService._serialize_lock_metadata` — line 354
-- `LockService.raise_if_locked` — line 365
-- `LockService.raise_if_locked_model` — line 388
+- `LockService._resolve_artifact_project_id` — line 57
+- `LockService._verify_project_ownership` — line 79
+- `LockService._serialize_lock_metadata` — line 373
+- `LockService.raise_if_locked` — line 384
+- `LockService.raise_if_locked_model` — line 407
 
 ### `backend/app/main.py`
 
-- `request_lifecycle_log` — line 177
-- `http_exception_handler` — line 287
-- `validation_exception_handler` — line 313
+- `request_lifecycle_log` — line 168
+- `http_exception_handler` — line 279
+- `validation_exception_handler` — line 305
 
 ### `backend/app/merge_service.py`
 
-- `_normalize_ac_text` — line 96
-- `build_protected_set` — line 229
-- `is_protected_story` — line 246
-- `_match_incoming_story` — line 263
+- `_normalize_ac_text` — line 101
+- `build_protected_set` — line 235
+- `is_protected_story` — line 252
+- `_match_incoming_story` — line 269
 
 ### `backend/app/migrations.py`
 
-- `run_migrations` — line 29
-- `run_migrations._upgrade` — line 44
+- `run_migrations` — line 30
+- `run_migrations._upgrade` — line 45
 
 ### `backend/app/models.py`
 
-- `GUID.load_dialect_impl` — line 14
-- `GUID.process_bind_param` — line 20
-- `GUID.process_result_value` — line 31
+- `GUID.load_dialect_impl` — line 30
+- `GUID.process_bind_param` — line 36
+- `GUID.process_result_value` — line 47
 
 ### `backend/app/prd/renderers.py`
 
@@ -354,32 +348,33 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 - `_as_list` — line 107
 - `_one_sentence` — line 153
 - `_previous_version_rows` — line 167
-- `is_template_only_detail` — line 287
-- `extract_manual_export_fields.clean_cell` — line 400
-- `extract_manual_export_fields.list_items` — line 408
-- `extract_manual_export_fields.launch_parts` — line 416
-- `extract_manual_export_fields.story_value` — line 480
-- `_fill_cover` — line 562
-- `_fill_stakeholders` — line 575
-- `_fill_stakeholders._match` — line 579
-- `_fill_version_history` — line 591
-- `_fill_reviews` — line 611
-- `_fill_business_overview` — line 624
-- `_fill_business_overview._cell_text` — line 641
-- `_fill_business_overview._narr` — line 649
-- `_fill_business_overview._topic` — line 654
-- `_fill_business_overview._num` — line 668
-- `_rewrite_rows` — line 727
-- `_functional_requirement_text` — line 751
-- `_fr_rows_for` — line 771
-- `_fill_product_scope` — line 812
-- `_fill_product_scope._nums` — line 912
-- `_fill_tech_appendix` — line 959
-- `_fill_tech_appendix._cell` — line 960
-- `_fill_tech_appendix._launch_cell` — line 968
-- `_fill_tech_appendix._appendix_cell` — line 984
-- `_normalize_glossary_entries` — line 1044
-- `_fill_glossary_rows` — line 1075
+- `_split_markdown_table_row` — line 226
+- `is_template_only_detail` — line 317
+- `extract_manual_export_fields.clean_cell` — line 440
+- `extract_manual_export_fields.list_items` — line 454
+- `extract_manual_export_fields.launch_parts` — line 462
+- `extract_manual_export_fields.story_value` — line 582
+- `_fill_cover` — line 664
+- `_fill_stakeholders` — line 677
+- `_fill_stakeholders._match` — line 681
+- `_fill_version_history` — line 697
+- `_fill_reviews` — line 717
+- `_fill_business_overview` — line 749
+- `_fill_business_overview._cell_text` — line 766
+- `_fill_business_overview._narr` — line 774
+- `_fill_business_overview._topic` — line 779
+- `_fill_business_overview._num` — line 795
+- `_rewrite_rows` — line 856
+- `_functional_requirement_text` — line 880
+- `_fr_rows_for` — line 900
+- `_fill_product_scope` — line 941
+- `_fill_product_scope._nums` — line 1041
+- `_fill_tech_appendix` — line 1088
+- `_fill_tech_appendix._cell` — line 1089
+- `_fill_tech_appendix._launch_cell` — line 1097
+- `_fill_tech_appendix._appendix_cell` — line 1113
+- `_normalize_glossary_entries` — line 1173
+- `_fill_glossary_rows` — line 1205
 
 ### `backend/app/prd_section_service.py`
 
@@ -412,42 +407,42 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 ### `backend/app/repositories/base.py`
 
 - `compact_requirement_context` — line 35
-- `as_uuid` — line 97
-- `dt_iso` — line 107
-- `dt_iso_or_none` — line 112
-- `serialize_project` — line 117
-- `serialize_epic` — line 143
-- `serialize_requirement` — line 156
-- `serialize_user_story` — line 173
-- `serialize_acceptance_criteria` — line 199
-- `serialize_clarification_question` — line 218
-- `serialize_audit_result` — line 246
-- `serialize_prd_document` — line 264
-- `serialize_prd_version` — line 277
-- `serialize_prd_section` — line 293
-- `serialize_prd_section_version` — line 320
-- `serialize_conversation_message` — line 333
-- `serialize_document` — line 350
-- `serialize_pending_action` — line 376
-- `serialize_semantic_memory` — line 401
-- `serialize_event_log` — line 423
+- `as_uuid` — line 99
+- `dt_iso` — line 109
+- `dt_iso_or_none` — line 114
+- `serialize_project` — line 119
+- `serialize_epic` — line 145
+- `serialize_requirement` — line 158
+- `serialize_user_story` — line 175
+- `serialize_acceptance_criteria` — line 201
+- `serialize_clarification_question` — line 220
+- `serialize_audit_result` — line 248
+- `serialize_prd_document` — line 266
+- `serialize_prd_version` — line 279
+- `serialize_prd_section` — line 295
+- `serialize_prd_section_version` — line 322
+- `serialize_conversation_message` — line 335
+- `serialize_document` — line 352
+- `serialize_pending_action` — line 378
+- `serialize_semantic_memory` — line 403
+- `serialize_event_log` — line 425
 
 ### `backend/app/repositories/clarification_question.py`
 
 - `_serialize_requirement_context` — line 28
-- `ClarificationQuestionRepository._resolve_story_code` — line 50
-- `ClarificationQuestionRepository._resolve_story_id` — line 63
-- `ClarificationQuestionRepository.get_project_id` — line 240
+- `ClarificationQuestionRepository._resolve_story_code` — line 49
+- `ClarificationQuestionRepository._resolve_story_id` — line 61
+- `ClarificationQuestionRepository.get_project_id` — line 241
 
 ### `backend/app/repositories/conversation.py`
 
-- `ConversationMessageRepository.save_message._save` — line 51
-- `ConversationMessageRepository.get_conversation_history` — line 94
-- `ConversationMessageRepository.get_conversation_history._fetch` — line 102
+- `ConversationMessageRepository.save_message._save` — line 57
+- `ConversationMessageRepository.get_conversation_history` — line 104
+- `ConversationMessageRepository.get_conversation_history._fetch` — line 112
 
 ### `backend/app/repositories/document.py`
 
-- `DocumentRepository.update_extraction_status` — line 119
+- `DocumentRepository.update_extraction_status` — line 120
 
 ### `backend/app/repositories/epic.py`
 
@@ -456,17 +451,17 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `backend/app/repositories/pending_action.py`
 
-- `PendingActionRepository.discard_clarification_review_drafts` — line 61
+- `PendingActionRepository.discard_clarification_review_drafts` — line 66
 
 ### `backend/app/repositories/prd.py`
 
 - `PRDDocumentRepository.get_latest_for_project` — line 56
-- `PRDVersionRepository.get_previous` — line 186
-- `PRDVersionRepository.get_by_version_number` — line 234
+- `PRDVersionRepository.get_previous` — line 184
+- `PRDVersionRepository.get_by_version_number` — line 231
 
 ### `backend/app/repositories/prd_section.py`
 
-- `PRDSectionVersionRepository.get_by_version_number` — line 317
+- `PRDSectionVersionRepository.get_by_version_number` — line 252
 
 ### `backend/app/repositories/project.py`
 
@@ -476,11 +471,11 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `backend/app/repositories/requirement.py`
 
-- `RequirementRepository._serialize` — line 29
+- `RequirementRepository._serialize` — line 28
 
 ### `backend/app/repositories/requirement_state.py`
 
-- `RequirementStateRepository._save_or_update_impl` — line 247
+- `RequirementStateRepository._save_or_update_impl` — line 274
 
 ### `backend/app/repositories/semantic_memory.py`
 
@@ -491,8 +486,7 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `backend/app/repositories/user.py`
 
-- `UserRepository.set_password_hash` — line 131
-- `UserRepository.delete_account` — line 139
+- `UserRepository.delete_account` — line 147
 
 ### `backend/app/repositories/user_story.py`
 
@@ -501,57 +495,56 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `backend/app/review_service.py`
 
-- `governed_state_changed` — line 42
-- `_action_for` — line 56
-- `_approval_evidence` — line 66
-- `get_review_history` — line 257
+- `governed_state_changed` — line 41
+- `_action_for` — line 55
+- `_approval_evidence` — line 65
+- `get_review_history` — line 256
 
 ### `backend/app/routes/auth.py`
 
-- `read_current_user` — line 179
-- `auth_config` — line 203
-- `change_password_endpoint` — line 257
-- `delete_account` — line 293
+- `read_current_user` — line 174
+- `auth_config` — line 198
+- `delete_account` — line 249
 
 ### `backend/app/routes/chat.py`
 
-- `get_health_status` — line 32
-- `post_chat_query` — line 76
+- `get_health_status` — line 35
+- `post_chat_query` — line 75
 
 ### `backend/app/routes/documents.py`
 
 - `_extraction_cancellation_key` — line 74
 - `_persist_conversion_message` — line 78
 - `_persist_extraction_message` — line 116
-- `_resolve_upload_format` — line 151
-- `_validate_binary_signature` — line 161
-- `_read_upload_with_size_cap` — line 176
-- `_convert_to_markdown` — line 191
+- `_resolve_upload_format` — line 155
+- `_validate_binary_signature` — line 165
+- `_read_upload_with_size_cap` — line 180
+- `_convert_to_markdown` — line 195
 - `upload_document` — line 225
-- `list_documents` — line 399
+- `list_documents` — line 400
 - `get_document_markdown` — line 429
-- `delete_document` — line 478
-- `_run_extraction_by_chunks` — line 563
-- `_run_extraction_by_chunks._extract_chunk` — line 623
-- `_run_extraction_by_chunks._bounded` — line 674
-- `process_document` — line 693
-- `cancel_document_extraction` — line 926
+- `delete_document` — line 475
+- `_run_extraction_by_chunks` — line 562
+- `_run_extraction_by_chunks._extract_chunk` — line 622
+- `_run_extraction_by_chunks._bounded` — line 673
+- `process_document` — line 692
+- `cancel_document_extraction` — line 950
 
 ### `backend/app/routes/events.py`
 
-- `stream_project_events.event_generator` — line 70
-- `get_recent_events` — line 108
-- `get_artifact_events` — line 137
+- `stream_project_events.event_generator` — line 77
+- `get_recent_events` — line 123
+- `get_artifact_events` — line 153
 
 ### `backend/app/routes/generation_jobs.py`
 
-- `start_regeneration_job` — line 46
+- `start_regeneration_job` — line 70
 
 ### `backend/app/routes/lock.py`
 
-- `get_artifact_lock_status` — line 176
-- `get_pending_actions` — line 230
-- `get_action_impact` — line 263
+- `get_artifact_lock_status` — line 195
+- `get_pending_actions` — line 250
+- `get_action_impact` — line 284
 
 ### `backend/app/routes/operational.py`
 
@@ -568,11 +561,11 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 - `_validate_project` — line 53
 - `_get_section_or_404` — line 60
 - `_ensure_sections_for_write` — line 67
-- `list_prd_section_versions` — line 288
-- `revert_prd_section` — line 310
-- `lock_prd_section` — line 386
-- `unlock_prd_section` — line 425
-- `get_prd_section` — line 462
+- `list_prd_section_versions` — line 276
+- `revert_prd_section` — line 298
+- `lock_prd_section` — line 376
+- `unlock_prd_section` — line 415
+- `get_prd_section` — line 452
 
 ### `backend/app/routes/projects.py`
 
@@ -589,103 +582,104 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 - `append_project_conversation` — line 639
 - `update_project_requirement_state` — line 676
 - `get_prd_template` — line 757
-- `post_prd_export_generation` — line 779
-- `_safe_filename_stem` — line 963
-- `_latest_stored_prd_source` — line 990
-- `_markdown_export_narrative` — line 1020
-- `_fill_official_export_template` — line 1083
-- `_export_prd_bytes` — line 1201
-- `_export_prd_bytes._pdf_export` — line 1249
-- `export_prd_pdf` — line 1343
-- `export_prd_docx` — line 1367
-- `convert_prd_to_markdown` — line 1387
-- `get_prd_versions` — line 1439
-- `get_prd_version_diff` — line 1489
-- `get_latest_prd_version` — line 1529
-- `get_prd_version_by_number` — line 1563
+- `post_prd_export_generation` — line 786
+- `_safe_filename_stem` — line 983
+- `_latest_stored_prd_source` — line 1012
+- `_markdown_export_narrative` — line 1042
+- `_fill_official_export_template` — line 1105
+- `_export_prd_bytes` — line 1237
+- `_export_prd_bytes._pdf_export` — line 1289
+- `export_prd_pdf` — line 1385
+- `export_prd_docx` — line 1410
+- `convert_prd_to_markdown` — line 1431
+- `get_prd_versions` — line 1483
+- `get_prd_version_diff` — line 1532
+- `get_latest_prd_version` — line 1570
+- `get_prd_version_by_number` — line 1604
 
 ### `backend/app/routes/requirements.py`
 
-- `_is_requirement_restore_command` — line 68
-- `_ensure_requirement_ids` — line 78
-- `_stage_requirement_reactivation` — line 107
-- `get_project_requirements` — line 253
-- `get_requirement` — line 281
-- `lock_requirement` — line 318
-- `unlock_requirement` — line 364
-- `post_audit_resolution_reply` — line 428
-- `post_clarification_submit` — line 518
-- `post_clarification_submit.question_fingerprint` — line 556
-- `post_cancel_process_requirements` — line 770
-- `post_process_requirements` — line 809
-- `_process_requirements_pipeline` — line 848
-- `_load_current_stories` — line 1919
-- `post_workflow_router` — line 1945
-- `post_intent_detector` — line 1987
-- `post_requirement_matcher` — line 2042
+- `_is_requirement_restore_command` — line 73
+- `_ensure_requirement_ids` — line 83
+- `_stage_requirement_reactivation` — line 112
+- `get_project_requirements` — line 258
+- `get_requirement` — line 286
+- `lock_requirement` — line 327
+- `unlock_requirement` — line 376
+- `post_audit_resolution_reply` — line 441
+- `_append_clarification_evidence` — line 538
+- `_append_clarification_evidence.normalize` — line 554
+- `post_clarification_submit` — line 611
+- `post_clarification_submit.question_fingerprint` — line 656
+- `post_cancel_process_requirements` — line 931
+- `post_process_requirements` — line 973
+- `_process_requirements_pipeline` — line 1017
+- `_load_current_stories` — line 2157
+- `post_workflow_router` — line 2183
+- `post_intent_detector` — line 2225
+- `post_requirement_matcher` — line 2286
 
 ### `backend/app/routes/traceability.py`
 
-- `get_traceability` — line 30
+- `get_traceability` — line 34
 
 ### `backend/app/schemas.py`
 
-- `ProjectCreate._strip_and_require_name` — line 22
-- `AuditRecommendationDetail._coerce_single_acceptance_criterion` — line 759
+- `ProjectCreate._strip_and_require_name` — line 23
+- `AuditRecommendationDetail._coerce_single_acceptance_criterion` — line 785
 
 ### `backend/app/semantic_memory.py`
 
 - `_normalize` — line 150
-- `_recency_factor` — line 362
+- `_recency_factor` — line 364
 
 ### `backend/app/semantic_service.py`
 
-- `SemanticChange._validate_change_type` — line 186
-- `SemanticChange._validate_action` — line 191
-- `SemanticChange._validate_target` — line 199
-- `SemanticChange._validate_confidence` — line 204
-- `SemanticChange._validate_reason` — line 209
-- `_clean_str` — line 226
-- `build_story_target_index` — line 322
-- `_coerce_change_entry` — line 369
-- `build_no_change_recommendation` — line 390
-- `_downgrade_unverifiable_change` — line 479
-- `_resolve_action_conflict` — line 497
-- `_dedupe_changes` — line 508
-- `detect_semantic_changes._is_valid_changes` — line 591
-- `detect_requirement_intent._is_valid_intent` — line 736
-- `match_requirement._is_valid_match` — line 1024
-- `classify_workflow._is_valid_workflow` — line 1204
+- `SemanticChange._validate_change_type` — line 190
+- `SemanticChange._validate_action` — line 195
+- `SemanticChange._validate_target` — line 203
+- `SemanticChange._validate_confidence` — line 208
+- `SemanticChange._validate_reason` — line 213
+- `_clean_str` — line 230
+- `build_story_target_index` — line 326
+- `_coerce_change_entry` — line 373
+- `build_no_change_recommendation` — line 394
+- `_downgrade_unverifiable_change` — line 483
+- `_resolve_action_conflict` — line 501
+- `_dedupe_changes` — line 512
+- `detect_semantic_changes._is_valid_changes` — line 595
+- `detect_requirement_intent._is_valid_intent` — line 740
+- `match_requirement._is_valid_match` — line 1028
+- `classify_workflow._is_valid_workflow` — line 1211
 
 ### `backend/app/services/diagram_service.py`
 
-- `sanitize_mermaid_diagram` — line 18
-- `generate_flow_diagram` — line 29
-- `generate_flow_diagram.is_flowchart` — line 57
+- `sanitize_mermaid_diagram` — line 20
+- `generate_flow_diagram` — line 34
+- `generate_flow_diagram.is_flowchart` — line 62
 
 ### `backend/app/services/document_ingestion_service.py`
 
-- `DocumentIngestionService.resolve_upload_format` — line 37
-- `DocumentIngestionService.validate_binary_signature` — line 60
-- `DocumentIngestionService.read_upload_with_size_cap` — line 75
-- `DocumentIngestionService.convert_to_markdown` — line 91
+- `DocumentIngestionService.resolve_upload_format` — line 40
+- `DocumentIngestionService.validate_binary_signature` — line 65
+- `DocumentIngestionService.read_upload_with_size_cap` — line 80
+- `DocumentIngestionService.convert_to_markdown` — line 96
 
 ### `backend/app/traceability_service.py`
 
-- `_assemble` — line 98
+- `_assemble` — line 107
 
 ### `backend/app/version_service.py`
 
-- `_split_to_map` — line 46
-- `_default_change_summary` — line 114
-- `_parse_semver` — line 129
-- `_line_diff` — line 270
+- `_split_to_map` — line 40
+- `_default_change_summary` — line 109
+- `_parse_semver` — line 125
 
 ### `backend/app/workflow_orchestration/audit_results.py`
 
-- `dedupe_dicts` — line 14
-- `prepare_audit_documents` — line 29
-- `merge_audit_passes` — line 53
+- `dedupe_dicts` — line 15
+- `prepare_audit_documents` — line 33
+- `merge_audit_passes` — line 60
 
 ### `backend/app/workflow_orchestration/deletion_targets.py`
 
@@ -695,7 +689,7 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `backend/app/workflow_orchestration/graph.py`
 
-- `build_prd_workflow` — line 25
+- `build_prd_workflow` — line 33
 
 ### `backend/app/workflow_orchestration/prd_narrative.py`
 
@@ -706,28 +700,28 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `backend/app/workflow_orchestration/routing.py`
 
-- `route_on_demand` — line 12
+- `route_on_demand` — line 19
 
 ## Frontend TypeScript
 
 ### `src/api/client.ts`
 
-- `bearerHeaders` — line 74
-- `patch` — line 92
-- `postFormData` — line 125
-- `postBlob` — line 137
+- `bearerHeaders` — line 75
+- `patch` — line 93
+- `postFormData` — line 126
+- `postBlob` — line 138
 
 ### `src/api/transforms.ts`
 
 - `normalizeClarificationText` — line 44
 - `clarificationFingerprint` — line 47
-- `dedupeClarificationQuestions` — line 51
-- `toAuditResult` — line 157
-- `toAuditResultFromPayload` — line 175
-- `toLockMaps` — line 198
-- `toGatheredRequirementsPayload` — line 315
-- `toVersionHistory` — line 331
-- `toVersionHistoryList` — line 345
+- `dedupeClarificationQuestions` — line 52
+- `toAuditResult` — line 158
+- `toAuditResultFromPayload` — line 176
+- `toLockMaps` — line 199
+- `toGatheredRequirementsPayload` — line 316
+- `toVersionHistory` — line 334
+- `toVersionHistoryList` — line 348
 
 ### `src/components/ArchitectureFlows.tsx`
 
@@ -740,17 +734,17 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `src/components/AuthModal.tsx`
 
-- `AuthModal` — line 42
+- `AuthModal` — line 44
 
 ### `src/components/AuthPanel.tsx`
 
-- `AuthPanel` — line 32
+- `AuthPanel` — line 33
 
 ### `src/components/ChatPanel.tsx`
 
-- `SourceFiles` — line 116
-- `ValidationCard` — line 131
-- `ChatPanel` — line 376
+- `SourceFiles` — line 117
+- `ValidationCard` — line 132
+- `ChatPanel` — line 381
 
 ### `src/components/ConfirmModal.tsx`
 
@@ -758,21 +752,21 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `src/components/ConfirmationPanel.tsx`
 
-- `asArray` — line 31
-- `ChangeBadge` — line 39
-- `ImpactAnalysisSection` — line 73
-- `ConfirmationPanel` — line 231
+- `asArray` — line 35
+- `ChangeBadge` — line 43
+- `ImpactAnalysisSection` — line 77
+- `ConfirmationPanel` — line 262
 
 ### `src/components/Dashboard.tsx`
 
-- `escapeTableCell` — line 46
-- `replaceCoverField` — line 48
-- `stakeholderSectionContent` — line 56
-- `businessOverviewContent` — line 59
+- `escapeTableCell` — line 47
+- `replaceCoverField` — line 49
+- `stakeholderSectionContent` — line 57
+- `businessOverviewContent` — line 60
 
 ### `src/components/DeleteAccountModal.tsx`
 
-- `DeleteAccountModal` — line 12
+- `DeleteAccountModal` — line 18
 
 ### `src/components/DocumentLibrary.tsx`
 
@@ -821,14 +815,17 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `src/components/StructuredSectionEditor.tsx`
 
-- `isTableLine` — line 14
-- `isSeparatorRow` — line 35
-- `cleanLabel` — line 58
-- `displayValue` — line 64
-- `storageValue` — line 70
-- `isBoldLabel` — line 74
-- `isEmbeddedHeaderRow` — line 76
-- `StructuredSectionEditor` — line 81
+- `EditableTextarea` — line 30
+- `normalizeTableBoundary` — line 59
+- `isTableLine` — line 64
+- `isSeparatorRow` — line 88
+- `cleanLabel` — line 115
+- `displayValue` — line 121
+- `storageValue` — line 127
+- `isBoldLabel` — line 131
+- `isEmbeddedHeaderRow` — line 133
+- `isConventionalHeaderRow` — line 142
+- `isDocumentControl` — line 154
 
 ### `src/components/Toast.tsx`
 
@@ -841,10 +838,10 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `src/components/VersionHistory.tsx`
 
-- `DiffLines` — line 17
-- `SectionDiffCard` — line 45
-- `ChangeTypeBadge` — line 114
-- `VersionHistory` — line 128
+- `ChangedWords` — line 92
+- `DiffLines` — line 107
+- `SectionDiffCard` — line 151
+- `ChangeTypeBadge` — line 221
 
 ### `src/components/WorkspaceNavigation.tsx`
 
@@ -856,7 +853,7 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `src/hooks/useArtifactLocks.ts`
 
-- `isListableRequirement` — line 53
+- `isListableRequirement` — line 57
 
 ### `src/hooks/useAuth.ts`
 
@@ -864,17 +861,17 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `src/hooks/useChat.ts`
 
-- `nowTime` — line 82
-- `questionAnswerKey` — line 85
-- `timelineMetadata` — line 90
+- `nowTime` — line 85
+- `questionAnswerKey` — line 88
+- `timelineMetadata` — line 93
 
 ### `src/hooks/useDocuments.ts`
 
-- `useDocuments` — line 58
+- `useDocuments` — line 56
 
 ### `src/hooks/useLmStudioHealth.ts`
 
-- `useLmStudioHealth` — line 52
+- `useLmStudioHealth` — line 58
 
 ### `src/hooks/useModalBehavior.ts`
 
@@ -882,7 +879,7 @@ indirectly and should be confirmed with runtime coverage before adding tests.
 
 ### `src/hooks/useProjectState.ts`
 
-- `useProjectState` — line 226
+- `useProjectState` — line 233
 
 ### `src/hooks/useWorkspaceUi.ts`
 

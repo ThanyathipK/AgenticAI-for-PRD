@@ -4,7 +4,7 @@ User account repository operations.
 Owns every ``users``-table read/write used by the authentication layer
 (:mod:`app.auth` and :mod:`app.routes.auth`). Centralizing them here keeps the
 UUID coercion (``as_uuid``) and the email canonicalization in one place, so the
-login, token-verification, registration and password-change paths can never
+login, token-verification, and registration paths can never
 drift apart — a drift that previously made an account registerable but not
 loginable.
 
@@ -31,12 +31,10 @@ logger = logging.getLogger(__name__)
 # AUTH repository layer — Read and mutate authentication-owned user records.
 # Trigger: AUTH services and routes; repository methods are not HTTP entry points.
 # Input: canonical user identifiers, email addresses, or account fields.
-# Writes: create_user and set_password_hash flush changes; their callers commit.
+# Writes: create_user flushes changes; its caller commits.
 # Failure: database errors propagate to the calling service or route.
 # Call map:
 #   AUTH 1.7.1.1 — authenticate_user → get_by_email   (LOGIN read)
-#   AUTH 5.2.1   — change_password   → get_by_id      (CHANGE PASSWORD read)
-#   AUTH 5.2.3   — change_password   → set_password_hash (UPDATE)
 #   AUTH 6.3.4   — register route    → email_exists   (uniqueness read)
 #   AUTH 6.3.5   — register route    → create_user    (INSERT)
 #   AUTH 7.1.2   — get_current_user  → get_by_id      (token → row, reused by
@@ -57,8 +55,8 @@ def normalize_email(email: Optional[str]) -> str:
 class UserRepository:
     """Database access for user accounts (authentication surface)."""
 
-    # AUTH 7.1.2 / AUTH 5.2.1 — Resolve a user by primary key.
-    # Trigger: request authentication or password change.
+    # AUTH 7.1.2 — Resolve a user by primary key.
+    # Trigger: request authentication.
     # Writes: NONE; missing rows return None for the caller to classify.
     @staticmethod
     async def get_by_id(
@@ -138,17 +136,6 @@ class UserRepository:
         session.add(user)
         await session.flush()
         return user
-
-    # AUTH 5.2.3 — Stage replacement of a user's password hash.
-    # Trigger: AUTH 5.2 after old-password verification.
-    # Writes: UPDATE plus flush; the service owns transaction commit.
-    @staticmethod
-    async def set_password_hash(
-        user: UserModel, password_hash: str, session: AsyncSession
-    ) -> None:
-        """Store a new bcrypt hash on *user* and flush the change."""
-        user.password_hash = password_hash
-        await session.flush()
 
     # AUTH 8.5 — Stage deletion of an account and all projects it owns.
     # Trigger: AUTH 8.4 after confirmation, password, and system-account guards.

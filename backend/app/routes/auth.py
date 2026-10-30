@@ -1,7 +1,7 @@
 """
 Authentication Routes.
 
-Endpoints for user login, logout, token management, and password changes.
+Endpoints for user login, logout, token management, registration, and account deletion.
 
 Every handler resolves accounts through
 :class:`app.repositories.user.UserRepository` and verifies credentials through
@@ -24,9 +24,6 @@ from app.auth import (
     get_password_hash,
     verify_password,
 )
-from app.auth import (
-    change_password as auth_change_password,
-)
 from app.config import settings
 from app.database import get_db
 from app.rate_limit import rate_limit_dependency
@@ -36,8 +33,7 @@ logger = logging.getLogger("app.routes.auth")
 
 router = APIRouter()
 
-# Minimum password length enforced by registration and password change. Kept in
-# one constant so the two paths (and their error messages) cannot drift apart.
+# Minimum password length enforced by registration.
 MIN_PASSWORD_LENGTH = 8
 
 # Canonical user roles for the register endpoint (and the role dropdown in the
@@ -65,17 +61,6 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
-
-
-class PasswordChangeRequest(BaseModel):
-    """Request to change password."""
-    old_password: str
-    new_password: str
-
-
-class PasswordChangeResponse(BaseModel):
-    """Response from successful password change."""
-    message: str = "Password changed successfully"
 
 
 class AccountDeleteRequest(BaseModel):
@@ -245,56 +230,6 @@ async def logout(
     """
     logger.info(f"User logged out: {current_user.email}")
     return {"message": "Successfully logged out"}
-
-
-# ---------------------------------------------------------------------------
-# Change Password
-# ---------------------------------------------------------------------------
-
-
-# AUTH 5.1 — FastAPI route: POST /api/auth/change-password. Authenticated through
-#            AUTH 7.1, and the target account is `current_user.id` from the
-#            verified token — never a body field — so a caller can only change
-#            its OWN password.
-#            DISCREPANCY vs. the expected end-to-end flow: there is NO frontend
-#            caller. src/api/client.ts exposes no authChangePassword helper and no
-#            component invokes this route (src/api/types.ts only carries the
-#            response type), so the flow ends at AUTH 5.1.3 for API/test clients
-#            and has no UI surface yet.
-@router.post(
-    "/api/auth/change-password",
-    response_model=PasswordChangeResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def change_password_endpoint(
-    password_request: PasswordChangeRequest,
-    current_user: AuthenticatedUser = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
-):
-    """Change the current user's password with old password verification."""
-    # AUTH 5.1.1 — Validation branch: 400 before any hashing/DB work (mirrors the
-    #              MIN_PASSWORD_LENGTH check the register route does in AUTH 6.3.2).
-    if len(password_request.new_password) < MIN_PASSWORD_LENGTH:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
-        )
-
-    # AUTH 5.1.2 — Service layer: app/auth.py change_password (AUTH 5.2) re-verifies
-    #              the old password and rewrites the bcrypt hash; it raises 400 for
-    #              a wrong old password, so no new token is issued on success.
-    await auth_change_password(
-        user_id=current_user.id,
-        old_password=password_request.old_password,
-        new_password=password_request.new_password,
-        session=session,
-    )
-    
-    logger.info(f"Password changed for user: {current_user.email}")
-    
-    # AUTH 5.1.3 — Response: message only (never a token), so already-issued JWTs
-    #              stay valid until they expire.
-    return PasswordChangeResponse(message="Password changed successfully")
 
 
 # AUTH 8.4 — Permanently delete the authenticated account and its owned data.
