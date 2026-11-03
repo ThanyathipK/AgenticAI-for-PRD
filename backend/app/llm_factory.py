@@ -24,6 +24,31 @@ from app.config import settings
 logger = logging.getLogger("app.llm_factory")
 
 
+class LMStudioChatOpenAI(ChatOpenAI):
+    """Preserve LM Studio's non-standard ``reasoning_content`` field.
+
+    Qwen 3.5 can return requested JSON entirely in ``reasoning_content`` with
+    an empty standard ``content`` field even when thinking is disabled. The
+    OpenAI SDK retains that extra field, but LangChain's converter drops it.
+    Attach it to ``AIMessage.additional_kwargs`` so the structured parser's
+    existing reasoning fallback can consume the actual model response.
+    """
+
+    def _create_chat_result(self, response: Any, generation_info: Any = None):
+        result = super()._create_chat_result(response, generation_info)
+        response_dict = response if isinstance(response, dict) else response.model_dump(
+            exclude={"choices": {"__all__": {"message": {"parsed"}}}},
+            warnings=False,
+        )
+        choices = response_dict.get("choices") or []
+        for generation, choice in zip(result.generations, choices):
+            message = choice.get("message") or {}
+            reasoning = message.get("reasoning_content") or message.get("reasoning")
+            if isinstance(reasoning, str) and reasoning.strip():
+                generation.message.additional_kwargs["reasoning_content"] = reasoning
+        return result
+
+
 # Safe context limit mapping designed for MacBook Air/Pro M4 16GB execution bounds
 def build_llm(max_tokens: int = 3000) -> ChatOpenAI:
     """Construct the shared ChatOpenAI client from app.config settings.
@@ -57,7 +82,7 @@ def build_llm(max_tokens: int = 3000) -> ChatOpenAI:
             "chat_template_kwargs": {"enable_thinking": False}
         }
 
-    return ChatOpenAI(**kwargs)
+    return LMStudioChatOpenAI(**kwargs)
 
 
 # Json Output Parser for strict structured JSON outputs

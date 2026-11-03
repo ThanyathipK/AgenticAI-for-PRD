@@ -9,6 +9,7 @@ from langchain_core.runnables import RunnableLambda
 from pydantic import BaseModel
 
 from app.config import settings
+from app.llm_factory import LMStudioChatOpenAI
 from app.llm_utils import extract_llm_content, invoke_llm_structured, parse_json_object
 
 
@@ -30,6 +31,34 @@ def test_parse_json_object_repairs_fences_prose_and_trailing_commas():
 def test_extract_llm_content_supports_block_responses():
     response = AIMessage(content=[{"type": "text", "text": '{"name":"ok","count":1}'}])
     assert extract_llm_content(response) == '{"name":"ok","count":1}'
+
+
+def test_lm_studio_client_preserves_reasoning_content_for_json_parser():
+    client = LMStudioChatOpenAI(
+        base_url="http://localhost:1234/v1",
+        api_key="lm-studio",
+        model="test-model",
+    )
+    result = client._create_chat_result({
+        "id": "chatcmpl-test",
+        "model": "test-model",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": '{"name":"reasoning","count":3}',
+            },
+            "finish_reason": "stop",
+        }],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    })
+
+    message = result.generations[0].message
+    assert message.additional_kwargs["reasoning_content"] == (
+        '{"name":"reasoning","count":3}'
+    )
+    assert extract_llm_content(message) == '{"name":"reasoning","count":3}'
 
 
 @pytest.mark.asyncio
