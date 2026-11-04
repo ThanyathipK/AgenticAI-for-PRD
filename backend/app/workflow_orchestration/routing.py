@@ -79,9 +79,10 @@ def route_from_matcher(state: AgentState) -> str:
     match = state.get("requirement_match") or {}
     status = str(match.get("status") or "").upper()
     default_confidence = 0.0 if state.get("detected_intent") == "DELETE_REQUIREMENT" else 1.0
-    if status in {"AMBIGUOUS", "LOW_CONFIDENCE"} or float(
-        match.get("confidence", default_confidence)
-    ) < 0.75:
+    if (
+        status in {"AMBIGUOUS", "LOW_CONFIDENCE"}
+        or float(match.get("confidence", default_confidence)) < 0.75
+    ):
         return END
     # Audit validity describes the saved content, not whether this request
     # identified its target. Invalid requirements must remain editable.
