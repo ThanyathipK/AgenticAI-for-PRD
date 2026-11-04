@@ -656,6 +656,12 @@ class TestDraftOnlyExtraction:
         ))
         await started.wait()
 
+        duplicate = await client.post(
+            f"/api/project/{seeded_project}/documents/{doc['id']}/process"
+        )
+        assert duplicate.status_code == 409
+
+
         stopped = await client.post(
             f"/api/project/{seeded_project}/documents/{doc['id']}/process/cancel"
         )
@@ -673,10 +679,15 @@ class TestDraftOnlyExtraction:
             )
         ).scalar_one()
         await db_session.refresh(doc_row)
-        assert doc_row.extraction_status == "not_extracted"
+        assert doc_row.extraction_status == "extraction_consumed"
+        repeated = await client.post(
+            f"/api/project/{seeded_project}/documents/{doc['id']}/process"
+        )
+        assert repeated.status_code == 409
+
 
     @pytest.mark.asyncio
-    async def test_failed_extraction_restores_knowledge_only_status(
+    async def test_failed_extraction_consumes_attempt(
         self, seeded_project, client, db_session, monkeypatch
     ):
         """An LLM failure creates no draft and must not leave a false pending chip."""
@@ -699,7 +710,12 @@ class TestDraftOnlyExtraction:
                 select(DocumentModel).where(DocumentModel.id == doc["id"])
             )
         ).scalar_one()
-        assert row.extraction_status == "not_extracted"
+        assert row.extraction_status == "extraction_consumed"
+        repeated = await client.post(
+            f"/api/project/{seeded_project}/documents/{doc['id']}/process"
+        )
+        assert repeated.status_code == 409
+
         messages = (
             await db_session.execute(
                 select(ConversationMessageModel)
@@ -718,6 +734,34 @@ class TestDraftOnlyExtraction:
         assert sum(
             "extraction failed" in message.message for message in extraction_messages
         ) == 1
+
+    @pytest.mark.asyncio
+    async def test_preparation_failure_consumes_attempt_without_stuck_pending_status(
+        self, seeded_project, client, db_session, monkeypatch
+    ):
+        """Failures after the atomic claim must always leave a terminal status."""
+        import app.routes.documents as documents_module
+
+        def fail_preparation(_markdown):
+            raise RuntimeError("preparation failed")
+
+        monkeypatch.setattr(
+            documents_module, "prepare_document_for_extraction", fail_preparation
+        )
+        doc = await _upload_doc(client, seeded_project)
+        with pytest.raises(RuntimeError, match="preparation failed"):
+            await client.post(
+                f"/api/project/{seeded_project}/documents/{doc['id']}/process"
+            )
+        row = await db_session.scalar(
+            select(DocumentModel).where(DocumentModel.id == doc["id"])
+        )
+        await db_session.refresh(row)
+        assert row.extraction_status == "extraction_consumed"
+        repeated = await client.post(
+            f"/api/project/{seeded_project}/documents/{doc['id']}/process"
+        )
+        assert repeated.status_code == 409
 
     @pytest.mark.asyncio
     async def test_process_creates_draft_only_and_confirm_applies_once(
@@ -774,6 +818,11 @@ class TestDraftOnlyExtraction:
             (await db_session.execute(select(DocumentModel))).scalars().one()
         )
         assert doc_row.extraction_status == "extraction_pending"
+        duplicate = await client.post(
+            f"/api/project/{seeded_project}/documents/{doc['id']}/process"
+        )
+        assert duplicate.status_code == 409
+
 
         # --- Confirm: single atomic merge, no PRD version bump -----------
         confirm = await client.post(
@@ -815,6 +864,11 @@ class TestDraftOnlyExtraction:
             (await db_session.execute(select(DocumentModel))).scalars().one()
         )
         assert doc_row.extraction_status == "extraction_applied"
+        duplicate = await client.post(
+            f"/api/project/{seeded_project}/documents/{doc['id']}/process"
+        )
+        assert duplicate.status_code == 409
+
         doc_row = (
             (await db_session.execute(select(DocumentModel))).scalars().one()
         )
@@ -852,7 +906,12 @@ class TestDraftOnlyExtraction:
                 select(DocumentModel).where(DocumentModel.id == doc["id"])
             )
         ).scalar_one()
-        assert doc_row.extraction_status == "not_extracted"
+        assert doc_row.extraction_status == "extraction_consumed"
+        repeated = await client.post(
+            f"/api/project/{seeded_project}/documents/{doc['id']}/process"
+        )
+        assert repeated.status_code == 409
+
 
     @pytest.mark.asyncio
     async def test_full_mode_single_pass_when_under_budget(

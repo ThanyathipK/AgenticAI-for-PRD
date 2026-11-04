@@ -63,26 +63,28 @@ def route_from_router(state: AgentState) -> str:
 
 # MATCHING 4.0 — Dispatch the graph match outcome to its consumer.
 # Trigger: MATCHING 1.5 or MATCHING 1.6 returns from requirement_matcher_node.
-# Input: detected intent, match status/confidence, and validation status.
-# Branches: confident DELETE → MATCHING 3.3; unresolved/invalid → END;
+# Input: detected intent, match status/confidence.
+# Branches: confident DELETE → MATCHING 3.3; unresolved match → END;
 #           confident non-delete → Gatherer (MATCHING 3.1/3.2).
 # Writes: NONE; this is the MATCHING flow's graph handoff boundary.
 #
 # ROUTING 4.2 — Prevent unresolved matches from reaching mutation nodes.
 # Trigger: requirement_matcher_node completes.
-# Input: detected intent, match status/confidence, and requirement validation state.
-# Branches: confident DELETE → delete node; ambiguous/invalid → END;
+# Input: detected intent, match status/confidence.
+# Branches: confident DELETE → delete node; ambiguous match → END;
 #           otherwise → Gatherer.
 # Writes: NONE; returns a node name or END.
 def route_from_matcher(state: AgentState) -> str:
     """Prevent ambiguous matches from reaching a mutation node."""
-    requirement_state = state.get("requirement_state", {})
-    if state.get("detected_intent") == "DELETE_REQUIREMENT":
-        match = state.get("requirement_match") or {}
-        status = str(match.get("status") or "").upper()
-        if status in {"AMBIGUOUS", "LOW_CONFIDENCE"} or float(match.get("confidence", 0.0)) < 0.75:
-            return END
-        return "delete_requirement_node"
-    if requirement_state.get("validation_status") == "invalid":
+    match = state.get("requirement_match") or {}
+    status = str(match.get("status") or "").upper()
+    default_confidence = 0.0 if state.get("detected_intent") == "DELETE_REQUIREMENT" else 1.0
+    if status in {"AMBIGUOUS", "LOW_CONFIDENCE"} or float(
+        match.get("confidence", default_confidence)
+    ) < 0.75:
         return END
+    # Audit validity describes the saved content, not whether this request
+    # identified its target. Invalid requirements must remain editable.
+    if state.get("detected_intent") == "DELETE_REQUIREMENT":
+        return "delete_requirement_node"
     return "gatherer_node"

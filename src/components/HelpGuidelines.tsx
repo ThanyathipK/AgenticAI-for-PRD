@@ -8,7 +8,7 @@ const SECTIONS = [
   { number: '1', title: 'Creating requirements', items: [
     ['Create a project', 'Start a project from the sidebar. Intake details seed the PRD and give the Gatherer initial business context.'],
     ['Describe the need in chat', 'The Gatherer structures your message into requirements, user stories, and acceptance criteria. Nothing is saved until you review the pending change and select Save.'],
-    ['Add source files', 'Use the attachment control to add project documents to the knowledge base. Source filenames and sections remain visible in audit evidence. Document extraction is a separate action when offered in the document library.'],
+    ['Add source files', 'Use the attachment control to add project documents to the knowledge base. Source filenames and sections remain visible in audit evidence. Each uploaded document allows one Extract Requirements attempt. The attempt is used even if you cancel or extraction fails. Review and save its preview to apply changes. Ask the AI to restore accidentally archived requirements.'],
     ['Review before saving', 'A merge preview shows what will change and which downstream PRD sections or diagrams may be affected. Save applies the proposal; Cancel leaves stored requirements unchanged.'],
   ] },
   { number: '2', title: 'Validating and resolving findings', items: [

@@ -815,8 +815,7 @@ async def cancel_action(
     if not action:
         raise HTTPException(status_code=404, detail="Pending action not found")
 
-    # Cancelling a document extraction removes its only draft, so its status
-    # returns to knowledge-only. Confirming instead flips it to
+    # Cancelling discards the draft but does not restore the extraction attempt. Confirming instead flips it to
     # extraction_applied in the confirmation branch above.
     document_ref = (action.get("proposed_changes") or {}).get("_document_ref") or {}
     if (
@@ -824,7 +823,7 @@ async def cancel_action(
         and document_ref.get("document_id")
     ):
         await DocumentRepository.update_extraction_status(
-            str(document_ref["document_id"]), project_id, "not_extracted", session
+            str(document_ref["document_id"]), project_id, "extraction_consumed", session
         )
 
     await PendingActionRepository.delete(action_id, project_id, session)

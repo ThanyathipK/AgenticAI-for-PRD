@@ -18,7 +18,7 @@ import pytest_asyncio
 from langchain_core.prompts import PromptTemplate
 
 from app.agents import (
-    AUDITOR_FORMAT_INSTRUCTIONS, _merge_audit_passes, _prepare_audit_documents,
+    ACTIVE_AUDIT_CHECKLIST, AUDITOR_FORMAT_INSTRUCTIONS, _merge_audit_passes, _prepare_audit_documents,
     _validate_audit_output, auditor_llm,
 )
 from app.llm_client import check_lm_studio_health, reset_lm_studio_health_cache
@@ -64,6 +64,7 @@ async def _audit(stories, documents, *, version=1):
             }, ensure_ascii=False),
             "current_version": version,
             "audit_scope": "single complete live-model acceptance pass",
+            "audit_checklist": json.dumps(ACTIVE_AUDIT_CHECKLIST.prompt_payload()),
             "format_instructions": "Output ONLY raw JSON. No markdown.",
         },
         description="live LM Studio auditor acceptance test",
@@ -219,3 +220,23 @@ async def test_document_prompt_injection_is_treated_as_data_not_instruction():
     serialized = json.dumps(result, ensure_ascii=False).lower()
     assert "fake source" not in serialized
     assert "ignore the auditor prompt" not in serialized
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unlimited, expected_type", [
+    ("The system must allow unlimited transfers per day.", "ambiguous"),
+    ("The system must allow an unlimited total transfer amount per customer per day.", "conflicting"),
+])
+async def test_daily_transfer_limits_require_resolution(unlimited, expected_type):
+    result = await _audit([
+        _story("US-001", unlimited, [unlimited]),
+        _story("US-002", "Daily transfer cap", [
+            "The system must limit total transfers to 50,000 THB per customer per day."
+        ]),
+    ], [])
+    assert any(
+        f["finding_type"] == expected_type
+        and f.get("target_requirement_id") in {"US-001", "US-002"}
+        for f in result["findings"]
+    ), result
+    assert result["clarification_questions"], result

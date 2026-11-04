@@ -747,54 +747,94 @@ async def process_document(
             ),
         )
 
-    # DOC-UPLOAD 5.3.1 — Build an extraction-only copy (6.2 removes embedded image
-    #                   bytes without changing stored markdown), count its tokens,
-    #                   commit the request transcript, then mark tracking pending.
-    content_markdown = doc.get("content_markdown") or ""
-    extraction_markdown = prepare_document_for_extraction(content_markdown)
-    token_count = count_tokens(extraction_markdown)
+    if not await DocumentRepository.claim_extraction(document_id, project_id, session):
+        raise HTTPException(
+            status_code=409,
+            detail="This file has already used its one extraction attempt. Review its existing preview, or ask the AI to restore archived requirements.",
+        )
+
     filename = doc.get("original_filename") or document_id
-
-    await _persist_extraction_message(
-        project_id,
-        "user",
-        f'Extract requirements from attached document "{filename}".',
-        intent="DOCUMENT_REQUIREMENTS_REQUEST",
-        session=session,
-    )
-
-    # Explicit, loud tracking flag: the user has triggered extraction.
-    await DocumentRepository.update_extraction_status(
-        document_id, project_id, "extraction_pending", session
-    )
-    # The started event is a pre-commit progress hint; `extraction_pending` is flushed
-    # but not committed until a later 5.3 milestone succeeds. A subscriber that
-    # immediately reloads may therefore still observe the previous status.
-    await event_manager.publish(
-        project_id,
-        "document_extraction_started",
-        {
-            "project_id": project_id,
-            "document_id": document_id,
-            "token_count": token_count,
-            "budget": document_budget(),
-        },
-    )
-
     cancellation_key = _extraction_cancellation_key(project_id, document_id)
     current_task = asyncio.current_task()
-    if current_task is not None:
-        # DOC-UPLOAD extraction run → JOB 5.6 registration. The registry is
-        # process-local; durable document status remains owned by this request.
-        document_extraction_cancellations.register(cancellation_key, current_task)
-
-    # DOC-UPLOAD 5.4 — Run full/chunked Gatherer passes and emit progress hints (8.4).
     try:
+        # DOC-UPLOAD 5.3.1 — Prepare the extraction-safe copy and commit the
+        # request milestone after the one-shot attempt has been claimed.
+        content_markdown = doc.get("content_markdown") or ""
+        extraction_markdown = prepare_document_for_extraction(content_markdown)
+        token_count = count_tokens(extraction_markdown)
+        await _persist_extraction_message(
+            project_id,
+            "user",
+            f'Extract requirements from attached document "{filename}".',
+            intent="DOCUMENT_REQUIREMENTS_REQUEST",
+            session=session,
+        )
+        await DocumentRepository.update_extraction_status(
+            document_id, project_id, "extraction_pending", session
+        )
+        await event_manager.publish(
+            project_id,
+            "document_extraction_started",
+            {
+                "project_id": project_id,
+                "document_id": document_id,
+                "token_count": token_count,
+                "budget": document_budget(),
+            },
+        )
+
+        if current_task is not None:
+            # DOC-UPLOAD extraction run → JOB 5.6 registration. The registry is
+            # process-local; durable document status remains owned by this request.
+            document_extraction_cancellations.register(cancellation_key, current_task)
+
+        # DOC-UPLOAD 5.4 — Run full/chunked Gatherer passes and emit progress hints (8.4).
         run = await _run_extraction_by_chunks(
             project_id, document_id, extraction_markdown, token_count
         )
+
+        # DOC-UPLOAD 5.6 — Build and durably commit the reviewable draft while
+        # the failure guard still owns the claimed extraction attempt.
+        doc_draft = accumulate_document_draft(run["chunks"])
+        current_state = await RequirementStateRepository.get_by_project_id(project_id, session)
+        preview = build_merge_preview(
+            project_id,
+            current_state,
+            doc_draft,
+            document_id,
+            doc.get("original_filename") or "",
+        )
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        pending_action = await PendingActionRepository.create(
+            project_id,
+            {
+                "action_type": DRAFT_ACTION_TYPE,
+                "target_requirement_id": None,
+                "original_user_message": (
+                    f"Extract requirements from uploaded document "
+                    f"'{doc.get('original_filename') or document_id}'."
+                ),
+                "proposed_changes": preview,
+                "affected_user_story_ids": [],
+                "affected_acceptance_criteria_ids": [],
+                "workflow_stage": "gatherer_node",
+            },
+            expires_at=expires_at,
+            session=session,
+        )
+        await _persist_extraction_message(
+            project_id,
+            "gatherer",
+            (
+                f'Merge preview ready. Requirements were gathered from the full content of '
+                f'"{filename}" using {run["mode"]} mode ({run["chunk_count"]} chunk(s)). '
+                "Nothing has been written yet; review the proposed changes and select Save or Cancel."
+            ),
+            intent="DOCUMENT_REQUIREMENTS_DRAFT_READY",
+            session=session,
+        )
     # DOC-UPLOAD 5.5 — Cancellation/failure cleanup: discard partial in-memory output,
-    #                   restore `not_extracted`, commit a transcript milestone, publish
+    #                   mark `extraction_consumed`, commit a transcript milestone, publish
     #                   the terminal event, and return cancelled or re-raise failure.
     except asyncio.CancelledError:
         logger.info(
@@ -803,7 +843,7 @@ async def process_document(
         )
         await session.rollback()
         await DocumentRepository.update_extraction_status(
-            document_id, project_id, "not_extracted", session
+            document_id, project_id, "extraction_consumed", session
         )
         await _persist_extraction_message(
             project_id,
@@ -828,11 +868,11 @@ async def process_document(
             "document_id": document_id,
         }
     except Exception:
-        # A failed/oversized LLM run must not leave the row looking as though a
-        # reviewable draft exists. No pending action has been created yet, so
-        # returning to knowledge-only is the truthful, retryable state.
+        # Preparation, inference, and draft construction all belong to the one
+        # claimed attempt. Roll back partial work and record a terminal status.
+        await session.rollback()
         await DocumentRepository.update_extraction_status(
-            document_id, project_id, "not_extracted", session
+            document_id, project_id, "extraction_consumed", session
         )
         await _persist_extraction_message(
             project_id,
@@ -854,52 +894,6 @@ async def process_document(
             # DOC-UPLOAD 8.3 / JOB 5.6 — Remove only this request's registration;
             # a replacement task under the same key must remain cancellable.
             document_extraction_cancellations.unregister(cancellation_key, current_task)
-
-    # DOC-UPLOAD 5.6 — Collapse chunk output (6.5), build one revision-guarded merged
-    #                   proposal (6.6), create one pending action for THIS run (without
-    #                   deduplicating older drafts), then commit it together
-    #                   with `extraction_pending` and the draft-ready transcript.
-    doc_draft = accumulate_document_draft(run["chunks"])
-    current_state = await RequirementStateRepository.get_by_project_id(project_id, session)
-
-    preview = build_merge_preview(
-        project_id,
-        current_state,
-        doc_draft,
-        document_id,
-        doc.get("original_filename") or "",
-    )
-
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
-    pending_action = await PendingActionRepository.create(
-        project_id,
-        {
-            "action_type": DRAFT_ACTION_TYPE,
-            "target_requirement_id": None,
-            "original_user_message": (
-                f"Extract requirements from uploaded document "
-                f"'{doc.get('original_filename') or document_id}'."
-            ),
-            "proposed_changes": preview,
-            "affected_user_story_ids": [],
-            "affected_acceptance_criteria_ids": [],
-            "workflow_stage": "gatherer_node",
-        },
-        expires_at=expires_at,
-        session=session,
-    )
-
-    await _persist_extraction_message(
-        project_id,
-        "gatherer",
-        (
-            f'Merge preview ready. Requirements were gathered from the full content of '
-            f'"{filename}" using {run["mode"]} mode ({run["chunk_count"]} chunk(s)). '
-            "Nothing has been written yet; review the proposed changes and select Save or Cancel."
-        ),
-        intent="DOCUMENT_REQUIREMENTS_DRAFT_READY",
-        session=session,
-    )
 
     # DOC-UPLOAD 8.5 — After the draft commit, publish its id/stats for client refresh
     #                   and return the same handoff metadata to hook 2.4. This

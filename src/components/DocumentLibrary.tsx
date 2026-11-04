@@ -40,6 +40,8 @@ const formatBytes = (bytes: number): string => {
 //             `processingDocId` separately to show the active Extracting state.
 const extractionChip = (status: string): { label: string; className: string } => {
   switch (status) {
+    case 'extraction_consumed':
+      return { label: 'extraction used', className: 'bg-slate-100 text-slate-600 border-slate-200' };
     case 'extraction_applied':
       return { label: 'extracted', className: 'bg-emerald-100 text-emerald-800 border-emerald-300' };
     case 'extraction_pending':
@@ -111,23 +113,24 @@ export const DocumentLibrary: React.FC<DocumentLibraryProps> = ({ projectId, doc
                 <span className="w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
                   <FileText className="w-4 h-4" />
                 </span>
-                <div className="min-w-0 flex-1">
-                  <Tooltip label="Click to preview document" side="bottom" align="start" className="max-w-full">
+                <div className="min-w-0 flex-[1_1_180px]">
+                  <Tooltip label="Click to preview document" side="bottom" align="start" className="w-full min-w-0">
                     <button
                       onClick={() => void openPreview(doc)}
-                      className="group/preview block max-w-full cursor-pointer rounded text-left text-sm font-semibold text-on-surface transition-colors hover:text-primary focus-visible:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      className="group/preview block w-full min-w-0 max-w-full cursor-pointer rounded text-left text-sm font-semibold text-on-surface transition-colors hover:text-primary focus-visible:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      title={doc.original_filename}
                       aria-label={`Preview ${doc.original_filename}`}
                     >
-                      <span className="truncate group-hover/preview:underline group-focus-visible/preview:underline">
+                      <span className="block truncate group-hover/preview:underline group-focus-visible/preview:underline">
                         {doc.original_filename}
                       </span>
                     </button>
                   </Tooltip>
-                  <p className="text-[10px] font-mono text-on-surface-variant mt-0.5">
+                  <p className="text-[10px] font-sans text-on-surface-variant mt-0.5">
                     {doc.original_format.toUpperCase()}, {formatBytes(doc.file_size_bytes)}, ~{doc.token_count} tokens, status {doc.status}
                   </p>
                 </div>
-                <span className={`text-[10px] px-2 py-1 rounded-full border font-bold ${chip.className}`}>
+                <span className={`shrink-0 text-[10px] px-2 py-1 rounded-full border font-bold ${chip.className}`}>
                   {chip.label}
                 </span>
                 {isProcessing ? (
@@ -138,11 +141,13 @@ export const DocumentLibrary: React.FC<DocumentLibraryProps> = ({ projectId, doc
                 ) : (
                   <button
                     onClick={() => void docs.handleProcessDocument(doc)}
-                    disabled={doc.status !== 'processed'}
+                    disabled={doc.status !== 'processed' || doc.extraction_status !== 'not_extracted' || docs.processingDocId !== null}
                     className="px-3 py-1.5 rounded-xl bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                    title="Extract requirements as a DRAFT merge preview (nothing is written until you confirm)"
+                    title={doc.extraction_status !== 'not_extracted'
+                      ? 'This file has already been extracted. Ask the AI to restore archived requirements.'
+                      : 'Extract once as a draft. This file cannot be extracted again, even if you cancel.'}
                   >
-                    <span>Extract Requirements</span>
+                    <span>{doc.extraction_status !== 'not_extracted' ? 'Extraction used' : 'Extract Requirements'}</span>
                   </button>
                 )}
                 <button

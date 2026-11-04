@@ -20,7 +20,7 @@
     "schema:parse": "tsx scripts/parse_check.ts",
     "schema:drift": "./venv/bin/python backend/check_schema_drift.py",
     "inventory:tests": "./venv/bin/python scripts/generate_untested_inventory.py",
-    "test": "tsx --test scripts/unit.test.ts scripts/auth.test.ts scripts/requirement_locks.test.ts scripts/frontend_workflows.test.ts"
+    "test": "tsx --test scripts/unit.test.ts scripts/auth.test.ts scripts/requirement_locks.test.ts scripts/frontend_workflows.test.ts scripts/prd_generation.test.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

@@ -93,6 +93,9 @@ REQ_STATE = {
 
 
 def _patch(monkeypatch, req_state, llm_result=None, semantic_recs=None):
+    async def related_scope(*args, **kwargs):
+        return {"decision": "related", "reason": "Relevant update"}
+    monkeypatch.setattr(agents, "check_update_scope", related_scope)
     """Patch DB/LLM collaborators; returns (saved_messages, llm_calls)."""
     saved = []
     llm_calls = []
@@ -174,8 +177,14 @@ async def test_unknown_command_requests_clarification_instead_of_claiming_succes
 
 
 @pytest.mark.asyncio
-async def test_matcher_resolves_explicit_parent_requirement_without_story_guess(monkeypatch):
-    _patch(monkeypatch, REQ_STATE, llm_result={})
+@pytest.mark.parametrize("message", [
+    "Change req 1 to require manager approval",
+    "Update REQ-001: the daily transfer limit must be 20,000 THB per customer.",
+])
+async def test_matcher_resolves_explicit_parent_requirement_without_story_guess(monkeypatch, message):
+    saved_state = copy.deepcopy(REQ_STATE)
+    saved_state["validation_status"] = "invalid"
+    _patch(monkeypatch, saved_state, llm_result={})
 
     async def story_matcher_must_not_run(*_args, **_kwargs):
         raise AssertionError("explicit REQ IDs must bypass story-level inference")
@@ -183,7 +192,7 @@ async def test_matcher_resolves_explicit_parent_requirement_without_story_guess(
     monkeypatch.setattr(agents, "match_requirement", story_matcher_must_not_run)
     result = await agents.requirement_matcher_node({
         "project_id": "p1",
-        "raw_input": "Change req 1 to require manager approval",
+        "raw_input": message,
         "detected_intent": "UPDATE_REQUIREMENT",
         "intent_confidence": 0.99,
         "current_version": 5,
@@ -193,6 +202,7 @@ async def test_matcher_resolves_explicit_parent_requirement_without_story_guess(
     assert match["parent_requirement_code"] == "REQ-001"
     assert match["confidence"] == 1.0
     assert match["status"] == "MATCHED"
+    assert agents.route_from_matcher(result) == "gatherer_node"
 
 
 @pytest.mark.asyncio
@@ -1064,7 +1074,8 @@ def test_build_change_summary_lists_ticket_codes():
 
 def test_build_change_summary_reports_no_changes():
     msg = agents._build_change_summary({"US-001": {"action": "unchanged"}})
-    assert "No changes were needed" in msg
+    assert "No requirement differences were produced" in msg
+    assert "already cover your input" not in msg
 
 
 def test_build_intent_guidance_covers_all_intents():
@@ -1403,3 +1414,56 @@ async def test_repeated_low_confidence_question_is_not_asked_twice(monkeypatch):
 
 
 
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('decision, should_stop', [
+    ('mismatch', True), ('uncertain', True),
+    ('related', False), ('explicit_extension', False),
+])
+async def test_explicit_req_update_checks_content_scope(monkeypatch, decision, should_stop):
+    board = copy.deepcopy(REQ_STATE)
+    board['requirements'][0]['title'] = 'Transaction History Export'
+    _patch(monkeypatch, board, llm_result={})
+    seen = {}
+
+    async def scope_check(model, message, target):
+        seen['message'] = message
+        seen['target'] = target
+        return {'decision': decision, 'reason': 'This export flow has no OTP behavior.'}
+
+    monkeypatch.setattr(agents, 'check_update_scope', scope_check)
+    result = await agents.requirement_matcher_node({
+        'project_id': 'p1',
+        'raw_input': 'Modify REQ-001: OTP must expire within 5 minutes.',
+        'detected_intent': 'UPDATE_REQUIREMENT',
+        'intent_confidence': 1.0,
+    })
+    assert seen['target']['title'] == 'Transaction History Export'
+    assert '5 minutes' in seen['message']
+    from langgraph.graph import END
+    assert agents.route_from_matcher(result) == (END if should_stop else 'gatherer_node')
+    assert result['requirement_state']['requirements'] == board['requirements']
+    if should_stop:
+        question = result['requirement_state']['clarification_questions'][-1]['question_text']
+        assert 'No update preview was prepared' in question
+        assert 'Transaction History Export' in question
+        assert 'different requirement' in question
+        assert 'extend REQ-001' in question
+
+
+@pytest.mark.asyncio
+async def test_scope_checker_failure_asks_instead_of_allowing_update(monkeypatch):
+    _patch(monkeypatch, REQ_STATE, llm_result={})
+
+    async def unavailable(*args):
+        raise RuntimeError('Model unavailable')
+
+    monkeypatch.setattr(agents, 'check_update_scope', unavailable)
+    result = await agents.requirement_matcher_node({
+        'project_id': 'p1', 'raw_input': 'Modify REQ-001: OTP expires in 5 minutes.',
+        'detected_intent': 'UPDATE_REQUIREMENT',
+    })
+    from langgraph.graph import END
+    assert agents.route_from_matcher(result) == END
+    assert 'scope check could not complete' in result['requirement_match']['reason']

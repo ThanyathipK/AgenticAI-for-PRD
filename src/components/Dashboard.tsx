@@ -36,6 +36,7 @@ import { ProjectsDashboard } from './ProjectsDashboard';
 import { Tooltip, TooltipBubble } from './Tooltip';
 import { highlightMatch } from '../utils/highlight';
 import { api } from '../api/client';
+import { hasManualPrdEditsAtRisk } from '../utils/prdGeneration';
 import type { ProjectIntake } from './NewProjectModal';
 import { WorkspaceNavigation } from './WorkspaceNavigation';
 import { MainArtifactPanel } from './MainArtifactPanel';
@@ -179,7 +180,10 @@ export default function Dashboard() {
     lockableRequirements,
     refreshLockableRequirements,
     handleGeneratePRD,
-    prdMarkdown,
+    sectionLocks,
+    sections,
+    editingSectionId,
+    editBuffer,
     prdGenerationFailed,
     prdDiagramGenerationFailed,
     clearPrdGenerationNotices,
@@ -192,11 +196,7 @@ export default function Dashboard() {
   const [isGenerateWarningOpen, setIsGenerateWarningOpen] = useState<boolean>(false);
 
   const requestGeneratePRD = async (): Promise<void> => {
-    const hasExistingDocument = Boolean(prdMarkdown.trim());
-    const hasExistingPreview = pendingActions.some(
-      action => action.action_type === 'GENERATE_PRD',
-    );
-    if (hasExistingDocument || hasExistingPreview) {
+    if (hasManualPrdEditsAtRisk(sectionLocks, sections, editingSectionId, editBuffer)) {
       setIsGenerateWarningOpen(true);
       return;
     }
@@ -282,7 +282,7 @@ export default function Dashboard() {
         id="project-sidebar"
         className={`flex flex-col bg-white border-r border-outline shrink-0 transition-[width] duration-200 ease-out ${historyCollapsed ? 'w-[52px]' : 'w-[280px]'}`}
       >
-        <div className={`py-4 flex items-center ${collapsed ? 'justify-center px-2' : 'justify-between px-5'} border-b border-outline`}>
+        <div className={`h-[50px] shrink-0 flex items-center ${collapsed ? 'justify-center px-2' : 'justify-between px-5'} border-b border-outline`}>
           <div className={`flex items-center gap-2 overflow-hidden ${collapsed ? 'w-0 opacity-0' : 'opacity-100'}`}>
             <div className="w-6.5 h-6.5 rounded-lg bg-primary flex items-center justify-center text-on-primary text-[10px] font-bold shrink-0">Ai</div>
             <span className="text-[13px] font-bold text-on-surface whitespace-nowrap">Agentic-AI</span>
@@ -943,7 +943,7 @@ export default function Dashboard() {
       <ConfirmModal
         isOpen={isGenerateWarningOpen}
         title="Generate a new PRD draft?"
-        description="AI generation may replace manual changes in unlocked AI-managed sections. Locked sections and non-AI sections are preserved. Your currently saved PRD remains available in version history."
+        description="Generating may replace your manual edits in unlocked sections. Saved versions remain in history."
         confirmLabel="Generate draft"
         pendingLabel="Starting..."
         onConfirm={async () => {

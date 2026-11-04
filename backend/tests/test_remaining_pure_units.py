@@ -22,8 +22,8 @@ def test_route_from_router_all_dispatches(state, expected):
     assert route_from_router(state) == expected
 
 
-def test_route_from_matcher_blocks_invalid_only():
-    assert route_from_matcher({"requirement_state": {"validation_status": "invalid"}}) == END
+def test_route_from_matcher_does_not_block_edits_after_failed_audit():
+    assert route_from_matcher({"requirement_state": {"validation_status": "invalid"}}) == "gatherer_node"
     assert route_from_matcher({"requirement_state": {"validation_status": "valid"}}) == "gatherer_node"
     assert route_from_matcher({}) == "gatherer_node"
 
@@ -71,3 +71,23 @@ def test_save_failure_diagnostics_copies_sources_and_engine_output(tmp_path, mon
     assert (target / "document.tex").read_text() == "broken tex"
     assert (target / "document.log").read_text() == "broken log"
     assert (target / "engine-output.txt").read_text() == "engine failed"
+
+
+@pytest.mark.parametrize("intent", ["UPDATE_REQUIREMENT", "DELETE_REQUIREMENT"])
+@pytest.mark.parametrize("validation", ["valid", "invalid", "pending"])
+@pytest.mark.parametrize("status, confidence, blocked", [
+    ("MATCHED", 1.0, False),
+    ("AMBIGUOUS", 1.0, True),
+    ("LOW_CONFIDENCE", 0.9, True),
+    ("MATCHED", 0.74, True),
+])
+def test_match_routing_uses_current_match_not_previous_audit(intent, validation, status, confidence, blocked):
+    state = {
+        "detected_intent": intent,
+        "requirement_state": {"validation_status": validation},
+        "requirement_match": {"status": status, "confidence": confidence},
+    }
+    expected = END if blocked else (
+        "delete_requirement_node" if intent == "DELETE_REQUIREMENT" else "gatherer_node"
+    )
+    assert route_from_matcher(state) == expected

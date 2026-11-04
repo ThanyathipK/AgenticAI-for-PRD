@@ -16,6 +16,7 @@ from app.auth import (
     require_project_owner,
     verify_project_access,
 )
+from app.requirement_feedback import generation_failure_message
 from app.config import settings
 from app.database import get_db
 from app.errors import classify_exception
@@ -1956,8 +1957,9 @@ async def _process_requirements_pipeline(
                 f"No changes were made because I need clarification before updating the requirements.\n\n{latest_question}"
                 if matcher_needs_clarification and latest_question
                 else (
-                    "I couldn't find an applicable requirement change in that request. "
-                    "No changes were made. Please check the user story ID and try again."
+                    "No update was prepared: the workflow produced no requirement differences. "
+                    "The exact cause could not be determined. Specify the requirement ID and the exact "
+                    "before/after change, then retry. Your saved requirements are unchanged."
                 )
             )
         if (
@@ -2122,7 +2124,7 @@ async def _process_requirements_pipeline(
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The audit or generation could not complete. Please try again. Your previous saved results have not been replaced.",
+            detail=generation_failure_message(e) if request.target_agent == "gatherer" else "The audit or generation could not complete. Please try again. Your previous saved results have not been replaced.",
         )
     except Exception as e:
         policy = classify_exception(e)

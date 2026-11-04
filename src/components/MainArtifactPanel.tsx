@@ -7,7 +7,7 @@ import {
   traceabilityRefreshToken,
 } from "./RequirementTraceability";
 import { VersionHistory } from "./VersionHistory";
-import { LoaderCircle } from "lucide-react";
+import { ChevronDown, LoaderCircle } from "lucide-react";
 
 const ArchitectureFlows = lazy(() =>
   import("./ArchitectureFlows").then(({ ArchitectureFlows }) => ({
@@ -50,9 +50,13 @@ export function MainArtifactPanel({ state }: MainArtifactPanelProps) {
       {activeTab === "trace" && (
         <>
           <DocumentLibrary projectId={projectId} docs={documents} />
-          <details className="mt-3 rounded-[10px] border border-outline bg-white">
-            <summary className="cursor-pointer list-none px-4 py-3 text-xs font-semibold text-on-surface flex items-center justify-between">
+          <details className="group/hierarchy mt-3 rounded-[10px] border border-outline bg-white">
+            <summary className="cursor-pointer list-none px-4 py-3 text-xs font-semibold text-on-surface flex items-center justify-between gap-3 rounded-[10px] transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
               Requirement hierarchy
+              <ChevronDown
+                className="h-4 w-4 shrink-0 text-on-surface-variant transition-transform group-open/hierarchy:rotate-180"
+                aria-hidden="true"
+              />
             </summary>
             <div className="border-t border-outline p-3">
               {/* TRACEABILITY 1.1 — Mount the derived matrix inside the Requirements

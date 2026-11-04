@@ -12,7 +12,7 @@
 // Input: public user state and callbacks supplied by useAuth.
 // Branches: no user → sign-in action; user → AUTH 1.6 identity and AUTH 4.1 logout.
 // Writes: presentation state only; session mutation remains in useAuth.
-import { LogIn, LogOut, Settings, ShieldCheck } from 'lucide-react';
+import { LogIn, LogOut, Settings } from 'lucide-react';
 import { useState } from 'react';
 import type { AuthUserPayload } from '../api/types';
 import { authInitials } from '../hooks/useAuth';
@@ -115,7 +115,6 @@ export function AuthPanel({
             {user.full_name}
           </div>
           <div className="flex items-center gap-1 text-[11px] text-on-surface-variant truncate">
-            <ShieldCheck className="w-3 h-3 shrink-0 text-primary/70" />
             <span className="truncate" title={`${user.role}, ${user.email}`}>{user.role}</span>
           </div>
         </div>

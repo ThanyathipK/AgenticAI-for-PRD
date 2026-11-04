@@ -911,7 +911,7 @@ class UploadedDocumentResponse(BaseModel):
     token_count: int = Field(0, description="Markdown token count measured at ingest via count_tokens.")
     status: str = Field("processed", description="'processed' | 'failed'.")
     uploaded_by: str = Field("user", description="Actor that uploaded the document.")
-    extraction_status: str = Field("not_extracted", description="'not_extracted' | 'extraction_pending' | 'extraction_applied'.")
+    extraction_status: str = Field("not_extracted", description="'not_extracted' | 'extraction_pending' | 'extraction_applied' | 'extraction_consumed'.")
     created_at: str = Field("", description="ISO8601 creation timestamp.")
     updated_at: str = Field("", description="ISO8601 last-update timestamp.")
 

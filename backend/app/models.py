@@ -592,7 +592,7 @@ class DocumentModel(Base):
     status = Column(String(20), nullable=False, default="processed")  # 'processed' | 'failed'
     uploaded_by = Column(String(100), nullable=False, default="user", server_default="user")
     # Tracks whether the user has explicitly triggered extraction for this
-    # document: 'not_extracted' | 'extraction_pending' | 'extraction_applied'.
+    # document: 'not_extracted' | 'extraction_pending' | 'extraction_applied' | 'extraction_consumed'.
     # Extracted requirements are NEVER stored on this table.
     extraction_status = Column(String(30), nullable=False, default="not_extracted", server_default="not_extracted")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

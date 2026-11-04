@@ -219,6 +219,12 @@ async def invoke_llm_structured(
             description, e, len(raw_text), metadata.get("finish_reason"),
         )
 
+    metadata = getattr(locals().get("raw_response"), "response_metadata", {}) or {}
+    if metadata.get("finish_reason") == "length":
+        raw_failure += "; finish_reason=length (output token limit)"
+    elif "raw_response" in locals() and not raw_text.strip():
+        raw_failure += "; empty model output"
+
     # A malformed but non-empty response can often be repaired cheaply without
     # sending the large requirements/documents prompt a second time. This call
     # sees only the broken output and the compact contract.

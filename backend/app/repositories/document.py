@@ -11,7 +11,7 @@ exclusively through the explicit, user-confirmed extraction flow in
 import logging
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import DocumentModel
@@ -117,6 +117,21 @@ class DocumentRepository:
         return serialize_document(doc, include_markdown=True)
 
     @staticmethod
+    async def claim_extraction(document_id: str, project_id: str, session: AsyncSession) -> bool:
+        """Atomically consume the one extraction attempt for this uploaded file."""
+        result = await session.execute(
+            update(DocumentModel).where(
+                DocumentModel.id == as_uuid(document_id),
+                DocumentModel.project_id == as_uuid(project_id),
+                DocumentModel.extraction_status == "not_extracted",
+                DocumentModel.status == "processed",
+            ).values(extraction_status="extraction_pending")
+        )
+        claimed = result.rowcount == 1
+        await session.commit()
+        return claimed
+
+    @staticmethod
     async def update_extraction_status(
         document_id: str,
         project_id: str,
@@ -124,7 +139,7 @@ class DocumentRepository:
         session: AsyncSession,
     ) -> Optional[Dict[str, Any]]:
         # DOC-UPLOAD 7.5 — Extraction tracking: `extraction_pending` during/after route 4.5,
-        #             `not_extracted` on cancellation/failure/Discard, and
+        #             `extraction_consumed` on cancellation/failure/Discard, and
         #             `extraction_applied` after CONFIRM. Upload begins not_extracted.
         """Update a document's extraction-status tracking flag."""
         did = as_uuid(document_id)

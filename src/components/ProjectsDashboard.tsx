@@ -416,7 +416,7 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') setQuery('');
                 }}
-                placeholder="Search projects or document hash..."
+                placeholder="Search projects..."
                 className="flex-1 bg-transparent text-[14px] text-on-surface placeholder:text-on-surface-variant focus:outline-none min-w-0"
               />
               {query && (

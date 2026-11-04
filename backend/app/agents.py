@@ -44,6 +44,7 @@ from app.repositories import (
 )
 from app.repositories.base import compact_requirement_context
 from app.request_priority import format_prioritized_input
+from app.requirement_scope import check_update_scope
 from app.requirement_codes import (
     # Requirement numbering is canonicalized in ONE place so no module ever
     # hardcodes a literal code such as ``"REQ-001"``.
@@ -550,6 +551,30 @@ async def requirement_matcher_node(state: AgentState) -> WorkflowNodeOutcome:
         # Calls: MATCHING 2.0 with the message, normalized intent, and current stories.
         # Returns: a validated action/status/target contract consumed by 1.5/1.6.
         match_result = await match_requirement(raw_input, detected_intent, existing_stories)
+    if detected_intent == "UPDATE_REQUIREMENT" and len(explicit_parent_codes) == 1:
+        target_code = explicit_parent_codes[0]
+        target = requirements_by_code[target_code]
+        try:
+            scope = await check_update_scope(gatherer_llm, raw_input, target)
+        except Exception:
+            logger.exception("Could not verify update scope for %s", target_code)
+            scope = {"decision": "uncertain", "reason": "The scope check could not complete."}
+        if scope.get("decision") not in {"related", "explicit_extension"}:
+            title = str(target.get("title") or "Untitled requirement")
+            explanation = str(scope.get("reason") or "The requested behavior may not belong to this requirement.")
+            match_result = {
+                "matched_requirement_id": None,
+                "parent_requirement_code": target_code,
+                "confidence": 0.0, "action": "CLARIFY", "status": "LOW_CONFIDENCE",
+                "candidates": [],
+                "reason": (
+                    f"No update preview was prepared. {target_code} is '{title}'. {explanation} "
+                    "Do you want to update a different requirement? Send its REQ/US ID and the change. "
+                    f"Or, if you intend to extend {target_code}, describe how the new rule applies to its flow. "
+                    "Your saved requirements are unchanged."
+                ),
+            }
+
     matcher_status = str(match_result.get("status", "MATCHED")).upper()
     matcher_confidence = float(match_result.get("confidence", 1.0))
     reason = match_result.get("reason", "")
@@ -1057,7 +1082,7 @@ def _build_change_summary(merge_report: RequirementMergeReport) -> str:
             f"{', '.join(sorted(buckets['conflict']))}"
         )
     if len(lines) == 1:
-        lines.append("No changes were needed. The existing requirements already cover your input.")
+        lines.append("No requirement differences were produced. The requested update has not been confirmed; specify the target ID and the exact before/after change.")
     return "\n".join(lines)
 
 
@@ -1964,6 +1989,32 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
     # Writes: conversation_messages only; backend staging occurs later at 8.0 and
     #         the frontend presents that staged action at 8.1.
     gatherer_msg = _build_change_summary(merge_report)
+    no_update_message = None
+    if detected_intent == "UPDATE_REQUIREMENT" and final_requirements == existing_requirements:
+        if not llm_requirements:
+            no_update_message = (
+                "No update was prepared because the model returned an empty requirement draft. "
+                "Retry with the requirement ID and exact change; saved requirements are unchanged."
+            )
+        elif unsupported_claims:
+            no_update_message = (
+                "No update was prepared because generated values were not supported by your input. "
+                "Answer the source-evidence clarification questions or supply the exact values."
+            )
+        else:
+            no_update_message = (
+                "No update was prepared because the generated draft produced no differences after validation and merging. "
+                "This does not confirm that your request is already satisfied. Specify the target ID and exact before/after change."
+            )
+        if parent_requirement:
+            target_title = str(parent_requirement.get("title") or "Untitled requirement")
+            no_update_message += (
+                f" Target: {parent_requirement_code} ({target_title}). "
+                "Check that the requested behavior belongs to this requirement; otherwise specify the correct REQ/US ID. "
+                "If you intend to extend this requirement, describe how the new rule applies to its flow."
+            )
+        gatherer_msg = no_update_message
+
     await ConversationMessageRepository.save_message(
         project_id=project_id,
         role="assistant",
@@ -1990,7 +2041,8 @@ async def gatherer_node(state: AgentState) -> WorkflowNodeOutcome:
         "requirement_state": req_state,
         "structured_requirements": structured_out,
         "detected_intent": detected_intent,
-        "current_version": req_state.get("version_number", 1)
+        "current_version": req_state.get("version_number", 1),
+        "agent_message": no_update_message,
     }
 
 
@@ -2995,7 +3047,7 @@ async def auditor_node(state: AgentState) -> WorkflowNodeOutcome:
                         format_instructions
                         + "\nEvaluate only these rule IDs in this pass: "
                         + json.dumps(allowed_rule_ids)
-                        + ". Return at most one finding and one clarification question per rule."
+                        + ". Return at most one finding and one clarification question per canonical rule; also return distinct ADHOC cross-requirement conflicts and ambiguities."
                         + "\nCitation validation for this pass: use only these exact document_id/document_name pairs: "
                         + json.dumps(allowed_sources, ensure_ascii=False)
                         + ". For a question or finding based only on requirement analysis, use an empty "
@@ -3095,16 +3147,12 @@ async def auditor_node(state: AgentState) -> WorkflowNodeOutcome:
         result = _merge_audit_passes(partial_results, current_version)
         deterministic_findings = _deterministic_quality_findings(structured_reqs_for_prompt)
         if deterministic_findings:
-            result["findings"] = _dedupe_dicts(
-                list(result.get("findings") or []) + deterministic_findings,
-                ("finding_type", "target_requirement_id", "description"),
+            # Use the same merger so deterministic conflicts also receive
+            # resolution questions and the verdict follows all merged evidence.
+            result = _merge_audit_passes(
+                [result, {"findings": deterministic_findings}], current_version
             )
-            if any(item.get("impact") == "blocking" for item in deterministic_findings):
-                result["is_valid"] = False
-                result["verdict"] = "fail"
-            elif result.get("verdict") == "pass":
-                result["verdict"] = "pass_with_warnings"
-        
+
         # AUDIT 2.6 — Reconcile questions and project the successful audit into state.
         # Existing unresolved questions are preserved; new questions gain provenance
         # and compact requirement context, then are deduplicated. Audit-only fields and
