@@ -44,7 +44,6 @@ from app.repositories import (
 )
 from app.repositories.base import compact_requirement_context
 from app.request_priority import format_prioritized_input
-from app.requirement_scope import check_update_scope
 from app.requirement_codes import (
     # Requirement numbering is canonicalized in ONE place so no module ever
     # hardcodes a literal code such as ``"REQ-001"``.
@@ -59,6 +58,7 @@ from app.requirement_codes import (
 from app.requirement_codes import (
     normalize_requirement_code as _normalize_requirement_code,
 )
+from app.requirement_scope import check_update_scope
 from app.schemas import AuditorOutput, ClarificationGathererBatch, GatheredRequirements
 from app.semantic_service import (
     SEMANTIC_LOW_CONFIDENCE_THRESHOLD,

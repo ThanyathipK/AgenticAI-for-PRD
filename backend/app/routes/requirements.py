@@ -16,7 +16,6 @@ from app.auth import (
     require_project_owner,
     verify_project_access,
 )
-from app.requirement_feedback import generation_failure_message
 from app.config import settings
 from app.database import get_db
 from app.errors import classify_exception
@@ -46,6 +45,7 @@ from app.requirement_codes import (
     extract_requirement_codes,
     normalize_requirement_code,
 )
+from app.requirement_feedback import generation_failure_message
 from app.schemas import (
     AuditRespondResponse,
     IntentDetectorRequest,
