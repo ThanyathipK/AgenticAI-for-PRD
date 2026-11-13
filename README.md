@@ -33,7 +33,7 @@ Agentic AI turns plain-English banking product briefs into **audited, versioned,
 - **Source-grounded requirement updates** — explicit `REQ-`/`US-` targets are resolved deterministically, updated stories receive a complete revalidated acceptance-criteria set, and model-introduced technical values or behaviors without source evidence are withheld and turned into clarification questions
 - **Project review status and revision tracking** — the dashboard lets owners directly select Draft, HPO Review, PO Review, Approved, or Revised. Governed content changes automatically move an approved project to Revised and append a review-history event; the stricter transition/approval service exists for internal use and tests but is not called by the status API
 - **Operational project health** — dashboard health separates fully traced requirements from story, acceptance-criteria, PRD-reference, and diagram-reference coverage, then rolls in audit freshness/findings, unresolved questions, PRD review state, approval evidence, and active waivers
-- **Persistent background generation** — Architect and scoped-regeneration jobs continue after a browser disconnect, are requeued after a server restart, and can be cancelled explicitly; partial work is rolled back
+- **Persistent background generation** — Architect and scoped-regeneration jobs continue after a browser disconnect, are requeued after a server restart, and can be cancelled explicitly; scoped regeneration respects per-section locks and leaves locked or human-owned PRD sections untouched
 - **Scoped artifact locking** — lock/unlock authoritative requirements and individual PRD sections through the generic lock API; optimistic UI rolls back failed lock changes, locked requirements reject governed mutations, and locked PRD sections are preserved during editing, restore, and AI regeneration
 - **Real-time updates** — Server-Sent Events push state changes to the dashboard instead of polling
 - **Bounded project loading** — project switches abort obsolete state requests, reject older snapshots, load only the newest five chat messages, and fetch only the latest lightweight PRD SemVer row until the Version History tab is opened
@@ -346,12 +346,13 @@ Vite proxies `/api/*` → `http://127.0.0.1:8000`, so the SPA never needs a hard
 
 ```bash
 curl http://localhost:8000/api/health
+curl -i http://localhost:8000/api/ready
 ```
 
 Expect a JSON response naming the app, the LM Studio gateway, and the context budget. Interactive Swagger docs are available at **http://localhost:8000/docs**.
 
 > [!NOTE]
-> **Since Finding #40 was fixed, `/api/health` is a real readiness probe.** In addition to the app metadata it runs a TTL-cached `GET /models` round-trip against LM Studio and reports:
+> `/api/health` is the liveness and LM Studio status endpoint. In addition to app metadata it runs a TTL-cached `GET /models` round-trip against LM Studio and reports:
 >
 > - `lm_studio_online` — `true` when the local server answered the probe
 > - `lm_studio_model` / `lm_studio_model_loaded` — the configured `LM_STUDIO_MODEL_FALLBACK` and whether it is currently loaded
@@ -361,6 +362,8 @@ Expect a JSON response naming the app, the LM Studio gateway, and the context bu
 > When LM Studio is **offline** the app still answers `200` with `lm_studio_online: false`
 > and a human-readable `lm_studio_error` — so uptime checks keep working while the
 > chat header surfaces the status via an **LLM Offline** pill instead of opaque 503s.
+>
+> Use `/api/ready` for deployment readiness checks. It runs `SELECT 1` against the configured database and returns `200` when database-backed requests can proceed, or `503` when the database is unavailable. This is separate from liveness so database outages do not trigger unnecessary process restarts.
 >
 > `npm run dev` backgrounds the backend with `&`, so both logs interleave in one terminal. To run them separately, start the backend with `source venv/bin/activate && cd backend && uvicorn app.main:app --port 8000` in one terminal and `npx vite --port=3000` in another.
 
@@ -593,7 +596,8 @@ The backend is a FastAPI app; full interactive documentation (with request/respo
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/health` | Liveness + LM Studio readiness; returns app name, gateway, context budget, and a live `/models` probe (`lm_studio_online`, latency, loaded models, error) |
+| `GET` | `/api/health` | Liveness + LM Studio status; returns app name, gateway, context budget, and a live `/models` probe (`lm_studio_online`, latency, loaded models, error) |
+| `GET` | `/api/ready` | Database readiness; runs `SELECT 1`, returns `200` when reachable and `503` when unavailable |
 | `POST` | `/api/chat` | Standalone general-chat API with optional `project_id`; persists the newest user turn and assistant reply, uses semantic memory for project-bound calls, and emits a `chat_reply` SSE event. The current SPA composer does not call this route |
 
 ### Authentication

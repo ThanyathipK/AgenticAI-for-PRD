@@ -155,12 +155,6 @@ async def _execute(job: GenerationJobModel, session) -> dict[str, Any]:
         return jsonable_encoder(await _process_requirements_pipeline(request, session, current_user))
     if job.job_type == "regeneration":
         from app.dependency_graph_service import execute_regeneration
-        from app.lock_service import LockService
-
-        lock_info = await LockService.get_lock_status(
-            "project", str(job.project_id), session, project_id=str(job.project_id),
-        )
-        LockService.raise_if_locked("project", str(job.project_id), lock_info)
 
         result = await execute_regeneration(
             str(job.project_id),

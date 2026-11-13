@@ -1,6 +1,8 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthenticatedUser, get_current_user, verify_project_access
@@ -61,6 +63,25 @@ async def get_health_status(force: bool = False) -> HealthResponse:
         "lm_studio_error": lm_health["error"],
         "lm_studio_last_checked": lm_health["checked_at"],
     }
+
+
+@router.get("/api/ready", status_code=status.HTTP_200_OK)
+async def get_readiness_status(session: AsyncSession = Depends(get_db)) -> dict[str, str]:
+    """Report whether the backend can reach its configured database.
+
+    Keep this separate from ``/api/health``: liveness should remain successful
+    when an optional dependency is unavailable, while deployment readiness
+    checks need a non-2xx response when database-backed requests cannot work.
+    """
+    try:
+        await session.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        logger.warning("Database readiness probe failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database unavailable",
+        ) from exc
+    return {"status": "ready", "database": "online"}
 
 
 # CHAT 5.1 — Serve the standalone memory-aware conversation API.

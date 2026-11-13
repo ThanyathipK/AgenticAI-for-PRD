@@ -18,7 +18,7 @@ const TAB_ITEMS: ReadonlyArray<{
   icon: typeof FileText;
 }> = [
   { id: "trace", label: "Requirements", icon: GitBranch },
-  { id: "prd", label: "PRD Documents", icon: FileText },
+  { id: "prd", label: "PRD Document", icon: FileText },
   { id: "flows", label: "Diagram", icon: Network },
   { id: "history", label: "Versions", icon: Clock },
 ];
