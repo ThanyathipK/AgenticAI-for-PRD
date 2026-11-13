@@ -1028,7 +1028,6 @@ export function useChat(
       setPrdGenerationFailed(true);
       // Surface the compact failure message above the unchanged saved PRD.
       // Normal in-progress feedback remains in chat; no partial preview is shown.
-      deps.setActiveTab("prd");
       store.setMessages((prev) => [
         ...prev,
         {

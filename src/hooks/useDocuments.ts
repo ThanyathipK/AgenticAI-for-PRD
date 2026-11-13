@@ -129,7 +129,7 @@ export function useDocuments(deps: DocumentsDeps): UseDocumentsResult {
         // Read that authoritative row instead of creating a second local copy.
         try {
           const history = await api.listConversationMessages(deps.projectId);
-          const expectedContent = `File uploaded: ${uploaded.original_filename}`;
+          const expectedContent = `File uploaded: ${uploaded.original_filename}. To extract requirements from this document, open the Requirements tab and click Extract Requirements.`;
           const persisted = [...history].reverse().find(message =>
             message.intent === 'DOCUMENT_CONVERSION_PROCESSED' &&
             (message.content || message.message) === expectedContent,

@@ -703,7 +703,7 @@ export default function Dashboard() {
 
         {/* RIGHT PANEL: Live Workspace Previews (Tabbed System) */}
         <section className="flex-[1_1_0%] min-w-0 min-h-0 flex flex-col bg-background relative overflow-hidden">
-          {/* Tabs bar — warm pill navigation (PRD Documents / Requirements / Flows /
+          {/* Tabs bar — warm pill navigation (PRD Documents / Requirements / Diagram /
               Versions) modeled on the PRD nav reference; each tab is wired to its
               live workspace panel, and the DOCX/PDF exports sit at the pill's right
               edge (inside it) like the reference's Export button. */}

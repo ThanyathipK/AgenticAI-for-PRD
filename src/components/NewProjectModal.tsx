@@ -174,6 +174,8 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
           <button
             onClick={() => handleSubmit(true)}
             disabled={!name.trim() || !pmoNo.trim() || !author.trim() || isCreating}
+            title="Create the project with its name and required cover details only. You can add requirements later."
+            aria-describedby="create-empty-help"
             className="px-4 py-2 rounded-[10px] bg-white border border-primary text-primary hover:bg-primary/5 transition-colors text-xs font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isCreating ? 'Creating...' : 'Skip & Create Empty'}
@@ -181,11 +183,17 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
           <button
             onClick={() => handleSubmit()}
             disabled={!name.trim() || !pmoNo.trim() || !author.trim() || !businessTopics['Introduction & Executive Summary']?.trim() || isCreating}
+            title="Create the project and send the intake details to Gatherer to draft initial requirements. An Introduction & Executive Summary is required."
+            aria-describedby="create-gatherer-help"
             className="px-4 py-2 rounded-[10px] bg-primary text-on-primary hover:brightness-110 active:scale-[0.99] transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100"
           >
             <Plus className="w-3.5 h-3.5" />
             {isCreating ? 'Creating...' : 'Create & Start Gatherer'}
           </button>
+        </div>
+        <div className="mt-2 flex justify-end gap-2 text-[10px] leading-snug text-on-surface-variant">
+          <p id="create-empty-help" className="max-w-[190px] text-right">Creates an empty project; add requirements later.</p>
+          <p id="create-gatherer-help" className="max-w-[220px] text-right">Starts a requirements draft from your intake details.</p>
         </div>
       </div>
     </div>

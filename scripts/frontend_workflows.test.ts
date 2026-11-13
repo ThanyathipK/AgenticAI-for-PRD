@@ -692,10 +692,6 @@ test("traceability renders PRD sections, current and historical diagrams, covera
   );
   assert.match(html, /REQ-001/);
   assert.match(html, /US-001-AC-001/);
-  assert.match(html, /PRD: functional_requirements/);
-  assert.match(html, /Diagram: PRD v1/);
-  assert.match(html, /Diagram: PRD v2/);
-  assert.match(html, /Coverage gap/);
-  assert.match(html, /Review/);
+  assert.doesNotMatch(html, /PRD:|Diagram:|Coverage gap|Review/);
   assert.match(html, /Transfer requires approval/);
 });

@@ -62,7 +62,7 @@ export function useWorkspaceUi(): UseWorkspaceUiResult {
   }, [isDraggingSplit]);
 
   // Layout Tab Active States: 'prd' | 'flows' | 'trace' | 'history'
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>('prd');
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('trace');
 
   // Top-level view next to the project sidebar: workspace, dashboard, or help.
   const [activeView, setActiveView] = useState<AppView>('workspace');

@@ -203,7 +203,7 @@ export function useProjectSync(
           store.setMessages(loadedMessages);
         }
         loadedTimelineProjectIdRef.current = projId;
-        setActiveTab("prd");
+        setActiveTab("trace");
 
         // No generated PRD yet -> show the official Krungsri Nimble template
         // skeleton in the right panel; Generate PRD fills it in afterwards.

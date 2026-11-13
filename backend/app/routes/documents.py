@@ -358,7 +358,7 @@ async def upload_document(
     else:
         await _persist_conversion_message(
             project_id,
-            f"File uploaded: {filename}",
+            f"File uploaded: {filename}. To extract requirements from this document, open the Requirements tab and click Extract Requirements.",
             status_value="processed",
             session=session,
         )

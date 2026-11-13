@@ -137,7 +137,10 @@ export function useAuth(): UseAuthResult {
   // leaving the UI in a fake signed-in state.
   useEffect(() => {
     const stored = readStoredToken();
-    if (!stored) return;
+    if (!stored) {
+      setIsAuthModalOpen(true);
+      return;
+    }
 
     setAuthToken(stored);
     setToken(stored);
@@ -146,7 +149,10 @@ export function useAuth(): UseAuthResult {
     api
       .authMe(stored)
       .then((profile) => {
-        if (!cancelled) setUser(profile);
+        if (!cancelled) {
+          setUser(profile);
+          setIsAuthModalOpen(false);
+        }
       })
       .catch(() => {
         if (cancelled) return;
@@ -155,6 +161,7 @@ export function useAuth(): UseAuthResult {
         writeStoredToken(null);
         setToken(null);
         setUser(null);
+        setIsAuthModalOpen(true);
       });
     return () => {
       cancelled = true;

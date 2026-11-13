@@ -31,30 +31,18 @@ export const traceabilityRefreshToken = (
   state: TraceabilityRefreshState,
 ): string => JSON.stringify(state);
 
-const idChip = (id: string): React.ReactNode => (
-  <span className="rounded-md border border-outline bg-slate-50 px-2 py-1 font-mono text-[10.5px] font-semibold text-on-surface-variant">
-    {id}
-  </span>
-);
-
-const lockChip = (isLocked: boolean): React.ReactNode =>
-  isLocked ? (
-    <span className="rounded-md bg-amber-50 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-amber-800">
-      Locked
-    </span>
-  ) : null;
-
 export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
   row,
 }) => (
   <article className="overflow-hidden rounded-[10px] border border-outline bg-white">
     <header className="border-b border-outline bg-slate-50/60 px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
-          {idChip(row.requirement.requirement_code)}
+          <span className="font-mono text-[10.5px] font-semibold text-on-surface-variant">
+            {row.requirement.requirement_code}
+          </span>
           <span className="text-sm font-bold text-on-surface">
             {row.requirement.title}
           </span>
-          {lockChip(row.requirement.is_locked)}
         </div>
       {row.requirement.epic_name && (
         <p className="mt-1.5 text-xs text-on-surface-variant">
@@ -63,29 +51,6 @@ export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
       )}
     </header>
     <div className="p-4">
-      <div className="mb-4 flex flex-wrap gap-1.5">
-        {row.prd_sections.map((section) => (
-          <span
-            key={section}
-            className="rounded-md bg-violet-50 px-2 py-1 text-[9px] font-semibold text-violet-800"
-          >
-            PRD: {section}
-          </span>
-        ))}
-        {row.diagrams.map((diagram) => (
-          <span
-            key={diagram}
-            className="rounded-md bg-cyan-50 px-2 py-1 text-[9px] font-semibold text-cyan-800"
-          >
-            Diagram: {diagram}
-          </span>
-        ))}
-        {!row.traced && (
-          <span className="rounded-md bg-rose-50 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-rose-800">
-            Coverage gap
-          </span>
-        )}
-      </div>
       {row.user_stories.length === 0 ? (
         <p className="py-1 text-xs text-on-surface-variant">
           No user story yet.
@@ -98,7 +63,7 @@ export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
               <section key={story.id || storyId} className="rounded-lg border border-outline bg-white px-3 py-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      {idChip(storyId)}
+                      <span className="font-mono text-[10px] text-on-surface-variant">{story.ticket_code || "Unassigned story"}</span>
                       <span className="text-xs font-semibold text-on-surface">
                         {story.story_title || "Untitled user story"}
                       </span>
@@ -109,34 +74,14 @@ export const RequirementTree: React.FC<{ row: TraceabilityRow }> = ({
                           No acceptance criteria yet.
                         </p>
                       ) : (
-                        <div className="divide-y divide-outline">
-                          {story.acceptance_criteria.map((criterion, index) => {
-                            const criterionId =
-                              storyId +
-                              "-AC-" +
-                              String(index + 1).padStart(3, "0");
-                            return (
-                              <div
-                                key={criterionId + "-" + criterion}
-                                className="grid gap-1.5 py-2.5 sm:grid-cols-[auto_1fr] sm:gap-3"
-                              >
-                                <div className="flex flex-wrap items-start gap-1.5">
-                                    {idChip(criterionId)}
-                                    {story.criteria_needing_review?.includes(
-                                      criterion,
-                                    ) && (
-                                      <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-800">
-                                        Review
-                                      </span>
-                                    )}
-                                </div>
-                                  <p className="text-xs leading-relaxed text-on-surface-variant sm:pt-1">
-                                    {criterion}
-                                  </p>
-                              </div>
-                            );
-                          })}
-                        </div>
+                        <ul className="list-disc space-y-2 pl-5">
+                          {story.acceptance_criteria.map((criterion, index) => (
+                            <li key={`${storyId}-AC-${index + 1}-${criterion}`} className="text-xs leading-relaxed text-on-surface-variant">
+                              <span className="mr-2 font-mono text-[10px]">{storyId}-AC-{String(index + 1).padStart(3, "0")}</span>
+                              {criterion}
+                            </li>
+                          ))}
+                        </ul>
                       )}
                     </div>
                 </div>
