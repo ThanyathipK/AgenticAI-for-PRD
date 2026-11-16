@@ -166,8 +166,8 @@ async def login(
 
 # AUTH 2.3 — Resolve the current public user for session restoration.
 # Trigger: AUTH 2.2 GET /api/auth/me during frontend mount.
-# Input: authenticated identity supplied by AUTH 7.1.
-# Calls: AUTH 7.1 Bearer verification and users-table resolution occur as a dependency.
+# Input: authenticated identity supplied by AUTH 6.1.
+# Calls: AUTH 6.1 Bearer verification and users-table resolution occur as a dependency.
 # Writes: NONE.
 # Failure: invalid token or missing user returns 401 → AUTH 2.4 local clear.
 @router.get("/api/auth/me", response_model=UserResponse, status_code=status.HTTP_200_OK)
@@ -193,7 +193,7 @@ async def read_current_user(
 # Trigger: AUTH 3.2 GET /api/auth/config before login.
 # Input: server authentication settings; no bearer token is required.
 # Writes: NONE.
-# Next: AUTH 3.1 gates the sign-up UI; AUTH 6.3.1 independently enforces signup.
+# Next: AUTH 3.1 gates the sign-up UI; AUTH 5.3.1 independently enforces signup.
 @router.get("/api/auth/config", status_code=status.HTTP_200_OK)
 async def auth_config():
     """Public auth capabilities, so the UI can hide the sign-up form.
@@ -214,7 +214,7 @@ async def auth_config():
 
 # AUTH 4.4 — Record an authenticated logout notification.
 # Trigger: AUTH 4.2 POST /api/auth/logout after AUTH 4.3 local clear.
-# Input: identity resolved by AUTH 7.1.
+# Input: identity resolved by AUTH 6.1.
 # Writes: no session or token state; the route emits an audit log only.
 # Failure: a client may ignore this route's failure because local sign-out is authoritative.
 # Next: END.
@@ -232,15 +232,15 @@ async def logout(
     return {"message": "Successfully logged out"}
 
 
-# AUTH 8.4 — Permanently delete the authenticated account and its owned data.
-# Trigger: AUTH 8.3 DELETE /api/auth/account.
-# Input: password, literal DELETE confirmation, AUTH 7.1 identity, and DB session.
-# Calls: AUTH 8.4.1 confirmation guard → AUTH 8.4.2 password verification →
-#        AUTH 8.4.3 system-account guard → AUTH 8.5 repository deletion.
+# AUTH 7.4 — Permanently delete the authenticated account and its owned data.
+# Trigger: AUTH 7.3 DELETE /api/auth/account.
+# Input: password, literal DELETE confirmation, AUTH 6.1 identity, and DB session.
+# Calls: AUTH 7.4.1 confirmation guard → AUTH 7.4.2 password verification →
+#        AUTH 7.4.3 system-account guard → AUTH 7.5 repository deletion.
 # Branches: invalid confirmation → 400; bad password → 401; system account → 403.
-# Writes: AUTH 8.6 commits deletion of owned projects and the user row.
+# Writes: AUTH 7.6 commits deletion of owned projects and the user row.
 # Failure: fails closed before deletion; transaction errors propagate.
-# Next: AUTH 8.6 response → AUTH 8.7 frontend session clear.
+# Next: AUTH 7.6 response → AUTH 7.7 frontend session clear.
 @router.delete(
     "/api/auth/account",
     response_model=AccountDeleteResponse,
@@ -252,14 +252,14 @@ async def delete_account(
     session: AsyncSession = Depends(get_db),
 ):
     """Permanently delete the caller's account after password verification."""
-    # AUTH 8.4.1 — Require the destructive-action confirmation literal.
+    # AUTH 7.4.1 — Require the destructive-action confirmation literal.
     if request.confirmation != "DELETE":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Type "DELETE" exactly to confirm permanent account deletion',
         )
 
-    # AUTH 8.4.2 — Re-read the user and verify the current password.
+    # AUTH 7.4.2 — Re-read the user and verify the current password.
     user = await UserRepository.get_by_id(current_user.id, session)
     if user is None or not verify_password(request.password, user.password_hash):
         raise HTTPException(
@@ -267,14 +267,14 @@ async def delete_account(
             detail="Current password is incorrect",
         )
 
-    # AUTH 8.4.3 — Protect the configured bootstrap/system account.
+    # AUTH 7.4.3 — Protect the configured bootstrap/system account.
     if str(user.id) == str(settings.SYSTEM_USER_ID):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="The protected system account cannot be deleted",
         )
 
-    # AUTH 8.6 — Commit the repository's staged account/project deletion.
+    # AUTH 7.6 — Commit the repository's staged account/project deletion.
     deleted_projects = await UserRepository.delete_account(user, session)
     await session.commit()
     logger.info(
@@ -290,13 +290,13 @@ async def delete_account(
 # ---------------------------------------------------------------------------
 
 
-# AUTH 6.3 — Validate and create a self-service user account.
-# Trigger: AUTH 6.2 POST /api/auth/register.
+# AUTH 5.3 — Validate and create a self-service user account.
+# Trigger: AUTH 5.2 POST /api/auth/register.
 # Input: registration payload and request-scoped database session.
-# Calls: AUTH 6.3.4 uniqueness read → AUTH 6.3.5 hash and repository insert.
+# Calls: AUTH 5.3.4 uniqueness read → AUTH 5.3.5 hash and repository insert.
 # Branches: signup disabled → 403; invalid password/role → 400; duplicate → 409.
 # Writes: one users row and transaction commit on success.
-# Next: AUTH 6.3.6 response → AUTH 6.4 normal login flow.
+# Next: AUTH 5.3.6 response → AUTH 5.4 normal login flow.
 @router.post(
     "/api/auth/register",
     response_model=RegisterResponse,
@@ -325,7 +325,7 @@ async def register(
         HTTPException 403: If self-service signup is disabled.
         HTTPException 409: If an account with this email already exists.
     """
-    # AUTH 6.3.1 — Deployment gate: 403 when SIGNUP_ENABLED=false, so a shared or
+    # AUTH 5.3.1 — Deployment gate: 403 when SIGNUP_ENABLED=false, so a shared or
     #              production instance cannot be given new accounts anonymously.
     if not settings.SIGNUP_ENABLED:
         raise HTTPException(
@@ -333,7 +333,7 @@ async def register(
             detail="Self-service registration is disabled",
         )
 
-    # AUTH 6.3.2 — Payload validation branch: minimum password length → 400 (the
+    # AUTH 5.3.2 — Payload validation branch: minimum password length → 400 (the
     #              client mirrors it in AUTH 1.1.1, but the server is the gate).
     if len(register_request.password) < MIN_PASSWORD_LENGTH:
         raise HTTPException(
@@ -341,7 +341,7 @@ async def register(
             detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters",
         )
 
-    # AUTH 6.3.3 — Role validation branch: only the canonical VALID_ROLES are
+    # AUTH 5.3.3 — Role validation branch: only the canonical VALID_ROLES are
     #              accepted → 400; free-form strings never reach the users table.
     # ROLE VALIDATION: only the canonical roles are accepted. Whitespace is
     # tolerated on input but the stored value is the exact canonical string.
@@ -352,7 +352,7 @@ async def register(
             detail="Invalid role. Allowed roles: " + ", ".join(sorted(VALID_ROLES)),
         )
 
-    # AUTH 6.3.4 — Repository READ: canonicalize the email and check uniqueness
+    # AUTH 5.3.4 — Repository READ: canonicalize the email and check uniqueness
     #              case-insensitively (UserRepository.email_exists →
     #              get_by_email, AUTH 1.7.1.1 helper) → 409 on a duplicate.
     email = normalize_email(str(register_request.email))
@@ -364,7 +364,7 @@ async def register(
             detail="A user with this email already exists",
         )
 
-    # AUTH 6.3.5 — WRITE path: bcrypt hash (app/auth.py get_password_hash) then
+    # AUTH 5.3.5 — WRITE path: bcrypt hash (app/auth.py get_password_hash) then
     #              UserRepository.create_user (INSERT) + commit — the only place
     #              in the AUTH namespace that adds a users row.
     new_user = await UserRepository.create_user(
@@ -379,9 +379,9 @@ async def register(
 
     logger.info(f"New user registered: {new_user.email}")
     
-    # AUTH 6.3.6 — Response: 201 + the created user, and deliberately NO token —
+    # AUTH 5.3.6 — Response: 201 + the created user, and deliberately NO token —
     #              which is exactly why the frontend chains into the LOGIN flow
-    #              (AUTH 6.4 → AUTH 1.3.1) instead of trusting this response.
+    #              (AUTH 5.4 → AUTH 1.3.1) instead of trusting this response.
     return RegisterResponse(
         message="User registered successfully",
         user=UserResponse(

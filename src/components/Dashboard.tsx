@@ -134,7 +134,7 @@ export default function Dashboard() {
   // AUTH 1.6 — Scope the workspace to the authenticated user.
   // Trigger: AUTH 1.5 login or AUTH 2.3 restoration updates authUser.
   // Input: authenticated user id.
-  // Calls: useProjectState; every project request is rechecked by AUTH 7.4.
+  // Calls: useProjectState; every project request is rechecked by AUTH 6.4.
   // Branches: no user → empty/signed-out project state; user → owned workspace.
   const state = useProjectState(!!authUser, authUser?.id ?? null);
   const {
@@ -301,7 +301,7 @@ export default function Dashboard() {
         <div className="px-1.5 pt-2">
           {/* AUTH 1.6 — Signed-out visitors are pushed into the LOGIN entry
               point (AUTH 1.1) instead of the create-project modal; project
-              creation itself is authorized server-side in AUTH 7.4. */}
+              creation itself is authorized server-side in AUTH 6.4. */}
           <Tooltip label={authUser ? 'New Project' : 'Sign in to create a project'} side="right" className="w-full">
             <button
               className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-[13px] font-semibold text-on-surface hover:bg-primary/10 hover:text-primary transition-colors ${collapsed ? 'justify-center' : ''}`}
@@ -970,7 +970,7 @@ export default function Dashboard() {
           AUTH 1.1). On success useAuth stores the JWT in AUTH 1.5, so the
           sidebar chip flips to the user's name (AUTH 1.6).
           AUTH MODAL — sign in (POST /api/auth/login, AUTH 1.7) / create account
-          (POST /api/auth/register, AUTH 6.3, only when the backend allows it —
+          (POST /api/auth/register, AUTH 5.3, only when the backend allows it —
           AUTH 3.3). */}
       <AuthModal
         isOpen={isAuthModalOpen}

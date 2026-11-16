@@ -303,7 +303,11 @@ class ProjectStatusRequest(BaseModel):
         ...,
         description="New workflow status: 'draft' | 'in_review_hpo' | 'in_review_po' | 'approved' | 'revised'.",
     )
-    comment: Optional[str] = Field(None, max_length=2000, description="Optional review or change-request note.")
+    comment: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Optional note attached to the user-selected status change.",
+    )
 
 
 class ProjectReviewEventResponse(BaseModel):

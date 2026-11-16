@@ -246,9 +246,9 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 #   - traceability:/api/project/{id}/traceability (derived matrix)
 # AUTH 1.7.0 — Mount the authentication router.
 # Trigger: FastAPI application construction.
-# Calls: registers AUTH 1.7, 2.3, 3.3, 4.4, 5.1, and 6.3 routes.
+# Calls: registers AUTH 1.7, 2.3, 3.3, 4.4, and 5.3 routes.
 # Writes: route table only.
-# Failure: authorization is deliberately enforced by each route's AUTH 7.x dependency.
+# Failure: authorization is deliberately enforced by each route's AUTH 6.x dependency.
 app.include_router(auth.router, tags=["Authentication"])
 app.include_router(chat.router, tags=["System"])
 app.include_router(projects.router, tags=["Projects"])

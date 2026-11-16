@@ -66,7 +66,8 @@ New flows should use the following layer ranges consistently:
 
 Substeps use another decimal segment, such as `5.2.1`. A substep belongs to its parent operation and should not be used merely to number individual lines.
 
-Existing flow numbers are retained below even when they predate this convention. Renumbering them should be a separate documentation task so cross-file references are not broken incrementally.
+Existing flow numbers may predate this convention. When a numbering gap is corrected,
+update every cross-file reference in the same change and record the resulting flow here.
 
 ## Flow-comment vocabulary
 
@@ -154,35 +155,35 @@ Current numbered groups:
 - `AUTH 2.x`: stored-session restoration
 - `AUTH 3.x`: public authentication-capability/configuration probe
 - `AUTH 4.x`: logout
-- `AUTH 6.x`: registration
-- `AUTH 7.x`: JWT authentication and project authorization dependencies
-- `AUTH 8.x`: permanent account deletion
+- `AUTH 5.x`: registration
+- `AUTH 6.x`: JWT authentication and project authorization dependencies
+- `AUTH 7.x`: permanent account deletion
 
 Authorization path:
 
 ```text
-AUTH 7.1 standard Bearer authentication
-   or AUTH 7.2 flexible Bearer/query-token authentication
-→ AUTH 7.3 safe AuthenticatedUser identity contract
+AUTH 6.1 standard Bearer authentication
+   or AUTH 6.2 flexible Bearer/query-token authentication
+→ AUTH 6.3 safe AuthenticatedUser identity contract
 → protected route directly
-   or AUTH 7.4 project ownership validation
-      → AUTH 7.5 REST ownership dependency
-      → AUTH 7.6 SSE ownership dependency
+   or AUTH 6.4 project ownership validation
+      → AUTH 6.5 REST ownership dependency
+      → AUTH 6.6 SSE ownership dependency
 ```
 
 Account-deletion path:
 
 ```text
-AUTH 8.1 DeleteAccountModal
-→ AUTH 8.2 useAuth.deleteAccount
-→ AUTH 8.3 api.authDeleteAccount
-→ AUTH 8.4 DELETE /api/auth/account
-   ├→ AUTH 8.4.1 confirmation guard
-   ├→ AUTH 8.4.2 password verification
-   └→ AUTH 8.4.3 protected-system-account guard
-→ AUTH 8.5 UserRepository.delete_account
-→ AUTH 8.6 commit and response
-→ AUTH 8.7 clear browser session
+AUTH 7.1 DeleteAccountModal
+→ AUTH 7.2 useAuth.deleteAccount
+→ AUTH 7.3 api.authDeleteAccount
+→ AUTH 7.4 DELETE /api/auth/account
+   ├→ AUTH 7.4.1 confirmation guard
+   ├→ AUTH 7.4.2 password verification
+   └→ AUTH 7.4.3 protected-system-account guard
+→ AUTH 7.5 UserRepository.delete_account
+→ AUTH 7.6 commit and response
+→ AUTH 7.7 clear browser session
 ```
 
 `AUTH 1.7.2` is the successful-credential handoff between `authenticate_user`
@@ -225,6 +226,11 @@ Current numbered groups:
 - `PROJECT 7.x`: pin, flag, and workflow-status metadata
 - `PROJECT 8.x`: direct requirement-state write path
 - `PROJECT 9.x`: conversation timeline reads
+
+Workflow-status updates do not enforce a sequence or require audit evidence,
+clarification resolution, or a reason. Owners can select any listed status
+directly. Selecting Approved stores the latest PRD/audit references when
+available; content changes do not change the status automatically.
 
 ### CHAT — Conversation entry, response generation, and memory
 
@@ -647,7 +653,7 @@ Numbering structure:
 - `CONFIRM 1.x` — confirmation UIs, handlers, and pending-action refresh
 - `CONFIRM 2.x` — frontend API boundary
 - `CONFIRM 3.x` — backend list, IMPACT cross-reference, Save, and Discard routes
-- `CONFIRM 5.x` — pending-action repository lifecycle
+- `CONFIRM 7.x` — pending-action repository lifecycle
 
 Shared Save gate:
 
@@ -670,7 +676,6 @@ MERGE / ARCHIVE / INSERT_CHUNKED_REQUIREMENTS / legacy UPDATE
 → RequirementStateRepository.save_or_update
 → for ordinary requirement merges: invalidate changed dependents and delete stale PRD previews
 → for a legacy COMPLETED proposal: synchronize PRD sections without a ledger entry
-→ mark an approved project revised when governed content changed
 → update document-extraction bookkeeping when applicable
 → delete consumed action
 → publish merge_confirmed
@@ -1318,11 +1323,11 @@ than execute flow steps.
 4.5 whole-document restore route
 
 5.1 select target-present changed unlocked parts and update them
-5.2 stitch all current parts, attempt ledger append, persist current PRD
+5.2 stitch all current parts, append ledger version, persist current PRD
 
 6.1/6.2 classify and split sections     6.3 fallback summary
 6.4 parse SemVer                        6.5 derive next SemVer
-6.6 ledger append + best-effort state-counter sync
+6.6 ledger append + required state-counter sync
 6.7 bounded line diff                   6.8 historical diff using current locks
 6.9 fail-soft next-SemVer prediction
 
@@ -1341,7 +1346,7 @@ VersionHistory confirmation 1.5 → restore handler 2.2 → API client 3.3
 → seed from current document and visit target-present parts 5.1
 → preserve locked target parts, skip identical parts, retain current-only parts
 → append section history/update changed unlocked parts through PRD-SECTION 7.4
-→ stitch every current part 5.2 → attempt ledger append 6.6 → persist current PRD
+→ stitch every current part 5.2 → append ledger 6.6 → persist current PRD
 → publish prd_version_restored 8.1 → reload ledger + section metadata 2.2
 ```
 
@@ -1349,9 +1354,9 @@ Important behavior:
 
 - `prd_versions` has no update/delete repository path, and identical content still creates a row when 6.6 succeeds.
 - The current Versions-tab effect forces selection back to the loaded latest row whenever selection changes, so an older row cannot remain selected; this is documented behavior here, not fixed by the comment pass.
-- Snapshot producers do not share one path or failure policy: generation/confirmation use 6.6 and can abort; `PRD-EXPORT 4.0` inserts directly through 7.1 and fails with 500; manual section edit/revert, legacy direct write, and restore catch ledger errors and may persist document state without a matching row.
+- All snapshot producers use VERSION 6.6 and the same request transaction. If ledger insertion or requirement-state version synchronization fails, the associated PRD write/restore/export rolls back with it.
 - Diff change kinds are recomputed with current section locks; they are not historical proof of lock state.
-- Restore is not an exact whole-document replacement: locked target sections and current-only sections remain. A caught ledger failure still permits the stitched document to persist and returns the source number with blank SemVer.
+- Restore is not an exact whole-document replacement: locked target sections and current-only sections remain. A ledger failure aborts the restore transaction, preserving the current document and history together.
 
 Important locations:
 

@@ -28,8 +28,8 @@ from app.database import Base
 from app.lock_service import LockService
 from app.models import PRDVersionModel, ProjectModel, UserModel
 from app.prd_section_service import CANONICAL_KEYS, ensure_sections_seeded
-from app.repositories.prd_section import PRDSectionRepository
 from app.repositories.prd import PRDVersionRepository
+from app.repositories.prd_section import PRDSectionRepository
 from app.repositories.requirement_state import RequirementStateRepository
 from app.version_service import (
     CHANGE_CREATED,
@@ -410,6 +410,47 @@ async def test_resolve_document_semver_first_snapshot(db_session):
         project_id, session, generated_prd=_doc_v1(), change_type="ai",
     )
     assert row["semver"] == resolved
+
+
+@pytest.mark.asyncio
+async def test_ledger_rejects_unresolved_semver_marker(db_session):
+    from app.prd_filler import PENDING_VERSION_LABEL
+
+    session, project_id = db_session
+    with pytest.raises(ValueError, match="unresolved SemVer marker"):
+        await record_prd_version(
+            project_id,
+            session,
+            generated_prd=f"### PRD\n\n{PENDING_VERSION_LABEL}",
+        )
+
+
+@pytest.mark.asyncio
+async def test_latex_snapshot_uses_normalized_sections_for_semver(monkeypatch, db_session):
+    """LaTeX exports and Markdown saves classify the same section changes."""
+    session, project_id = db_session
+    first = await record_prd_version(
+        project_id, session, generated_prd=_doc_v1(), change_type="ai",
+    )
+    assert first["semver"] == "1.0.0"
+
+    # Stand in for the LaTeX-to-Markdown converter without requiring Pandoc in
+    # this unit test; the ledger still stores the original LaTeX representation.
+    monkeypatch.setattr(
+        "app.latex_service.prd_to_markdown",
+        lambda document: document.removeprefix("LATEX:"),
+    )
+    latex_v2 = "LATEX:" + _doc_v2_business_updated()
+    predicted = await resolve_document_semver(
+        project_id, session, document=latex_v2, change_type="ai",
+    )
+    recorded = await record_prd_version(
+        project_id, session, generated_prd=latex_v2, change_type="ai",
+    )
+
+    assert predicted == "1.1.0"
+    assert recorded["semver"] == predicted
+    assert recorded["generated_prd"].startswith("LATEX:")
 
 
 @pytest.mark.asyncio

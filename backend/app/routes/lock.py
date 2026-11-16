@@ -18,7 +18,6 @@ from app.repositories import (
     PendingActionRepository,
     RequirementStateRepository,
 )
-from app.review_service import governed_state_changed, mark_revised_if_approved
 from app.schemas import (
     ActionStatusResponse,
     ArtifactLockRequest,
@@ -241,7 +240,7 @@ async def get_artifact_lock_status(
 # PENDING ACTIONS API
 # ==========================================
 
-# CONFIRM 3.1 — LIST staged actions (CONFIRM 2.1 / 1.7). Auth: AUTH 7.5 ownership.
+# CONFIRM 3.1 — LIST staged actions (CONFIRM 2.1 / 1.7). Auth: AUTH 6.5 ownership.
 #             Only rows still WAITING_CONFIRMATION are returned (repository 5.2); the
 #             response carries `full=True` proposed_changes so the panel can render
 #             the draft without a second call. Before returning, 3.1.1 removes older
@@ -276,7 +275,7 @@ async def get_pending_actions(
 
 # IMPACT 4.1 / CONFIRM 3.2 cross-reference — GET impact preview for one staged action
 # (IMPACT 2.0 → 3.1), then return to the CONFIRM decision.
-#             Auth: AUTH 7.5. Branches: 400 invalid ids → 404 action not in this
+#             Auth: AUTH 6.5. Branches: 400 invalid ids → 404 action not in this
 #             project → CONFIRM expiry cleanup → ImpactService 5.1.
 #             The analysis is read-only, but an expired row is deleted and committed
 #             before 410. Cross-project action ids remain invisible and return 404.
@@ -707,18 +706,6 @@ async def confirm_action(
                 project_id,
                 section_err,
             )
-    # CONFIRM 3.3.6.3 — If governed content changed on an approved project, move its
-    #                   governance status back to revised for a new review cycle.
-    if governed_state_changed(previous_state, proposed_changes):
-        await mark_revised_if_approved(
-            project_id,
-            session,
-            reason="Approved requirements changed through a confirmed merge.",
-            actor_id=current_user.id,
-            actor_name=current_user.full_name,
-            actor_role=current_user.role,
-        )
-
     # 3b. Document-extraction merges (INSERT_CHUNKED_REQUIREMENTS): flip the
     # source document's extraction flag and append the audit-log entry. The
     # draft was created by POST .../documents/{id}/process; THIS is the only

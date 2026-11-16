@@ -3,7 +3,7 @@
 #             gate at save time is domain 6.1's MAX_UPLOAD_MB (disk abuse), NOT a token
 #             check. Explicit extraction (4.5) updates tracking/transcript state and stages
 #             a pending action; only CONFIRM applies its proposed requirement fields.
-#             Auth on every endpoint below: AUTH 7.5 (project ownership).
+#             Auth on every endpoint below: AUTH 6.5 (project ownership).
 """
 Document upload & extraction API.
 
@@ -251,7 +251,7 @@ async def upload_document(
             the exception: they return 201 with a persisted status=failed row.
     """
     # DOC-UPLOAD 4.1.1 — Identity gate: invalid project_id ⇒ 400 (ownership is already
-    #                 enforced by AUTH 7.5 before the handler body runs).
+    #                 enforced by AUTH 6.5 before the handler body runs).
     try:
         UUID(project_id)
     except ValueError:

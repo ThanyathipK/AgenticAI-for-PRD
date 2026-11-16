@@ -41,14 +41,14 @@ logger = logging.getLogger("app.auth")
 #   AUTH 2.x  SESSION RESTORE   GET  /api/auth/me        (2.1 → 2.2 → 2.3 → 2.4)
 #   AUTH 3.x  CAPABILITIES      GET  /api/auth/config    (3.1 → 3.2 → 3.3 → 3.4)
 #   AUTH 4.x  LOGOUT            AuthPanel 4.1 → useAuth.logout → 4.2 → 4.3 → 4.4
-#   AUTH 6.x  REGISTER          useAuth 6.1 → api 6.2 → route 6.3.1…6.3.6 → 6.4
-#   AUTH 7.x  AUTHORIZATION     get_current_user 7.1 (verify_token 7.1.1, repo
-#                                7.1.2, projection 7.1.3) · flexible 7.2 (+7.2.1)
-#                                · authenticated identity contract 7.3 ·
-#                                project ownership 7.4 →
-#                                require_project_owner 7.5/7.6
-#   AUTH 8.x  ACCOUNT DELETE    modal 8.1 → hook 8.2 → API 8.3 → route 8.4 →
-#                                repository 8.5 → commit/response 8.6 → clear 8.7
+#   AUTH 5.x  REGISTER          useAuth 5.1 → api 5.2 → route 5.3.1…5.3.6 → 5.4
+#   AUTH 6.x  AUTHORIZATION     get_current_user 6.1 (verify_token 6.1.1, repo
+#                                6.1.2, projection 6.1.3) · flexible 6.2 (+6.2.1)
+#                                · authenticated identity contract 6.3 ·
+#                                project ownership 6.4 →
+#                                require_project_owner 6.5/6.6
+#   AUTH 7.x  ACCOUNT DELETE    modal 7.1 → hook 7.2 → API 7.3 → route 7.4 →
+#                                repository 7.5 → commit/response 7.6 → clear 7.7
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ logger = logging.getLogger("app.auth")
 DEV_JWT_SECRET = "dev-secret-change-in-production-2026-agenticdia"
 
 
-# AUTH 1.7.3 / AUTH 7.1.1 — Signing-key resolution, shared by JWT issuance
+# AUTH 1.7.3 / AUTH 6.1.1 — Signing-key resolution, shared by JWT issuance
 #                            (create_access_token) and verification (verify_token).
 #                            Placeholder or weak secrets are warned about loudly
 #                            rather than silently accepted.
@@ -97,7 +97,7 @@ def _resolve_jwt_secret() -> str:
     return configured
 
 
-# AUTH 1.7.3 — The key create_access_token signs with; AUTH 7.1.1 verifies with
+# AUTH 1.7.3 — The key create_access_token signs with; AUTH 6.1.1 verifies with
 #              this same value, so rotating it invalidates every stored session
 #              (the client then clears it in AUTH 2.4).
 JWT_SECRET_KEY = _resolve_jwt_secret()
@@ -139,7 +139,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-# AUTH 6.3.5 (hashing step) — bcrypt hashing for registration. Cost factor
+# AUTH 5.3.5 (hashing step) — bcrypt hashing for registration. Cost factor
 #                comes from pwd_context above (bcrypt__rounds=12).
 def get_password_hash(password: str) -> str:
     """Hash a plaintext password using bcrypt."""
@@ -247,13 +247,13 @@ class TokenData(BaseModel):
     exp: Optional[datetime] = None
 
 
-# AUTH 7.3 — Define the safe identity contract shared by protected routes.
-# Trigger: AUTH 7.1 or AUTH 7.2 resolves a valid token and current users row.
-# Input: public identity fields projected by AUTH 7.1.3.
-# Calls: consumed directly by protected routes and by AUTH 7.4 ownership checks.
+# AUTH 6.3 — Define the safe identity contract shared by protected routes.
+# Trigger: AUTH 6.1 or AUTH 6.2 resolves a valid token and current users row.
+# Input: public identity fields projected by AUTH 6.1.3.
+# Calls: consumed directly by protected routes and by AUTH 6.4 ownership checks.
 # Writes: NONE; password hashes and token internals are intentionally excluded.
 # Failure: schema validation fails closed before an invalid identity reaches a route.
-# Next: route handler or AUTH 7.4 for project-scoped operations.
+# Next: route handler or AUTH 6.4 for project-scoped operations.
 class AuthenticatedUser(BaseModel):
     """Represents an authenticated user derived from a JWT token."""
     model_config = ConfigDict(from_attributes=True)
@@ -298,12 +298,12 @@ def create_access_token(
 # ---------------------------------------------------------------------------
 
 
-# AUTH 7.1.1 — Validate and decode a JWT before database identity resolution.
-# Trigger: AUTH 7.1 or AUTH 7.2 authentication dependency.
+# AUTH 6.1.1 — Validate and decode a JWT before database identity resolution.
+# Trigger: AUTH 6.1 or AUTH 6.2 authentication dependency.
 # Input: raw JWT string.
 # Branches: valid required claims → TokenData; invalid signature/expiry/claims → 401.
 # Writes: NONE.
-# Next: AUTH 7.1.2 users-table lookup.
+# Next: AUTH 6.1.2 users-table lookup.
 def verify_token(token: str) -> TokenData:
     """Verify and decode a JWT token, returning the TokenData payload."""
     try:
@@ -332,7 +332,7 @@ def verify_token(token: str) -> TokenData:
 # ---------------------------------------------------------------------------
 
 
-# AUTH 7.1.3 — Row → public identity projection, shared by AUTH 7.1, 7.2 and 7.3.
+# AUTH 6.1.3 — Row → public identity projection, shared by AUTH 6.1, 6.2 and 6.3.
 #              Single conversion point so password_hash (and future sensitive
 #              columns) can never leak into the route handlers.
 def to_authenticated_user(user: UserModel) -> AuthenticatedUser:
@@ -349,11 +349,11 @@ def to_authenticated_user(user: UserModel) -> AuthenticatedUser:
     )
 
 
-# AUTH 7.1 — Authenticate a Bearer-protected backend request.
+# AUTH 6.1 — Authenticate a Bearer-protected backend request.
 # Trigger: FastAPI dependency resolution for an authenticated route.
 # Input: Authorization header and request-scoped database session.
-# Calls: AUTH 7.1.1 verify_token → AUTH 7.1.2 UserRepository.get_by_id →
-#        AUTH 7.1.3 public identity projection.
+# Calls: AUTH 6.1.1 verify_token → AUTH 6.1.2 UserRepository.get_by_id →
+#        AUTH 6.1.3 public identity projection.
 # Branches: missing/invalid token or missing user → 401; valid user → route handler.
 # Writes: NONE.
 # Failure: fails closed; JWT claims alone are never accepted as current identity.
@@ -377,15 +377,15 @@ async def get_current_user(
     disabled-account check is performed here. Re-add one (plus a migration)
     if account suspension is introduced.
     """
-    # AUTH 7.1.1 — Signature/expiry gate (shared helper). Raises 401 before any
+    # AUTH 6.1.1 — Signature/expiry gate (shared helper). Raises 401 before any
     #              database work, so a garbage/expired token costs no query.
     token_data = verify_token(credentials.credentials)
 
-    # AUTH 7.1.2 — Repository READ: the DB is the source of truth, so the
+    # AUTH 6.1.2 — Repository READ: the DB is the source of truth, so the
     #              token's own claims are never trusted for identity.
     user = await UserRepository.get_by_id(token_data.user_id, session)
 
-    # AUTH 7.1.2 (error branch) — Signature valid but the row is gone (deleted
+    # AUTH 6.1.2 (error branch) — Signature valid but the row is gone (deleted
     #              account, or a token signed with another environment's secret):
     #              401 so the client clears its stale session in AUTH 2.4.
     if user is None:
@@ -398,7 +398,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # AUTH 7.1.3 — Projection handed to the route handler: identity only, never
+    # AUTH 6.1.3 — Projection handed to the route handler: identity only, never
     #              password_hash.
     return to_authenticated_user(user)
 
@@ -426,10 +426,10 @@ class UserResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-# AUTH 7.4 — Enforce ownership of a project-scoped operation.
-# Trigger: direct service call for body IDs or AUTH 7.5/AUTH 7.6 dependencies.
+# AUTH 6.4 — Enforce ownership of a project-scoped operation.
+# Trigger: direct service call for body IDs or AUTH 6.5/AUTH 6.6 dependencies.
 # Input: project id, authenticated user, and database session.
-# Calls: AUTH 7.4.2 projects-table lookup.
+# Calls: AUTH 6.4.2 projects-table lookup.
 # Branches: malformed/missing project → 404; different owner → 403; owner → continue.
 # Writes: NONE.
 # Failure: fails closed before the protected route performs domain work.
@@ -447,7 +447,7 @@ async def verify_project_access(
     from the request BODY (which a FastAPI ``Depends`` cannot reach) call this
     directly; path/query-scoped routes use :func:`require_project_owner`.
     """
-    # AUTH 7.4.1 — Malformed/absent project id → 404 before touching the DB.
+    # AUTH 6.4.1 — Malformed/absent project id → 404 before touching the DB.
     try:
         project_key = as_uuid(project_id)
     except (AttributeError, TypeError, ValueError):
@@ -456,13 +456,13 @@ async def verify_project_access(
             detail="Project not found",
         )
 
-    # AUTH 7.4.2 — Repository READ: the projects table (ownership column user_id).
+    # AUTH 6.4.2 — Repository READ: the projects table (ownership column user_id).
     result = await session.execute(
         select(ProjectModel).where(ProjectModel.id == project_key)
     )
     project = result.scalar_one_or_none()
 
-    # AUTH 7.4.3 — 404 for an unknown project, 403 for someone else's: the two are
+    # AUTH 6.4.3 — 404 for an unknown project, 403 for someone else's: the two are
     #              distinct so a client can tell "gone" from "not yours", but neither
     #              reveals the other owner's existence beyond the 403 itself.
     if project is None:
@@ -478,7 +478,7 @@ async def verify_project_access(
         )
 
 
-# AUTH 7.5 — Path/query-scoped wrapper: AUTH 7.1 authentication + AUTH 7.4
+# AUTH 6.5 — Path/query-scoped wrapper: AUTH 6.1 authentication + AUTH 6.4
 #            ownership in one `Depends`, returning the caller for handler use.
 async def require_project_owner(
     project_id: str,
@@ -494,9 +494,9 @@ async def require_project_owner(
     return current_user
 
 
-# AUTH 7.2.1 — Shared token→user resolution for the header and query variants of
-#              AUTH 7.2: reuses AUTH 7.1.1 (verify_token), AUTH 7.1.2 (repository
-#              READ) and AUTH 7.1.3 (projection); 401 when the row is gone.
+# AUTH 6.2.1 — Shared token→user resolution for the header and query variants of
+#              AUTH 6.2: reuses AUTH 6.1.1 (verify_token), AUTH 6.1.2 (repository
+#              READ) and AUTH 6.1.3 (projection); 401 when the row is gone.
 async def _resolve_user_from_raw_token(
     raw_token: str, session: AsyncSession
 ) -> AuthenticatedUser:
@@ -513,10 +513,10 @@ async def _resolve_user_from_raw_token(
     return to_authenticated_user(user)
 
 
-# AUTH 7.2 — FLEXIBLE variant used by the SSE stream: accepts the JWT either as a
+# AUTH 6.2 — FLEXIBLE variant used by the SSE stream: accepts the JWT either as a
 #            Bearer header (default) or as ?token=…, because the browser
 #            EventSource API cannot set headers. Authorization semantics identical
-#            to AUTH 7.1; only the token source differs.
+#            to AUTH 6.1; only the token source differs.
 async def get_current_user_flexible(
     token: Optional[str] = Query(
         default=None,
@@ -544,7 +544,7 @@ async def get_current_user_flexible(
     )
 
 
-# AUTH 7.6 — SSE-scoped ownership wrapper: AUTH 7.2 authentication + AUTH 7.4
+# AUTH 6.6 — SSE-scoped ownership wrapper: AUTH 6.2 authentication + AUTH 6.4
 #            ownership, so the push stream is authorized exactly like REST routes.
 async def require_project_owner_flexible(
     project_id: str,

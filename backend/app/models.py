@@ -401,8 +401,8 @@ class PRDVersionModel(Base):
     """
     Dedicated immutable PRD version repository.
     Stores immutable snapshots when a producer successfully records a version.
-    Recording identical content is allowed; some producer paths catch recording
-    failures and can therefore persist document state without a matching row.
+    Recording identical content is allowed; producers write the ledger and PRD
+    state in one transaction so either both persist or neither does.
     """
     __tablename__ = "prd_versions"
     __table_args__ = (

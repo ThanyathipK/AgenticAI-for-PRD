@@ -87,7 +87,7 @@ export interface UseAuthResult {
 // Trigger: Dashboard mounts this hook once for the application.
 // Input: login/register credentials and any JWT restored from localStorage.
 // Calls: AUTH 1.4 login, AUTH 2.2 profile validation, AUTH 3.2 capability
-//        probe, AUTH 4.2 logout, and AUTH 6.2 registration.
+//        probe, AUTH 4.2 logout, and AUTH 5.2 registration.
 // Branches: valid session → authenticated UI; missing/invalid session → signed-out UI.
 // Writes: axios Authorization header, localStorage, and React auth state.
 // Failure: capability checks fail closed; stale sessions are cleared locally.
@@ -126,7 +126,7 @@ export function useAuth(): UseAuthResult {
   // Trigger: useAuth mount when localStorage contains a JWT.
   // Input: persisted JWT from AUTH 1.5.
   // Calls: AUTH 1.5.1 setAuthToken → AUTH 2.2 api.authMe → AUTH 2.3 route →
-  //        AUTH 7.1 authorization dependency.
+  //        AUTH 6.1 authorization dependency.
   // Branches: valid token/user → restore profile; rejected token/user → AUTH 2.4.
   // Writes: axios header and React token/user state.
   // Failure: AUTH 2.4 clears every local session sink.
@@ -182,7 +182,7 @@ export function useAuth(): UseAuthResult {
   }, []);
 
   // AUTH 1.3.1 — Authenticate credentials and establish the browser session.
-  // Trigger: AUTH 1.2 AuthModal sign-in or AUTH 6.4 post-registration login.
+  // Trigger: AUTH 1.2 AuthModal sign-in or AUTH 5.4 post-registration login.
   // Input: trimmed email and plaintext password.
   // Calls: AUTH 1.4 API client → AUTH 1.7 route → AUTH 1.7.1 service.
   // Branches: success → AUTH 1.5 persistence; rejection → inline error string.
@@ -214,11 +214,11 @@ export function useAuth(): UseAuthResult {
     }
   }, []);
 
-  // AUTH 6.1 — Register a new account and continue into normal login.
+  // AUTH 5.1 — Register a new account and continue into normal login.
   // Trigger: AUTH 1.2 AuthModal sign-up submission.
   // Input: email, password, full name, and optional role.
-  // Calls: AUTH 6.2 api.authRegister → AUTH 6.3 route.
-  // Branches: registration error → inline message; success → AUTH 6.4.
+  // Calls: AUTH 5.2 api.authRegister → AUTH 5.3 route.
+  // Branches: registration error → inline message; success → AUTH 5.4.
   // Writes: no local session until the subsequent login succeeds.
   const register = useCallback(
     async (email: string, password: string, fullName: string, role?: string) => {
@@ -236,8 +236,8 @@ export function useAuth(): UseAuthResult {
         setIsAuthenticating(false);
       }
 
-      // AUTH 6.4 — Enter the normal login flow after account creation.
-      // Trigger: AUTH 6.3.6 returns a created user without a token.
+      // AUTH 5.4 — Enter the normal login flow after account creation.
+      // Trigger: AUTH 5.3.6 returns a created user without a token.
       // Calls: AUTH 1.3.1 with the credentials just registered.
       // Branches: login success → authenticated UI; login failure → account-created
       //           notice plus a request to sign in manually.
@@ -288,11 +288,11 @@ export function useAuth(): UseAuthResult {
     }
   }, [clearSession, token]);
 
-  // AUTH 8.2 — Request account deletion and retire the browser session.
-  // Trigger: AUTH 8.1 confirmed modal submission.
+  // AUTH 7.2 — Request account deletion and retire the browser session.
+  // Trigger: AUTH 7.1 confirmed modal submission.
   // Input: current password, DELETE confirmation, and current JWT.
-  // Calls: AUTH 8.3 api.authDeleteAccount → AUTH 8.4 backend route.
-  // Branches: success → AUTH 8.7 clear; failure → inline error with session retained.
+  // Calls: AUTH 7.3 api.authDeleteAccount → AUTH 7.4 backend route.
+  // Branches: success → AUTH 7.7 clear; failure → inline error with session retained.
   // Writes: authentication progress and, on success, all local session sinks.
   // Failure: missing token stops before the request; route errors remain user-visible.
   const deleteAccount = useCallback(async (password: string, confirmation: string) => {
@@ -300,7 +300,7 @@ export function useAuth(): UseAuthResult {
     setIsAuthenticating(true);
     try {
       await api.authDeleteAccount(password, confirmation, token);
-      // AUTH 8.7 — Clear the now-deleted account's browser session.
+      // AUTH 7.7 — Clear the now-deleted account's browser session.
       clearSession();
       notify('Account and owned data deleted permanently', 'success');
       return null;

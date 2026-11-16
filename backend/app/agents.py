@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any, Dict, List, Optional, cast
+from uuid import UUID
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
@@ -3826,16 +3827,27 @@ async def architect_node(state: AgentState) -> WorkflowNodeOutcome:
         #             semver THIS snapshot will get — computed from the same inputs
         #             record_prd_version uses below, so the printed label always
         #             equals prd_versions.semver — and stamp it in BEFORE the section
-        #             sync/preview stores the parts. ARCHITECT 5.0.2 — fail-soft: a
-        #             failed resolution keeps the legacy V{n}.0 label; the stamp is a
-        #             string replace, so the pending marker can never leak out.
+        #             sync/preview stores the parts. Persisting callers require a
+        #             resolved label so it cannot diverge from the ledger SemVer. A
+        #             preview without a database session keeps the local legacy label.
         from app.version_service import resolve_document_semver
         version_read_session = write_session or db_session
+        try:
+            UUID(str(project_id))
+            has_persisted_project_id = True
+        except (TypeError, ValueError):
+            # Offline node tests and preview-only callers can use symbolic
+            # keys, so an unresolved label is only fatal for real projects.
+            has_persisted_project_id = False
         semver_label = await resolve_document_semver(
             project_id, version_read_session,
             document=req_state["generated_prd"],
             change_type="ai",
         ) if version_read_session else None
+        if version_read_session and has_persisted_project_id and not semver_label:
+            raise RuntimeError(
+                f"Could not determine the PRD version label for project {project_id}."
+            )
         # Surface the exact pre-resolved value to the staged preview. Approval
         # records the same document through the same SemVer calculation, so the
         # preview badge and the Versions tab use one release identifier.

@@ -260,7 +260,7 @@ export const api = {
   // counterparts: routes 1.4/3.4/4.4/5.3/6.3/7.3/7.4.3/7.5.3/2.3/8.2 in
   // backend/app/routes/projects.py, repositories 1.4.1/3.4.1/4.4.2/5.3.2/6.3.1/
   // 7.3.1/7.4.4/7.5.4 in app/repositories/project.py, state 2.3.2/8.2.2 in
-  // app/repositories/requirement_state.py, and the shared AUTH 7.5 ownership gate.
+  // app/repositories/requirement_state.py, and the shared AUTH 6.5 ownership gate.
   // PROJECT 1.3 — API client: the sidebar list read → route PROJECT 1.4.
   listProjects: () => get<ProjectSummary[]>('/api/projects'),
   // PROJECT 3.3 — API client for the debounced sidebar search (PROJECT 3.2)
@@ -540,7 +540,7 @@ export const api = {
   //              authMe       AUTH 2.2  (session restore, GET  /api/auth/me)
   //              authConfig   AUTH 3.2  (signup probe   , GET  /api/auth/config)
   //              authLogout   AUTH 4.2  (audit log      , POST /api/auth/logout)
-  //              authRegister AUTH 6.2  (signup         , POST /api/auth/register)
+  //              authRegister AUTH 5.2  (signup         , POST /api/auth/register)
   // Login uses the OAuth2 password flow, so the body is form-encoded
   // (username = email) rather than JSON — `post` alone cannot express that.
   // `withCredentials` is deliberately NOT set anywhere: auth travels in the
@@ -554,8 +554,8 @@ export const api = {
     const { data } = await axios.post<AuthSessionPayload>('/api/auth/login', body);
     return data;
   },
-  // AUTH 6.2 — API-client layer of REGISTER → route AUTH 6.3. The 201 response
-  //            contains no token (AUTH 6.3.6), so AUTH 6.4 immediately re-enters
+  // AUTH 5.2 — API-client layer of REGISTER → route AUTH 5.3. The 201 response
+  //            contains no token (AUTH 5.3.6), so AUTH 5.4 immediately re-enters
   //            the LOGIN flow.
   authRegister: (payload: AuthRegisterRequest) =>
     post<AuthRegisterResponse>('/api/auth/register', payload),
@@ -570,12 +570,12 @@ export const api = {
   /** Server-side logout (audit log). JWT is stateless, so also clear client state. */
   authLogout: (token: string) =>
     post<AuthMessageResponse>('/api/auth/logout', undefined, undefined, undefined, token),
-  // AUTH 8.3 — Send the destructive account-deletion request.
-  // Trigger: AUTH 8.2 useAuth.deleteAccount.
+  // AUTH 7.3 — Send the destructive account-deletion request.
+  // Trigger: AUTH 7.2 useAuth.deleteAccount.
   // Input: password, DELETE confirmation, and explicit bearer token.
-  // Calls: AUTH 8.4 DELETE /api/auth/account.
+  // Calls: AUTH 7.4 DELETE /api/auth/account.
   // Writes: NONE in the browser transport layer.
-  // Failure: axios preserves the route status/detail for AUTH 8.2.
+  // Failure: axios preserves the route status/detail for AUTH 7.2.
   authDeleteAccount: async (password: string, confirmation: string, token: string) => {
     const { data } = await axios.delete<AuthAccountDeleteResponse>('/api/auth/account', {
       data: { password, confirmation },
@@ -584,7 +584,7 @@ export const api = {
     return data;
   },
   // AUTH 2.2 — API-client layer of SESSION RESTORE → route AUTH 2.3, where the
-  //            Bearer token is re-resolved via AUTH 7.1 (verify + users-table
+  //            Bearer token is re-resolved via AUTH 6.1 (verify + users-table
   //            read). A 401 here is AUTH 2.4 (clear the stale session).
   /** Resolves the token's owner straight from the database — also a validity probe. */
   authMe: (token: string) =>

@@ -37,10 +37,7 @@ from app.repositories import (
 from app.repositories.base import serialize_project
 from app.repositories.prd_section import PRDSectionRepository
 from app.review_service import (
-    ReviewTransitionError,
     get_review_history,
-    governed_state_changed,
-    mark_revised_if_approved,
     transition_project,
 )
 from app.schemas import (
@@ -76,7 +73,7 @@ def _duplicate_project_name_detail(name: str) -> str:
 
 
 # PROJECT 1.4 — Route: GET /api/projects (the sidebar list).
-#              Auth: Depends(get_current_user) → AUTH 7.1 (Bearer → users row);
+#              Auth: Depends(get_current_user) → AUTH 6.1 (Bearer → users row);
 #              the query itself is owner-scoped (1.4.1), so an anonymous caller is
 #              rejected before any DB work and a signed-in caller only ever sees
 #              their own projects — the same boundary the frontend applies in
@@ -108,7 +105,7 @@ async def get_projects(
 
 
 # PROJECT 3.4 — Route: GET /api/projects/search (the debounced sidebar search).
-#              Auth: AUTH 7.1 + owner scoping inside the repository (PROJECT 3.4.1).
+#              Auth: AUTH 6.1 + owner scoping inside the repository (PROJECT 3.4.1).
 #              Validation: `q` is required (min_length=1) and re-checked after
 #              trimming → 400 "Search query must not be empty".
 #              Response: matching ProjectSummary rows; a row matched through
@@ -149,7 +146,7 @@ async def search_projects(
 
 
 # PROJECT 4.4 — Route: POST /api/projects (create).
-#              Auth: AUTH 7.1 — the JWT subject becomes projects.user_id, which
+#              Auth: AUTH 6.1 — the JWT subject becomes projects.user_id, which
 #              is exactly what authorizes PROJECT 2.x / 5.x / 6.x / 8.x later.
 #              Branches: 4.4.1 duplicate-name 409 (the check is deliberately NOT
 #              user-scoped, so names are workspace-global and a 409 can reveal
@@ -208,7 +205,7 @@ async def create_project(
 
 
 # PROJECT 5.3 — Route: PUT /api/projects/{project_id} (rename / field update).
-#              Auth: AUTH 7.1 + an owner filter inside the repository (5.3.2), so a
+#              Auth: AUTH 6.1 + an owner filter inside the repository (5.3.2), so a
 #              non-owner receives the same 404 as a missing project (no leak).
 #              Branches: UUID format 400 → 5.3.1 duplicate-name 409 (excluding the
 #              project itself) → 5.3.2 UPDATE (artifact lock gate inside) →
@@ -271,7 +268,7 @@ async def update_project(
 
 
 # PROJECT 6.3 — Route: DELETE /api/projects/{project_id}.
-#              Auth: AUTH 7.1 + owner filter in the repository (6.3.1).
+#              Auth: AUTH 6.1 + owner filter in the repository (6.3.1).
 #              Branches: UUID format 400 → 6.3.1 DELETE (lock-gated; also appends
 #              an artifact_event_logs row) → 404 when unowned/missing → 6.3.3 SSE
 #              publish "project_deleted". FK CASCADE removes every child artifact.
@@ -314,7 +311,7 @@ async def delete_project(
 
 
 # PROJECT 7.3 — Route: PUT /api/projects/{project_id}/pin (sidebar pin/unpin).
-#              Auth: AUTH 7.1 + owner filter inside 7.3.1.
+#              Auth: AUTH 6.1 + owner filter inside 7.3.1.
 #              Metadata only — deliberately NOT lock-gated (locking protects
 #              document content, not review bookkeeping).
 #              Branches: UUID format 400 → 7.3.1 UPDATE is_pinned → 404 when
@@ -357,7 +354,7 @@ async def pin_project(
 
 
 # PROJECT 7.4.3 — Route: PUT /api/projects/{project_id}/flag (dashboard ★).
-#                Auth: AUTH 7.1 + owner filter in 7.4.4.
+#                Auth: AUTH 6.1 + owner filter in 7.4.4.
 #                Independent of pinning by design (never affects sidebar order).
 #                Branches: UUID format 400 → 7.4.4 UPDATE is_flagged → 404 when
 #                unowned/missing → 7.4.5 SSE publish "project_updated".
@@ -402,10 +399,11 @@ async def flag_project(
 
 
 # PROJECT 7.5.3 — Route: PUT /api/projects/{project_id}/status (workflow status).
-#                Auth: AUTH 7.1 + owner filter in 7.5.4.
+#                Auth: AUTH 6.1 + owner filter in 7.5.4.
 #                Branches: UUID format 400 → 7.5.3.1 allowed-status validation 400
 #                ({draft, in_review_hpo, in_review_po, approved, revised}) →
-#                7.5.4 UPDATE status → 404 when unowned/missing → 7.5.5 SSE publish.
+#                governed transition/evidence validation → 404 when unowned/missing
+#                → 7.5.5 SSE publish.
 #                Also metadata-only: no artifact lock, no PRD version entry.
 @router.put("/api/projects/{project_id}/status", response_model=ProjectSummary, status_code=status.HTTP_200_OK)
 async def set_project_status(
@@ -443,9 +441,9 @@ async def set_project_status(
             detail=f"Invalid status '{payload.status}'. Allowed: {', '.join(sorted(allowed))}",
         )
 
-    # Use the governed transition path so every dashboard status change creates
-    # an append-only review event and approval records capture their PRD/audit
-    # evidence instead of leaving the project approval columns permanently NULL.
+    # Record the user's direct status selection. When the target is Approved,
+    # the service attaches the latest PRD/audit references if available without
+    # using them as a gate.
     try:
         project = await transition_project(
             project_id,
@@ -455,12 +453,9 @@ async def set_project_status(
             actor_name=current_user.full_name,
             actor_role=current_user.role,
             comment=payload.comment,
-            manual=True,
         )
     except LookupError:
         raise HTTPException(status_code=404, detail="Project not found") from None
-    except ReviewTransitionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
     updated = serialize_project(project)
     await event_manager.publish(project_id, "project_updated", {
         "project_id": project_id,
@@ -488,7 +483,7 @@ async def project_review_history(
 
 
 # PROJECT 2.3 — Route: GET /api/project/{project_id} (opening a project).
-#              Auth: Depends(require_project_owner) → AUTH 7.5 → AUTH 7.4
+#              Auth: Depends(require_project_owner) → AUTH 6.5 → AUTH 6.4
 #              (404 malformed/missing, 403 not-owner) — stricter than the
 #              /api/projects* group above, which scopes by query instead.
 #              Branches: 2.3.1 UUID format 400 → 2.3.2 repository read → 2.3.3
@@ -591,7 +586,7 @@ async def get_project_requirement_state(
 
 
 # PROJECT 9.1 — Route: GET /api/project/{project_id}/conversations.
-#              Auth: AUTH 7.5 ownership gate (no explicit session dependency —
+#              Auth: AUTH 6.5 ownership gate (no explicit session dependency —
 #              the repository opens its own read via the shared session factory).
 #              DISCREPANCY vs. the expected flow: no frontend caller exists
 #              (src/api/client.ts exposes no method for it) because the UI reads
@@ -664,7 +659,7 @@ async def append_project_conversation(
 
 
 # PROJECT 8.2 — Route: PUT /api/project/{project_id} (DIRECT requirement-state write).
-#              Auth: AUTH 7.5 ownership gate.
+#              Auth: AUTH 6.5 ownership gate.
 #              Branches: 8.2.1 UUID format 400 → project artifact lock check
 #              (409 locked / 404 unresolvable, via LockService) → 8.2.2
 #              RequirementStateRepository.save_or_update → 8.2.3 optional PRD
@@ -717,35 +712,19 @@ async def update_project_requirement_state(
             session,
         )
         await mark_dependents_for_review(project_id, changed_artifacts, session)
-    if governed_state_changed(previous_state, updates):
-        await mark_revised_if_approved(
-            project_id,
-            session,
-            reason="Approved requirements changed through a direct edit.",
-            actor_id=current_user.id,
-            actor_name=current_user.full_name,
-            actor_role=current_user.role,
-        )
-
-    # If the update includes a new generated_prd (e.g. legacy manual section edit
-    # fallback), record an immutable PRD version so the version ledger never
-    # collapses — even when the primary section endpoint is unavailable.
-    # PROJECT 8.2.3 — Version ledger: a manual/legacy state write that carries a
-    #                new generated_prd appends an immutable prd_versions row
-    #                (VERSIONING flow) so the ledger never collapses. Fail-open:
-    #                a ledger failure is logged and does not undo the state write.
+    # If this legacy write changes the PRD, append its ledger row in the same
+    # request transaction. A failure must abort the request so the document and
+    # its history cannot commit separately.
     if "generated_prd" in updates and updates["generated_prd"]:
-        try:
-            from app.version_service import record_prd_version
-            await record_prd_version(
-                project_id, session,
-                generated_prd=updates["generated_prd"],
-                generated_by="user",
-                change_type="manual",
-                change_summary=updates.get("change_summary"),
-            )
-        except Exception as ver_err:
-            logger.warning("[DB LOG] Failed to record PRD version for legacy update: %s", ver_err)
+        from app.version_service import record_prd_version
+        version_record = await record_prd_version(
+            project_id, session,
+            generated_prd=updates["generated_prd"],
+            generated_by="user",
+            change_type="manual",
+            change_summary=updates.get("change_summary"),
+        )
+        state["version_number"] = version_record["version_number"]
 
     # PROJECT 8.2.4 — Real-time fan-out; the frontend's SSE handler answers with a
     #                debounced full state re-read (PROJECT 2.2).
@@ -776,12 +755,9 @@ def get_prd_template(current_user: AuthenticatedUser = Depends(get_current_user)
 
 
 # PRD-EXPORT 4.0 — POST snapshot-producing export. Deterministically fills and stamps a
-#               document, then writes directly through PRD-EXPORT 7.2 / VERSION 7.1
-#               (not VERSION 6.6): it stores no VERSION 6.1 changed_sections and does not
-#               synchronize the state
-#               counter. SemVer is predicted by 3.9; prediction failure stamps the
-#               legacy label while 4.1 defaults the row semver to 1.0.0. Insert failure
-#               is fatal (500), so this endpoint never reports an unpersisted version.
+#               document, then writes through the shared VERSION 6.6 ledger service.
+#               Prediction, insertion, metadata calculation, and state-counter sync are
+#               required in the same request transaction; failure aborts the export.
 @router.post("/api/prd/export/{project_id}", response_model=PRDExportResponse, status_code=status.HTTP_200_OK)
 async def post_prd_export_generation(
     project_id: UUID,
@@ -892,54 +868,40 @@ async def post_prd_export_generation(
         # Version History section show prd_versions.semver — never V{n}.0.
         version_label=PENDING_VERSION_LABEL,
     )
-    semver = None
-    try:
-        from app.version_service import resolve_document_semver
-        semver = await resolve_document_semver(
-            str(project_id), db, document=markdown_content, change_type="ai",
-        )
-    except Exception as resolve_err:
-        # FAIL SOFT: an unstamped-pending document must still export — keep the
-        # legacy V{n}.0 label and let the row fall back to the repo default.
-        logger.error(f"[PRD EXPORT] Failed to resolve PRD semver: {resolve_err}", exc_info=True)
-    markdown_content = stamp_version_label(
-        markdown_content, semver or f"V{version_number}.0",
+    from app.version_service import resolve_document_semver
+    semver = await resolve_document_semver(
+        str(project_id), db, document=markdown_content, change_type="ai",
     )
-    # Persist the newly generated PRD as an immutable version record
-    version_record = None
-    try:
-        # PRD-EXPORT 7.2 — Optional export snapshot insertion. Unlike ordinary
-        # VERSION 6.6 recording, this direct insert is mandatory for this endpoint.
-        version_record = await PRDVersionRepository.create(str(project_id), {
-            "generated_prd": markdown_content,
-            "generated_by": "prd_export_endpoint",
-            # On successful prediction the stamp and row share the SemVer. If
-            # prediction failed, the document used legacy V{n}.0 while 4.1
-            # independently falls back to row SemVer 1.0.0.
-            "semver": semver,
-        }, db)
-        logger.info(f"[PRD EXPORT] Created PRD version {version_record['version_number']} for project {project_id}.")
-    except Exception as version_err:
-        # FAIL LOUDLY: a failed PRD version persistence must not be masked as a
-        # successful export (the caller would otherwise receive a version_number that
-        # was never actually persisted to the DB).
-        logger.error(f"[PRD EXPORT] Failed to create PRD version: {str(version_err)}", exc_info=True)
+    if not semver:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"PRD generated but failed to persist version record: {str(version_err)}",
-        ) from version_err
+            detail="Could not determine the PRD version label; no export was recorded.",
+        )
+    markdown_content = stamp_version_label(markdown_content, semver)
+    # PRD-EXPORT 7.2 — Use the shared ledger writer so export snapshots get the
+    # same change metadata, SemVer calculation, and current-version sync as every
+    # other producer. The returned file and snapshot are part of this transaction.
+    from app.version_service import record_prd_version
+    version_record = await record_prd_version(
+        str(project_id), db,
+        generated_prd=markdown_content,
+        generated_by="prd_export_endpoint",
+        change_type="ai",
+        change_summary="PRD exported.",
+    )
+    logger.info(f"[PRD EXPORT] Created PRD version {version_record['version_number']} for project {project_id}.")
 
     # PRD-EXPORT 8.2 — Publish only after the snapshot row exists; publication
     # failure remains request-fatal and can roll back the transaction.
     await event_manager.publish(str(project_id), "prd_exported", {
         "project_id": str(project_id),
-        "version": version_record["version_number"] if version_record else version_number,
+        "version": version_record["version_number"],
     })
 
     return {
         "project_id": project_id,
-        "version": version_record["version_number"] if version_record else version_number,
-        "version_id": version_record["version_id"] if version_record else None,
+        "version": version_record["version_number"],
+        "version_id": version_record["version_id"],
         "prd_markdown": markdown_content,
         "mermaid_diagram": ""
     }
@@ -1637,9 +1599,9 @@ async def get_prd_version_by_number(
 #               Application orchestration 5.1 seeds parts from the current document
 #               (target only when no current document); visit target-present sections;
 #               skip currently locked and identical sections; write changed unlocked
-#               sections; then stitch. Current-only sections remain. Recording through
-#               6.6 normally appends history, but its exception is caught: the document
-#               still persists and the response falls back to source number/blank
+#               sections; then stitch. Current-only sections remain. The 6.6 ledger
+#               append is required in the same transaction, so a failure rolls back
+#               the restore instead of persisting an untracked document.
 #               semver. `preserved_locked_sections` counts all locked target sections
 #               encountered, including identical ones. Publication precedes request
 #               commit; an uncaught later failure rolls the transaction back. The
@@ -1656,11 +1618,10 @@ async def restore_prd_version(
     session: AsyncSession = Depends(get_db),
     current_user: AuthenticatedUser = Depends(require_project_owner),
 ) -> PrdVersionRestoreResponse:
-    """Restore target-present unlocked sections into the current document.
+    """Restore target-present unlocked sections and append a ledger snapshot.
 
-    A successful ledger write appends a snapshot. If that write fails, the
-    section/document restore still completes and the response uses its fallback
-    version fields.
+    Both writes share the request transaction. A ledger failure rolls back the
+    section/document restore as well.
     """
     try:
         UUID(project_id)
@@ -1706,19 +1667,15 @@ async def restore_prd_version(
             restored_sections += 1
 
     # VERSION 5.2 — Re-stitch from every current part (including current-only and locked parts),
-    # then attempt to append an immutable ledger version.
+    # then append an immutable ledger version in the same transaction.
     document_markdown = await assemble_document_markdown(project_id, session)
-    try:
-        new_version = await record_prd_version(
-            project_id, session,
-            generated_prd=document_markdown,
-            generated_by=restored_by or "user",
-            change_type="manual",
-            change_summary=f"Restored document from version {version_number}.",
-        )
-    except Exception as ver_err:  # never block a valid restore on ledger bookkeeping
-        logger.warning("[PRD VERSIONS] Failed to record restore version: %s", ver_err)
-        new_version = {"version_number": version_number, "semver": ""}
+    new_version = await record_prd_version(
+        project_id, session,
+        generated_prd=document_markdown,
+        generated_by=restored_by or "user",
+        change_type="manual",
+        change_summary=f"Restored document from version {version_number}.",
+    )
 
     # Persist the restored document as the requirement state's current PRD.
     await RequirementStateRepository.save_or_update(project_id, {

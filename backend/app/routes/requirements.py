@@ -965,7 +965,7 @@ def post_cancel_process_requirements(
 
 # CHAT 2.1 — Accept the product's shared chat/agent processing request.
 # Trigger: CHAT 1.3 POST /api/process-requirements.
-# Input: processing payload, AUTH 7.1 identity, database session, and rate limit.
+# Input: processing payload, AUTH 6.1 identity, database session, and rate limit.
 # Calls: RequirementProcessingService → _process_requirements_pipeline.
 # Branches: CHAT 2.2 chooses CHAT 2.3 direct conversation or LangGraph processing.
 # Writes: registers cancellation state and may persist conversation/agent results.
@@ -2176,7 +2176,7 @@ async def _load_current_stories(project_id: str, db: AsyncSession) -> List[Dict[
 
 # ROUTING 5.1 — Expose the classifier for authenticated API/debug callers.
 # Trigger: POST /api/workflow-router; the SPA reaches routing through ROUTING 2.1.
-# Input: message, AUTH 7.1 identity, and workflow rate limit.
+# Input: message, AUTH 6.1 identity, and workflow rate limit.
 # Calls: ROUTING 5.1.1 budget guard → ROUTING 5.1.2 classifier invocation.
 # Writes: NONE.
 # Failure: rate limit returns 429; oversized text returns 413; classifier fallback
@@ -2219,7 +2219,7 @@ async def post_workflow_router(
 
 # INTENT 4.1 — Expose intent classification to authenticated API/debug callers.
 # Trigger: POST /api/intent-detector; no SPA client method calls this route.
-# Input: message, optional project id, AUTH 7.1 identity, DB session, and rate limit.
+# Input: message, optional project id, AUTH 6.1 identity, DB session, and rate limit.
 # Calls: INTENT 4.1.0 budget guard → optional 4.1.2 ownership/context → 4.1.3 detector.
 # Writes: NONE.
 # Failure: rate limit 429, oversized text 413, ownership errors, or loud context-read 500.
@@ -2258,7 +2258,7 @@ async def post_intent_detector(
     current_stories = []
     if payload.project_id:
         # INTENT 4.1.2 — Authorize project context and load its current stories.
-        # Calls: AUTH 7.4 ownership gate → INTENT 4.1.1 context loader.
+        # Calls: AUTH 6.4 ownership gate → INTENT 4.1.1 context loader.
         # Writes: NONE.
         # AUTHZ: project stories are tenant data (titles/descriptions that get
         # injected into the LLM prompt). The caller must own the project before

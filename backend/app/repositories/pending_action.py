@@ -15,7 +15,7 @@ from app.repositories.base import as_uuid, serialize_pending_action
 logger = logging.getLogger(__name__)
 
 
-# CONFIRM 5.0 — Pending actions = the staging table of the human-in-the-loop gate
+# CONFIRM 7.0 — Pending actions = the staging table of the human-in-the-loop gate
 # (pending_actions). Producers include Gatherer/clarification MERGE, document
 # extraction INSERT_CHUNKED_REQUIREMENTS, and Architect GENERATE_PRD previews.
 # Rows are listed by CONFIRM 3.1 and read for preview by IMPACT 7.1; they are
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class PendingActionRepository:
     """Handles Pending Actions for Human-in-the-Loop confirmation."""
 
-    # CONFIRM 5.1 — INSERT a staged action for Gatherer/clarification, document
+    # CONFIRM 7.1 — INSERT a staged action for Gatherer/clarification, document
     #             extraction, or Architect preview producers. Defaults: action_type "UPDATE", workflow_stage
     #             "gatherer_node", status WAITING_CONFIRMATION (model default); the
     #             caller supplies expires_at (enforced at the route boundary).
@@ -48,7 +48,7 @@ class PendingActionRepository:
         await session.refresh(action)
         return serialize_pending_action(action)
 
-    # CONFIRM 5.2 — SELECT the project's staged actions, filtered to
+    # CONFIRM 7.2 — SELECT the project's staged actions, filtered to
     #             status == WAITING_CONFIRMATION and serialized with the FULL
     #             proposed_changes payload (that payload is the draft itself).
     @staticmethod
@@ -60,7 +60,7 @@ class PendingActionRepository:
         return [serialize_pending_action(a, full=True) for a in actions]
 
     @staticmethod
-    # CONFIRM 5.2.1 — Remove superseded combined clarification-review drafts. The
+    # CONFIRM 7.2.1 — Remove superseded combined clarification-review drafts. The
     #                 pending-list route keeps the newest; draft regeneration may
     #                 remove all. Other pending-action types are never touched.
     async def discard_clarification_review_drafts(
@@ -93,7 +93,7 @@ class PendingActionRepository:
             await session.flush()
         return removed
 
-    # CONFIRM 5.3 — DELETE one action, scoped by BOTH action id and project id (a
+    # CONFIRM 7.3 — DELETE one action, scoped by BOTH action id and project id (a
     #             cross-project id can never be removed). Used by 3.3.8 (applied),
     #             3.4 (discarded) and 3.3.4 (draft with no changes).
     @staticmethod

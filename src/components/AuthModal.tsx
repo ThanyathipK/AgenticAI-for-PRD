@@ -94,7 +94,7 @@ export function AuthModal({
   // AUTH 1.2 — Validate and dispatch authentication form submission.
   // Trigger: AuthModal form submit.
   // Input: selected mode and validated form fields.
-  // Calls: AUTH 1.3.1 login or AUTH 6.1 registration callback.
+  // Calls: AUTH 1.3.1 login or AUTH 5.1 registration callback.
   // Branches: error string → render inline; null → close modal.
   // Writes: local error state only; useAuth owns session state.
   const handleSubmit = async (event: React.FormEvent) => {
@@ -104,7 +104,7 @@ export function AuthModal({
     // AUTH 1.2.1 — Sign-in branch: Frontend → useAuth.login → api.authLogin
     //              → POST /api/auth/login (AUTH 1.4 → AUTH 1.7).
     // AUTH 1.2.2 — Sign-up branch: Frontend → useAuth.register → api.authRegister
-    //              → POST /api/auth/register (AUTH 6.2 → AUTH 6.3), then login.
+    //              → POST /api/auth/register (AUTH 5.2 → AUTH 5.3), then login.
     const failure = isSignUp
       ? await onSignUp(email, password, fullName, role)
       : await onSignIn(email, password);

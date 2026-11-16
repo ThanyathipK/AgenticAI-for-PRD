@@ -29,10 +29,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.auth import AuthenticatedUser
 from app.database import Base
 from app.lock_service import ArtifactLockError, LockService
-from app.auth import AuthenticatedUser
-from app.models import PRDSectionModel, ProjectModel, UserModel
+from app.models import PRDSectionModel, PRDVersionModel, ProjectModel, UserModel
 from app.prd_section_service import (
     CANONICAL_KEYS,
     CANONICAL_PRD_SECTIONS,
@@ -633,6 +633,57 @@ class TestMergeEditedSection:
 # Manual edit route merges with the LATEST version (update_prd_section)
 # =====================================================================
 class TestUpdatePrdSectionMergesLatestVersion:
+    @pytest.mark.asyncio
+    async def test_manual_edit_rolls_back_when_ledger_write_fails(self, monkeypatch, db_session):
+        session, project_id = db_session
+        latest = _latest_markdown_prd()
+        await ensure_sections_seeded(project_id, session, source_markdown=latest)
+        await RequirementStateRepository.save_or_update(
+            project_id, {"generated_prd": latest}, session,
+        )
+        await session.commit()
+
+        original_part = await PRDSectionRepository.get_by_key(
+            "stakeholders", project_id, session,
+        )
+        edited = original_part["content"].replace(
+            "|Product Owner|Alice|", "|Product Owner|Ann|",
+        )
+
+        async def fail_ledger_write(*args, **kwargs):
+            raise RuntimeError("ledger unavailable")
+
+        monkeypatch.setattr(
+            "app.repositories.prd.PRDVersionRepository.create", fail_ledger_write,
+        )
+        user = AuthenticatedUser(
+            id=str(uuid.uuid4()), email="ba@example.com",
+            full_name="Product Owner", role="product_owner",
+        )
+        with pytest.raises(RuntimeError, match="ledger unavailable"):
+            await update_prd_section(
+                project_id, "stakeholders",
+                PrdSectionUpdate(
+                    content=edited,
+                    base_content=original_part["content"],
+                ),
+                current_user=user, session=session,
+            )
+
+        await session.rollback()
+        restored_part = await PRDSectionRepository.get_by_key(
+            "stakeholders", project_id, session,
+        )
+        restored_state = await RequirementStateRepository.get_by_project_id(
+            project_id, session,
+        )
+        ledger_rows = await session.execute(
+            select(PRDVersionModel).where(PRDVersionModel.project_id == project_id)
+        )
+        assert restored_part["content"] == original_part["content"]
+        assert restored_state["generated_prd"] == latest
+        assert ledger_rows.scalars().all() == []
+
     @pytest.mark.asyncio
     async def test_manual_edit_merges_with_latest_version_not_template(self, db_session):
         session, project_id = db_session

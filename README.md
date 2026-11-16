@@ -31,8 +31,8 @@ Agentic AI turns plain-English banking product briefs into **audited, versioned,
 - **Version snapshot ledger** — every generated or manually edited PRD is an immutable snapshot (internal integer `version` + display `semver`); the first AI generation is recorded immediately as `1.0.0`, every version—including the first—has line-level details, and restores are append-only
 - **Human-in-the-loop** — requirement changes are staged as *pending actions* for confirmation; zero-diff legacy drafts are discarded automatically, and Generate PRD remains disabled while real requirement changes await review. Generation then persists only the derived PRD/diagram artifacts without sending unchanged requirements through the merge window
 - **Source-grounded requirement updates** — explicit `REQ-`/`US-` targets are resolved deterministically, updated stories receive a complete revalidated acceptance-criteria set, and model-introduced technical values or behaviors without source evidence are withheld and turned into clarification questions
-- **Project review status and revision tracking** — the dashboard lets owners directly select Draft, HPO Review, PO Review, Approved, or Revised. Governed content changes automatically move an approved project to Revised and append a review-history event; the stricter transition/approval service exists for internal use and tests but is not called by the status API
-- **Operational project health** — dashboard health separates fully traced requirements from story, acceptance-criteria, PRD-reference, and diagram-reference coverage, then rolls in audit freshness/findings, unresolved questions, PRD review state, approval evidence, and active waivers
+- **Project review status and revision tracking** — status is set only by the user from the dashboard; any listed status can be selected at any time. No workflow sequence, audit result, clarification, reason, or content change controls or changes the status. Status changes are recorded in review history. Latest PRD/audit references may be attached as metadata to Approved events when available, but they do not affect the status.
+- **Operational project health** — dashboard health separately reports requirement traceability, audit freshness/findings, unresolved questions, PRD review state, approval evidence, and active waivers. These health signals do not set or change the user-selected project status.
 - **Persistent background generation** — Architect and scoped-regeneration jobs continue after a browser disconnect, are requeued after a server restart, and can be cancelled explicitly; scoped regeneration respects per-section locks and leaves locked or human-owned PRD sections untouched
 - **Scoped artifact locking** — lock/unlock authoritative requirements and individual PRD sections through the generic lock API; optimistic UI rolls back failed lock changes, locked requirements reject governed mutations, and locked PRD sections are preserved during editing, restore, and AI regeneration
 - **Real-time updates** — Server-Sent Events push state changes to the dashboard instead of polling
@@ -623,8 +623,8 @@ The backend is a FastAPI app; full interactive documentation (with request/respo
 | `PUT` | `/api/projects/{project_id}` | Rename / update a project |
 | `PUT` | `/api/projects/{project_id}/pin` | Toggle the pinned (quick-access) flag |
 | `PUT` | `/api/projects/{project_id}/flag` | Toggle the dashboard ★ flag (independent of pinning) |
-| `PUT` | `/api/projects/{project_id}/status` | Directly set one canonical dashboard status (`draft`, `in_review_hpo`, `in_review_po`, `approved`, or `revised`); this route does not enforce sequential transitions or approval prerequisites |
-| `GET` | `/api/projects/{project_id}/review-history` | Read append-only review events, including automatic Approved → Revised events produced by later governed content changes |
+| `PUT` | `/api/projects/{project_id}/status` | Set any canonical dashboard status selected by the user; no system or workflow condition controls the status |
+| `GET` | `/api/projects/{project_id}/review-history` | Read append-only events for user-selected status changes |
 | `DELETE` | `/api/projects/{project_id}` | Delete a project |
 | `GET` | `/api/project/{project_id}` | Load the centralized **requirement state** (or defaults if none exists) |
 | `PUT` | `/api/project/{project_id}` | Directly persist manual edits to the requirement state (e.g. PRD edits) |
@@ -805,8 +805,8 @@ exists on only one side. Every modeled application table must be present in
 | Table | Purpose |
 |-------|---------|
 | `users` | Stakeholders, product owners, analysts, auditor; bcrypt `password_hash`, seeded system user on startup |
-| `projects` | Banking systems / products under review; owner (`user_id`), status workflow, pin and dashboard flag |
-| `project_review_events` | Append-only review/reopen events; direct dashboard status selections are not added here |
+| `projects` | Banking systems / products under review; owner (`user_id`), user-selected status, pin and dashboard flag |
+| `project_review_events` | Append-only history of user-selected project status changes |
 | `epics` | High-level functional domains per project |
 | `requirements` | Individual requirement records (lock metadata incl. `is_locked`) |
 | `user_stories` | Structured `As a … I want … so that …` stories + ticket codes (`US-001`, unique per project) |

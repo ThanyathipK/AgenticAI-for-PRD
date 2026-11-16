@@ -227,7 +227,7 @@ class ProjectRepository:
 
     # PROJECT 2.3.3.1 / export / traceability — plain owner-agnostic READ of one
     # project by id (callers that need the owner boundary use `update`/`delete`,
-    # which apply the user_id filter, or the AUTH 7.4 gate upstream).
+    # which apply the user_id filter, or the AUTH 6.4 gate upstream).
     @staticmethod
     async def get_by_id(project_id: str, session: AsyncSession) -> Optional[Dict[str, Any]]:
         pid = as_uuid(project_id)

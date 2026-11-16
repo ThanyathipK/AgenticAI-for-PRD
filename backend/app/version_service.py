@@ -20,7 +20,6 @@ from app.prd_section_service import split_markdown_sections
 from app.repositories.prd import PRDVersionRepository
 from app.repositories.prd_section import PRDSectionRepository
 from app.repositories.requirement_state import RequirementStateRepository
-from app.review_service import mark_revised_if_approved
 
 logger = logging.getLogger(__name__)
 
@@ -161,16 +160,24 @@ def compute_next_semver(
     return f"{major}.{minor}.{patch + 1}"
 
 
+def _normalize_document_for_versioning(document: Optional[str]) -> str:
+    """Compare Markdown and LaTeX snapshots using the same Markdown structure."""
+    if not document:
+        return ""
+    from app.latex_service import prd_to_markdown
+
+    return prd_to_markdown(document)
+
+
 # VERSION 6.6 — Ledger append entry point. Called by
 #             ARCHITECT 6.0 (direct-write generation), CONFIRM 3.3.5a / ARCHITECT 9.0
 #             (approved staged PRD in routes/lock.py), PROJECT 8.2.3 (legacy direct
 #             state write), PRD-SECTION edit/revert, and VERSION restore 5.1.
 #             Layering: 6.2 → 6.1 → 6.5 → 7.1 → state
 #             version sync. It always inserts, even for identical content, using latest
-#             ledger content plus locks read now for changes/SemVer. The insert is not
-#             fail-soft: generation/confirm callers can abort, while section edits,
-#             legacy writes and restore catch it and may persist without a ledger row.
-#             Requirement-state counter sync is best-effort and can remain stale.
+#             ledger content plus locks read now for changes/SemVer. Ledger insertion and
+#             requirement-state counter sync are required; callers share one transaction
+#             so failure rolls back the corresponding PRD mutation.
 async def record_prd_version(
     project_id: str,
     session: AsyncSession,
@@ -202,6 +209,11 @@ async def record_prd_version(
 
     Returns the serialized version row.
     """
+    from app.prd_filler import PENDING_VERSION_LABEL
+
+    if PENDING_VERSION_LABEL in (generated_prd or ""):
+        raise ValueError("Cannot record a PRD version with an unresolved SemVer marker.")
+
     previous = await PRDVersionRepository.get_latest(project_id, session)
     prev_document = previous["generated_prd"] if previous else ""
 
@@ -214,8 +226,10 @@ async def record_prd_version(
     except Exception as lock_err:  # never fail versioning on lock bookkeeping
         logger.warning("[PRD VERSIONS] Could not read section locks (%s); assuming none.", lock_err)
 
+    normalized_previous = _normalize_document_for_versioning(prev_document)
+    normalized_current = _normalize_document_for_versioning(generated_prd)
     changed = compute_section_changes(
-        prev_document, generated_prd or "", locked_keys=locked_keys,
+        normalized_previous, normalized_current, locked_keys=locked_keys,
     )
 
     # Semantic Version: MAJOR (created/removed) / MINOR (non-manual updated) /
@@ -235,27 +249,12 @@ async def record_prd_version(
         "semver": semver,
     }, session, version_number=version_number)
 
-    if any(item.get("change_kind") in {CHANGE_CREATED, CHANGE_UPDATED, CHANGE_REMOVED} for item in changed):
-        await mark_revised_if_approved(
-            project_id,
-            session,
-            reason="The approved PRD content changed and requires review again.",
-            actor_name=generated_by,
-            actor_role="automated_agent" if change_type == "ai" else "editor",
-        )
-
     # Keep the project's current version number in lock-step with the ledger so
     # the stamped document label (cover + Version History show this row's
     # semver) and the UI's currentVersion always agree.
-    try:
-        await RequirementStateRepository.save_or_update(project_id, {
-            "version_number": version["version_number"],
-        }, session)
-    except Exception as ver_err:  # state row is optional — never break versioning
-        logger.warning(
-            "[PRD VERSIONS] Could not advance requirement_states.version_number (%s).",
-            ver_err,
-        )
+    await RequirementStateRepository.save_or_update(project_id, {
+        "version_number": version["version_number"],
+    }, session)
 
     logger.info(
         "[PRD VERSIONS] Recorded %s v%d for project %s (change_kinds=%s)",
@@ -399,7 +398,7 @@ async def diff_versions(
 
 
 # VERSION 6.9 — Fail-soft NEXT-semver prediction for document stamping. Normalize
-#               the candidate, compare with the latest row using current locks (6.1),
+#               both documents, compare with the latest row using current locks (6.1),
 #               then apply 6.5. Later document/lock changes before 6.6 can change the
 #               recorded value. No prior row normally yields 1.0.0 for a sectioned
 #               document (0.0.1 if empty); lock-read failure assumes none;
@@ -418,8 +417,9 @@ async def resolve_document_semver(
     :func:`record_prd_version` only while the candidate document, latest ledger
     row and relevant lock state remain unchanged.
 
-    Returns ``None`` when the semver cannot be determined (fail-soft) — the
-    caller then falls back to its legacy display label.
+    Returns ``None`` when the semver cannot be determined. A caller that will
+    persist the document must treat this as a failure rather than record a
+    legacy label that may disagree with the ledger.
     """
     try:
         previous = await PRDVersionRepository.get_latest(project_id, session)
@@ -438,8 +438,8 @@ async def resolve_document_semver(
             )
 
         try:
-            from app.latex_service import prd_to_markdown
-            new_document = prd_to_markdown(document or "")
+            previous_document = _normalize_document_for_versioning(prev_document)
+            new_document = _normalize_document_for_versioning(document)
         except Exception as conv_err:
             logger.warning(
                 "[PRD VERSIONS] Could not normalize document for semver pre-resolution (%s).",
@@ -447,7 +447,7 @@ async def resolve_document_semver(
             )
             return None
 
-        changed = compute_section_changes(prev_document, new_document, locked_keys=locked_keys)
+        changed = compute_section_changes(previous_document, new_document, locked_keys=locked_keys)
         semver = compute_next_semver((previous or {}).get("semver"), change_type, changed)
         logger.info(
             "[PRD VERSIONS] Pre-resolved semver %s for project %s (change_kinds=%s)",

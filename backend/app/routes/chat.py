@@ -86,20 +86,16 @@ async def get_readiness_status(session: AsyncSession = Depends(get_db)) -> dict[
 
 # CHAT 5.1 — Serve the standalone memory-aware conversation API.
 # Trigger: API/test client POST /api/chat; the SPA uses CHAT 1.3 instead.
-# Input: conversation messages, optional project id, AUTH 7.1 identity, and DB session.
+# Input: conversation messages, optional project id, AUTH 6.1 identity, and DB session.
 # Calls: guards → CHAT 5.2 memory recall → CHAT 5.3 prompt/user persistence →
 #        CHAT 5.4 LLM → CHAT 5.5/5.6/5.7 downstream effects.
-# Branches: project chat adds AUTH 7.4 ownership and memory/transcript operations.
+# Branches: project chat adds AUTH 6.4 ownership and memory/transcript operations.
 # Writes: conversation rows, semantic memories, and SSE event when project-scoped.
 # Failure: empty input 400, oversized context 413, LLM errors 422/502/503.
 @router.post("/api/chat", response_model=ChatResponse, status_code=status.HTTP_200_OK)
 async def post_chat_query(
     request: ChatSessionRequest,
     current_user: AuthenticatedUser = Depends(get_current_user),
-    # CHAT 5.1 (defect note) — `AsyncSession` is used in this annotation but is NOT
-    # imported in this module. It survives only because Python 3.14 defers
-    # annotation evaluation (PEP 649); on Python <= 3.13 this line raises NameError
-    # at import time. Reported in the analysis; deliberately NOT fixed here.
     session: AsyncSession = Depends(get_db),
     _rate_limit: None = Depends(
         rate_limit_dependency(
@@ -135,7 +131,7 @@ async def post_chat_query(
     if request.project_id:
         # CHAT 5.1.2 — AUTHZ: a project-bound chat may only touch its owner's data
         #             (both the memory read and the message writes below are
-        #             project-scoped), so ownership is verified up front (AUTH 7.4).
+        #             project-scoped), so ownership is verified up front (AUTH 6.4).
         await verify_project_access(str(request.project_id), current_user, session)
 
     # Finding #39: enforce MAX_CONTEXT_TOKENS on incoming payload before any

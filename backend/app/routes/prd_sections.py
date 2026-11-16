@@ -78,7 +78,7 @@ async def _ensure_sections_for_write(project_id: str, session: AsyncSession) -> 
 
 
 # PRD-SECTION 4.1 — GET all nine parts in document order (UI 1.0 → hook 2.1 → client 3.1). Auth:
-#             AUTH 7.5. This endpoint is strictly read-only: when no stored parts
+#             AUTH 6.5. This endpoint is strictly read-only: when no stored parts
 #             exist it returns deterministic preview rows without inserting them.
 @router.get("/api/project/{project_id}/prd/sections", response_model=PrdSectionListResponse, status_code=status.HTTP_200_OK)
 async def list_prd_sections(
@@ -240,17 +240,14 @@ async def update_prd_section(
     # N+1 instead of overwriting the previous version's row in place. This is
     # what makes a manual edit "merge with the old one and save as a NEW
     # version" — the old version's document row is never touched.
-    try:
-        from app.version_service import record_prd_version
-        await record_prd_version(
-            project_id, session,
-            generated_prd=document_markdown,
-            generated_by=actor_name,
-            change_type="manual",
-            change_summary=payload.change_summary,
-        )
-    except Exception as ver_err:  # never block a valid edit on ledger bookkeeping
-        logger.warning("[PRD SECTIONS] Failed to record manual PRD version: %s", ver_err)
+    from app.version_service import record_prd_version
+    await record_prd_version(
+        project_id, session,
+        generated_prd=document_markdown,
+        generated_by=actor_name,
+        change_type="manual",
+        change_summary=payload.change_summary,
+    )
 
     await RequirementStateRepository.save_or_update(project_id, {
         "generated_prd": document_markdown,
@@ -338,17 +335,14 @@ async def revert_prd_section(
     # .version_number) so the document propagation below creates a NEW
     # prd_documents row for the new version instead of overwriting the old
     # one. A revert must also preserve every previous version's document.
-    try:
-        from app.version_service import record_prd_version
-        await record_prd_version(
-            project_id, session,
-            generated_prd=document_markdown,
-            generated_by=updated_by or "user",
-            change_type="manual",
-            change_summary=f"Reverted '{section_key}' to version {version_number}.",
-        )
-    except Exception as ver_err:  # never block a valid revert on ledger bookkeeping
-        logger.warning("[PRD SECTIONS] Failed to record revert PRD version: %s", ver_err)
+    from app.version_service import record_prd_version
+    await record_prd_version(
+        project_id, session,
+        generated_prd=document_markdown,
+        generated_by=updated_by or "user",
+        change_type="manual",
+        change_summary=f"Reverted '{section_key}' to version {version_number}.",
+    )
 
     await RequirementStateRepository.save_or_update(project_id, {
         "generated_prd": document_markdown,
@@ -370,7 +364,7 @@ async def revert_prd_section(
 
 
 # LOCK 4.6 / PRD-SECTION 4.4 — Per-part LOCK (handler 2.4/client 3.3): blocks edit/revert AND excludes the part
-#             from AI regeneration (ARCHITECT 5.1's sync). Auth: AUTH 7.5; branches: 400
+#             from AI regeneration (ARCHITECT 5.1's sync). Auth: AUTH 6.5; branches: 400
 #             UUID → 404 section → 409 already locked → SSE "artifact_locked".
 @router.post("/api/project/{project_id}/prd/sections/{section_key}/lock", response_model=Dict, status_code=status.HTTP_200_OK)
 async def lock_prd_section(

@@ -354,6 +354,10 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
   const [waiverControl, setWaiverControl] = useState('');
   const [waiverOwner, setWaiverOwner] = useState('Project owner');
 
+  const requestStatusChange = (projectId: string, target: ProjectStatus) => {
+    void handleUpdateProjectStatus(projectId, target);
+  };
+
   const openHealth = async (id: string, name: string) => {
     setHealthProject({ id, name });
     setHealthLoading(true);
@@ -548,28 +552,19 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
                             </button>
                             {statusMenuFor === p.id && (
                               <div className="absolute left-0 top-full mt-1.5 z-30 min-w-[180px] bg-surface border border-outline rounded-xl shadow-lg py-1">
-                                {STATUS_OPTIONS.map((o) => {
-                                  const isCurrent = o.value === status;
-                                  return (
+                                {STATUS_OPTIONS.filter((o) => o.value !== status).map((o) => (
                                   <button
                                     key={o.value}
                                     type="button"
-                                    disabled={isCurrent}
                                     onClick={() => {
                                       setStatusMenuFor(null);
-                                      if (!isCurrent) void handleUpdateProjectStatus(p.id, o.value);
+                                      requestStatusChange(p.id, o.value);
                                     }}
-                                    className={`w-full text-left px-3.5 py-2 text-[13px] transition-colors flex items-center justify-between gap-3 ${
-                                      isCurrent
-                                        ? 'text-primary font-semibold bg-primary/5'
-                                        : 'text-on-surface hover:bg-black/5'
-                                    }`}
+                                    className="w-full text-left px-3.5 py-2 text-[13px] transition-colors flex items-center gap-3 text-on-surface hover:bg-black/5"
                                   >
                                     <span>{o.label}</span>
-                                    {isCurrent && <Check className="w-3.5 h-3.5 shrink-0" />}
                                   </button>
-                                  );
-                                })}
+                                ))}
                                 <button
                                   type="button"
                                   onClick={() => void openReviewHistory(p.id, p.name)}
@@ -654,28 +649,19 @@ export function ProjectsDashboard({ state }: { state: ProjectState }) {
                       </button>
                       {statusMenuFor === p.id && (
                         <div className="absolute left-0 top-full mt-1.5 z-30 min-w-[180px] bg-surface border border-outline rounded-xl shadow-lg py-1">
-                          {STATUS_OPTIONS.map((o) => {
-                            const isCurrent = o.value === status;
-                            return (
+                          {STATUS_OPTIONS.filter((o) => o.value !== status).map((o) => (
                             <button
                               key={o.value}
                               type="button"
-                              disabled={isCurrent}
                               onClick={() => {
                                 setStatusMenuFor(null);
-                                if (!isCurrent) void handleUpdateProjectStatus(p.id, o.value);
+                                requestStatusChange(p.id, o.value);
                               }}
-                              className={`w-full text-left px-3.5 py-2 text-[13px] transition-colors flex items-center justify-between gap-3 ${
-                                isCurrent
-                                  ? 'text-primary font-semibold bg-primary/5'
-                                  : 'text-on-surface hover:bg-black/5'
-                              }`}
+                              className="w-full text-left px-3.5 py-2 text-[13px] transition-colors flex items-center gap-3 text-on-surface hover:bg-black/5"
                             >
                               <span>{o.label}</span>
-                              {isCurrent && <Check className="w-3.5 h-3.5 shrink-0" />}
                             </button>
-                            );
-                          })}
+                          ))}
                           <button
                             type="button"
                             onClick={() => void openReviewHistory(p.id, p.name)}

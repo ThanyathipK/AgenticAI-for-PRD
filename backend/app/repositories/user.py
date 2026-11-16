@@ -35,11 +35,11 @@ logger = logging.getLogger(__name__)
 # Failure: database errors propagate to the calling service or route.
 # Call map:
 #   AUTH 1.7.1.1 — authenticate_user → get_by_email   (LOGIN read)
-#   AUTH 6.3.4   — register route    → email_exists   (uniqueness read)
-#   AUTH 6.3.5   — register route    → create_user    (INSERT)
-#   AUTH 7.1.2   — get_current_user  → get_by_id      (token → row, reused by
-#                                                       AUTH 7.2.1)
-#   AUTH 8.5     — delete-account route → delete_account (project/user DELETE)
+#   AUTH 5.3.4   — register route    → email_exists   (uniqueness read)
+#   AUTH 5.3.5   — register route    → create_user    (INSERT)
+#   AUTH 6.1.2   — get_current_user  → get_by_id      (token → row, reused by
+#                                                       AUTH 6.2.1)
+#   AUTH 7.5     — delete-account route → delete_account (project/user DELETE)
 def normalize_email(email: Optional[str]) -> str:
     """Return the canonical form of an email address.
 
@@ -55,7 +55,7 @@ def normalize_email(email: Optional[str]) -> str:
 class UserRepository:
     """Database access for user accounts (authentication surface)."""
 
-    # AUTH 7.1.2 — Resolve a user by primary key.
+    # AUTH 6.1.2 — Resolve a user by primary key.
     # Trigger: request authentication.
     # Writes: NONE; missing rows return None for the caller to classify.
     @staticmethod
@@ -81,7 +81,7 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     # AUTH 1.7.1.1 — Resolve a user by canonical, case-insensitive email.
-    # Trigger: AUTH 1.7.1 login or AUTH 6.3.4 uniqueness check.
+    # Trigger: AUTH 1.7.1 login or AUTH 5.3.4 uniqueness check.
     # Writes: NONE; missing rows return None.
     @staticmethod
     async def get_by_email(
@@ -97,8 +97,8 @@ class UserRepository:
         )
         return result.scalar_one_or_none()
 
-    # AUTH 6.3.4 — Check registration email uniqueness.
-    # Trigger: AUTH 6.3 registration route.
+    # AUTH 5.3.4 — Check registration email uniqueness.
+    # Trigger: AUTH 5.3 registration route.
     # Calls: AUTH 1.7.1.1 get_by_email.
     # Writes: NONE; duplicate handling remains in the route.
     @staticmethod
@@ -106,10 +106,10 @@ class UserRepository:
         """Return True when an account already owns *email* (case-insensitive)."""
         return await UserRepository.get_by_email(email, session) is not None
 
-    # AUTH 6.3.5 — Stage insertion of a validated user account.
-    # Trigger: AUTH 6.3 after validation, uniqueness, and password hashing.
+    # AUTH 5.3.5 — Stage insertion of a validated user account.
+    # Trigger: AUTH 5.3 after validation, uniqueness, and password hashing.
     # Writes: INSERT plus flush; the route owns transaction commit.
-    # Failure: database errors propagate and prevent AUTH 6.3.6 success.
+    # Failure: database errors propagate and prevent AUTH 5.3.6 success.
     @staticmethod
     async def create_user(
         *,
@@ -137,11 +137,11 @@ class UserRepository:
         await session.flush()
         return user
 
-    # AUTH 8.5 — Stage deletion of an account and all projects it owns.
-    # Trigger: AUTH 8.4 after confirmation, password, and system-account guards.
+    # AUTH 7.5 — Stage deletion of an account and all projects it owns.
+    # Trigger: AUTH 7.4 after confirmation, password, and system-account guards.
     # Input: authoritative user row and request-scoped database session.
     # Writes: explicit project DELETE, cascading owned-data deletes, user DELETE,
-    #         and flush; AUTH 8.6 owns the transaction commit.
+    #         and flush; AUTH 7.6 owns the transaction commit.
     # Failure: database errors propagate and leave commit unavailable.
     @staticmethod
     async def delete_account(
