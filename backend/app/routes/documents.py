@@ -834,7 +834,7 @@ async def process_document(
             session=session,
         )
     # DOC-UPLOAD 5.5 — Cancellation/failure cleanup: discard partial in-memory output,
-    #                   mark `extraction_consumed`, commit a transcript milestone, publish
+    #                   release the claim so an unsuccessful run can be retried, publish
     #                   the terminal event, and return cancelled or re-raise failure.
     except asyncio.CancelledError:
         logger.info(
@@ -843,7 +843,7 @@ async def process_document(
         )
         await session.rollback()
         await DocumentRepository.update_extraction_status(
-            document_id, project_id, "extraction_consumed", session
+            document_id, project_id, "not_extracted", session
         )
         await _persist_extraction_message(
             project_id,
@@ -868,11 +868,11 @@ async def process_document(
             "document_id": document_id,
         }
     except Exception:
-        # Preparation, inference, and draft construction all belong to the one
-        # claimed attempt. Roll back partial work and record a terminal status.
+        # A failed extraction does not use the document's one successful attempt.
+        # Roll back partial work and release the claim so the user can retry.
         await session.rollback()
         await DocumentRepository.update_extraction_status(
-            document_id, project_id, "extraction_consumed", session
+            document_id, project_id, "not_extracted", session
         )
         await _persist_extraction_message(
             project_id,

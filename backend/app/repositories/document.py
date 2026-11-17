@@ -118,7 +118,7 @@ class DocumentRepository:
 
     @staticmethod
     async def claim_extraction(document_id: str, project_id: str, session: AsyncSession) -> bool:
-        """Atomically consume the one extraction attempt for this uploaded file."""
+        """Atomically reserve extraction while a run is in progress."""
         result = await session.execute(
             update(DocumentModel).where(
                 DocumentModel.id == as_uuid(document_id),
@@ -138,8 +138,8 @@ class DocumentRepository:
         extraction_status: str,
         session: AsyncSession,
     ) -> Optional[Dict[str, Any]]:
-        # DOC-UPLOAD 7.5 — Extraction tracking: `extraction_pending` during/after route 4.5,
-        #             `extraction_consumed` on cancellation/failure/Discard, and
+        # DOC-UPLOAD 7.5 — Extraction tracking: `extraction_pending` during/after a
+        #             successful draft, `not_extracted` after a failed run, and
         #             `extraction_applied` after CONFIRM. Upload begins not_extracted.
         """Update a document's extraction-status tracking flag."""
         did = as_uuid(document_id)

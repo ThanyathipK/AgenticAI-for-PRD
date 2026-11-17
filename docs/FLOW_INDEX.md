@@ -592,6 +592,9 @@ Important locations:
 - `backend/app/repositories/audit_result.py`
 - `backend/app/repositories/clarification_question.py`
 
+Thesis-ready narrative, checklist summary, code excerpts, and the validation-cycle
+figure are in [`section_4_4_requirement_validation.md`](section_4_4_requirement_validation.md).
+
 ### ARCHITECT — PRD and architecture-diagram generation
 
 Purpose: compile saved requirements, explicit narrative, and supported audit evidence into a reviewable PRD and Mermaid architecture-flow candidate while preserving locked or human-owned sections.
@@ -998,7 +1001,7 @@ Terminal extraction branches:
 success → extraction_pending remains while draft awaits CONFIRM
 cancel/failure → partial output discarded, status=not_extracted, terminal transcript/event
 CONFIRM Save → proposed requirements applied, status=extraction_applied
-CONFIRM Discard → proposal deleted, status=not_extracted
+CONFIRM Discard → proposal deleted, status=extraction_consumed
 expired preview cleanup → pending action deleted, status currently remains extraction_pending
 ```
 

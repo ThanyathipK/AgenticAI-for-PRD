@@ -682,15 +682,15 @@ class TestDraftOnlyExtraction:
             )
         ).scalar_one()
         await db_session.refresh(doc_row)
-        assert doc_row.extraction_status == "extraction_consumed"
+        assert doc_row.extraction_status == "not_extracted"
         repeated = await client.post(
             f"/api/project/{seeded_project}/documents/{doc['id']}/process"
         )
-        assert repeated.status_code == 409
+        assert repeated.status_code != 409
 
 
     @pytest.mark.asyncio
-    async def test_failed_extraction_consumes_attempt(
+    async def test_failed_extraction_does_not_consume_attempt(
         self, seeded_project, client, db_session, monkeypatch
     ):
         """An LLM failure creates no draft and must not leave a false pending chip."""
@@ -713,11 +713,11 @@ class TestDraftOnlyExtraction:
                 select(DocumentModel).where(DocumentModel.id == doc["id"])
             )
         ).scalar_one()
-        assert row.extraction_status == "extraction_consumed"
+        assert row.extraction_status == "not_extracted"
         repeated = await client.post(
             f"/api/project/{seeded_project}/documents/{doc['id']}/process"
         )
-        assert repeated.status_code == 409
+        assert repeated.status_code != 409
 
         messages = (
             await db_session.execute(
@@ -739,7 +739,7 @@ class TestDraftOnlyExtraction:
         ) == 1
 
     @pytest.mark.asyncio
-    async def test_preparation_failure_consumes_attempt_without_stuck_pending_status(
+    async def test_preparation_failure_does_not_consume_attempt(
         self, seeded_project, client, db_session, monkeypatch
     ):
         """Failures after the atomic claim must always leave a terminal status."""
@@ -760,11 +760,11 @@ class TestDraftOnlyExtraction:
             select(DocumentModel).where(DocumentModel.id == doc["id"])
         )
         await db_session.refresh(row)
-        assert row.extraction_status == "extraction_consumed"
+        assert row.extraction_status == "not_extracted"
         repeated = await client.post(
             f"/api/project/{seeded_project}/documents/{doc['id']}/process"
         )
-        assert repeated.status_code == 409
+        assert repeated.status_code != 409
 
     @pytest.mark.asyncio
     async def test_process_creates_draft_only_and_confirm_applies_once(
