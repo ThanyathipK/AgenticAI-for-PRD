@@ -714,11 +714,6 @@ class TestDraftOnlyExtraction:
             )
         ).scalar_one()
         assert row.extraction_status == "not_extracted"
-        repeated = await client.post(
-            f"/api/project/{seeded_project}/documents/{doc['id']}/process"
-        )
-        assert repeated.status_code != 409
-
         messages = (
             await db_session.execute(
                 select(ConversationMessageModel)
@@ -737,6 +732,12 @@ class TestDraftOnlyExtraction:
         assert sum(
             "extraction failed" in message.message for message in extraction_messages
         ) == 1
+        # The failed run released its claim, so a later extraction can be retried.
+        # Keep this check after transcript assertions because retries add milestones.
+        retry = await client.post(
+            f"/api/project/{seeded_project}/documents/{doc['id']}/process"
+        )
+        assert retry.status_code != 409
 
     @pytest.mark.asyncio
     async def test_preparation_failure_does_not_consume_attempt(
@@ -761,10 +762,6 @@ class TestDraftOnlyExtraction:
         )
         await db_session.refresh(row)
         assert row.extraction_status == "not_extracted"
-        repeated = await client.post(
-            f"/api/project/{seeded_project}/documents/{doc['id']}/process"
-        )
-        assert repeated.status_code != 409
 
     @pytest.mark.asyncio
     async def test_process_creates_draft_only_and_confirm_applies_once(
