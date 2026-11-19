@@ -286,6 +286,9 @@ export function useProjectState(
     projectsApi.setPendingActions,
     ui.setActiveTab,
     {
+      onProjectActivity: (activityProjectId) => {
+        projectsApi.markProjectRecentlyUpdated(activityProjectId);
+      },
       onDocumentExtractionStarted: (data) => {
         // Optimistically pick the mode from the measured token_count vs budget.
         const documentId = String(data?.document_id ?? "");
@@ -417,6 +420,7 @@ export function useProjectState(
     loadProjectState,
     canRunAgentActions,
     agentActionsBlockedReason,
+    markProjectRecentlyUpdated: projectsApi.markProjectRecentlyUpdated,
   });
 
   // PRD-EXPORT 2.0 — Shared PDF/DOCX export coordinator. Trigger: menu 1.x.

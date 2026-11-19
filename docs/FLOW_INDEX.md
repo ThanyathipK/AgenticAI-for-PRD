@@ -141,23 +141,23 @@ AuthPanel/AuthModal
 
 Important locations:
 
-- `src/components/AuthPanel.tsx`
-- `src/components/AuthModal.tsx`
-- `src/hooks/useAuth.ts`
-- `src/api/client.ts`
-- `backend/app/routes/auth.py`
-- `backend/app/auth.py`
-- `backend/app/repositories/user.py`
+- [`src/components/AuthPanel.tsx:L10`](src/components/AuthPanel.tsx#L10)
+- [`src/components/AuthModal.tsx:L38`](src/components/AuthModal.tsx#L38)
+- [`src/hooks/useAuth.ts:L86`](src/hooks/useAuth.ts#L86)
+- [`src/api/client.ts:L61`](src/api/client.ts#L61)
+- [`backend/app/routes/auth.py:L96`](backend/app/routes/auth.py#L96)
+- [`backend/app/auth.py:L35`](backend/app/auth.py#L35)
+- [`backend/app/repositories/user.py:L37`](backend/app/repositories/user.py#L37)
 
 Current numbered groups:
 
-- `AUTH 1.x`: login and authenticated UI transition
-- `AUTH 2.x`: stored-session restoration
-- `AUTH 3.x`: public authentication-capability/configuration probe
-- `AUTH 4.x`: logout
-- `AUTH 5.x`: registration
-- `AUTH 6.x`: JWT authentication and project authorization dependencies
-- `AUTH 7.x`: permanent account deletion
+- `AUTH 1.x`: login and authenticated UI transition — [`src/components/AuthModal.tsx:L38`](src/components/AuthModal.tsx#L38)
+- `AUTH 2.x`: stored-session restoration — [`src/hooks/useAuth.ts:L89`](src/hooks/useAuth.ts#L89)
+- `AUTH 3.x`: public authentication-capability/configuration probe — [`src/api/client.ts:L541`](src/api/client.ts#L541)
+- `AUTH 4.x`: logout — [`backend/app/routes/auth.py:L139`](backend/app/routes/auth.py#L139)
+- `AUTH 5.x`: registration — [`backend/app/auth.py:L142`](backend/app/auth.py#L142)
+- `AUTH 6.x`: JWT authentication and project authorization dependencies — [`backend/app/auth.py:L61`](backend/app/auth.py#L61)
+- `AUTH 7.x`: permanent account deletion — [`backend/app/repositories/user.py:L42`](backend/app/repositories/user.py#L42)
 
 Authorization path:
 
@@ -207,25 +207,25 @@ Dashboard/sidebar
 
 Important locations:
 
-- `src/hooks/useProjectState.ts`
-- `src/hooks/useProjects.ts`
-- `src/hooks/useProjectSync.ts`
-- `src/api/client.ts`
-- `backend/app/routes/projects.py`
-- `backend/app/repositories/project.py`
-- `backend/app/repositories/requirement_state.py`
+- [`src/hooks/useProjectState.ts:L237`](src/hooks/useProjectState.ts#L237)
+- [`src/hooks/useProjects.ts:L69`](src/hooks/useProjects.ts#L69)
+- [`src/hooks/useProjectSync.ts:L164`](src/hooks/useProjectSync.ts#L164)
+- [`src/api/client.ts:L264`](src/api/client.ts#L264)
+- [`backend/app/routes/projects.py:L75`](backend/app/routes/projects.py#L75)
+- [`backend/app/repositories/project.py:L21`](backend/app/repositories/project.py#L21)
+- [`backend/app/repositories/requirement_state.py:L48`](backend/app/repositories/requirement_state.py#L48)
 
 Current numbered groups:
 
-- `PROJECT 1.x`: project-list load and selection
-- `PROJECT 2.x`: open project and hydrate full workspace state
-- `PROJECT 3.x`: project search
-- `PROJECT 4.x`: create project
-- `PROJECT 5.x`: rename/update project
-- `PROJECT 6.x`: delete project
-- `PROJECT 7.x`: pin, flag, and workflow-status metadata
-- `PROJECT 8.x`: direct requirement-state write path
-- `PROJECT 9.x`: conversation timeline reads
+- `PROJECT 1.x`: project-list load and selection — [`src/components/Dashboard.tsx:L683`](src/components/Dashboard.tsx#L683)
+- `PROJECT 2.x`: open project and hydrate full workspace state — [`src/hooks/useProjectState.ts:L240`](src/hooks/useProjectState.ts#L240)
+- `PROJECT 3.x`: project search — [`src/api/client.ts:L266`](src/api/client.ts#L266)
+- `PROJECT 4.x`: create project — [`backend/app/routes/projects.py:L148`](backend/app/routes/projects.py#L148)
+- `PROJECT 5.x`: rename/update project — [`backend/app/repositories/project.py:L241`](backend/app/repositories/project.py#L241)
+- `PROJECT 6.x`: delete project — [`backend/app/repositories/project.py:L391`](backend/app/repositories/project.py#L391)
+- `PROJECT 7.x`: pin, flag, and workflow-status metadata — [`backend/app/repositories/project.py:L279`](backend/app/repositories/project.py#L279)
+- `PROJECT 8.x`: direct requirement-state write path — [`backend/app/repositories/requirement_state.py:L258`](backend/app/repositories/requirement_state.py#L258)
+- `PROJECT 9.x`: conversation timeline reads — [`backend/app/routes/projects.py:L588`](backend/app/routes/projects.py#L588)
 
 Workflow-status updates do not enforce a sequence or require audit evidence,
 clarification resolution, or a reason. Owners can select any listed status
@@ -265,13 +265,13 @@ standalone /api/chat branch
 
 Current numbered groups:
 
-- `CHAT 1.x`: composer, frontend handler, shared API call, and UI response
-- `CHAT 2.x`: `/api/process-requirements` direct-conversation branch
-- `CHAT 3.x`: semantic-memory recall and prompt rendering
-- `CHAT 4.x`: semantic-memory fact extraction and persistence
-- `CHAT 5.x`: standalone `/api/chat` endpoint used by API clients/tests
-- `CHAT 6.x`: LM Studio inference transport and readiness
-- `CHAT 7.x`: conversation transcript repository
+- `CHAT 1.x`: composer, frontend handler, shared API call, and UI response — [`src/components/ChatPanel.tsx:L873`](src/components/ChatPanel.tsx#L873)
+- `CHAT 2.x`: `/api/process-requirements` direct-conversation branch — [`backend/app/routes/requirements.py:L966`](backend/app/routes/requirements.py#L966)
+- `CHAT 3.x`: semantic-memory recall and prompt rendering — [`backend/app/semantic_memory.py:L400`](backend/app/semantic_memory.py#L400)
+- `CHAT 4.x`: semantic-memory fact extraction and persistence — [`backend/app/routes/chat.py:L228`](backend/app/routes/chat.py#L228)
+- `CHAT 5.x`: standalone `/api/chat` endpoint used by API clients/tests — [`backend/app/routes/chat.py:L87`](backend/app/routes/chat.py#L87)
+- `CHAT 6.x`: LM Studio inference transport and readiness — [`backend/app/llm_client.py:L65`](backend/app/llm_client.py#L65)
+- `CHAT 7.x`: conversation transcript repository — [`backend/app/repositories/conversation.py:L35`](backend/app/repositories/conversation.py#L35)
 
 Product endpoint sequence:
 
@@ -315,16 +315,15 @@ CHAT 6.2 gateway probe
 
 Important locations:
 
-- `src/components/ChatPanel.tsx`
-- `src/hooks/useChat.ts`
-- `src/hooks/chat/`
-- `backend/app/routes/requirements.py`
-- `backend/app/routes/chat.py`
-- `backend/app/semantic_service.py`
-- `backend/app/semantic_memory.py`
-- `backend/app/project_knowledge_service.py`
-- `backend/app/repositories/conversation.py`
-- `backend/app/llm_client.py`
+- [`src/components/ChatPanel.tsx:L873`](src/components/ChatPanel.tsx#L873)
+- [`src/hooks/useChat.ts:L207`](src/hooks/useChat.ts#L207)
+- [`backend/app/routes/requirements.py:L966`](backend/app/routes/requirements.py#L966)
+- [`backend/app/routes/chat.py:L87`](backend/app/routes/chat.py#L87)
+- [`backend/app/semantic_service.py:L859`](backend/app/semantic_service.py#L859)
+- [`backend/app/semantic_memory.py:L44`](backend/app/semantic_memory.py#L44)
+- [`backend/app/project_knowledge_service.py:L1`](backend/app/project_knowledge_service.py#L1)
+- [`backend/app/repositories/conversation.py:L19`](backend/app/repositories/conversation.py#L19)
+- [`backend/app/llm_client.py:L65`](backend/app/llm_client.py#L65)
 
 ### ROUTING — Workflow classification and graph dispatch
 
@@ -355,19 +354,19 @@ requirement_matcher_node
 
 Current numbered groups:
 
-- `ROUTING 1.x`: graph topology, entry selection, and compilation
-- `ROUTING 2.x`: router node and its CHAT/QUESTION/COMMAND/REQUIREMENT branches
-- `ROUTING 3.x`: workflow-classification service and deterministic fallback
-- `ROUTING 4.x`: post-router and post-matcher conditional edges
-- `ROUTING 5.x`: authenticated debug endpoint and response schema
+- `ROUTING 1.x`: graph topology, entry selection, and compilation — [`src/hooks/useChat.ts:L558`](src/hooks/useChat.ts#L558)
+- `ROUTING 2.x`: router node and its CHAT/QUESTION/COMMAND/REQUIREMENT branches — [`backend/app/agents.py:L231`](backend/app/agents.py#L231)
+- `ROUTING 3.x`: workflow-classification service and deterministic fallback — [`backend/app/agents.py:L237`](backend/app/agents.py#L237)
+- `ROUTING 4.x`: post-router and post-matcher conditional edges — [`backend/app/agents.py:L238`](backend/app/agents.py#L238)
+- `ROUTING 5.x`: authenticated debug endpoint and response schema — [`backend/app/routes/requirements.py:L2177`](backend/app/routes/requirements.py#L2177)
 
 Important locations:
 
-- `backend/app/agents.py`
-- `backend/app/workflow_orchestration/graph.py`
-- `backend/app/workflow_orchestration/routing.py`
-- `backend/app/semantic_service.py`
-- `backend/app/prompts/router.md`
+- [`backend/app/agents.py:L231`](backend/app/agents.py#L231)
+- [`backend/app/workflow_orchestration/graph.py:L25`](backend/app/workflow_orchestration/graph.py#L25)
+- [`backend/app/workflow_orchestration/routing.py:L12`](backend/app/workflow_orchestration/routing.py#L12)
+- [`backend/app/semantic_service.py:L1133`](backend/app/semantic_service.py#L1133)
+- [`backend/app/prompts/router.md:L1`](backend/app/prompts/router.md#L1)
 
 ### INTENT — Requirement-intent detection
 
@@ -386,11 +385,11 @@ process-requirements pipeline or matcher fallback
 
 Current numbered groups:
 
-- `INTENT 1.x`: integration with the shared processing pipeline
-- `INTENT 2.x`: canonical detector, structured LLM call, and deterministic fallback
-- `INTENT 3.x`: defensive detection for direct LangGraph node invocation
-- `INTENT 4.x`: authenticated API/debug detector integration
-- `INTENT 5.x`: shared response schema
+- `INTENT 1.x`: integration with the shared processing pipeline — [`backend/app/routes/requirements.py:L1093`](backend/app/routes/requirements.py#L1093)
+- `INTENT 2.x`: canonical detector, structured LLM call, and deterministic fallback — [`backend/app/agents.py:L401`](backend/app/agents.py#L401)
+- `INTENT 3.x`: defensive detection for direct LangGraph node invocation — [`backend/app/agents.py:L361`](backend/app/agents.py#L361)
+- `INTENT 4.x`: authenticated API/debug detector integration — [`backend/app/routes/requirements.py:L2147`](backend/app/routes/requirements.py#L2147)
+- `INTENT 5.x`: shared response schema — [`backend/app/schemas.py:L118`](backend/app/schemas.py#L118)
 
 Pipeline sequence:
 
@@ -438,10 +437,10 @@ requirement-matcher endpoint
 
 Important locations:
 
-- `backend/app/semantic_service.py`
-- `backend/app/prompts/intent.md`
-- `backend/app/schemas.py`
-- `backend/app/routes/requirements.py`
+- [`backend/app/semantic_service.py:L670`](backend/app/semantic_service.py#L670)
+- [`backend/app/prompts/intent.md:L1`](backend/app/prompts/intent.md#L1)
+- [`backend/app/schemas.py:L118`](backend/app/schemas.py#L118)
+- [`backend/app/routes/requirements.py:L1093`](backend/app/routes/requirements.py#L1093)
 
 ### MATCHING — Existing requirement/story target resolution
 
@@ -449,11 +448,11 @@ Purpose: determine which existing requirement, story, or acceptance criterion a 
 
 Numbered groups:
 
-- `MATCHING 1.x` — graph matcher input loading, deterministic resolution, semantic fallback, and clarification gate
-- `MATCHING 2.x` — canonical semantic matcher prompt, structured call, and target validation
-- `MATCHING 3.x` — matched-target consumers in prompt guidance, Gatherer reconciliation, and archive staging
-- `MATCHING 4.x` — graph outcome dispatch and API-pipeline persistence/staging handoff
-- `MATCHING 5.x` — authenticated direct API and response-schema boundary
+- `MATCHING 1.x` — graph matcher input loading, deterministic resolution, semantic fallback, and clarification gate — [`backend/app/routes/requirements.py:L1828`](backend/app/routes/requirements.py#L1828)
+- `MATCHING 2.x` — canonical semantic matcher prompt, structured call, and target validation — [`backend/app/agents.py:L370`](backend/app/agents.py#L370)
+- `MATCHING 3.x` — matched-target consumers in prompt guidance, Gatherer reconciliation, and archive staging — [`backend/app/agents.py:L634`](backend/app/agents.py#L634)
+- `MATCHING 4.x` — graph outcome dispatch and API-pipeline persistence/staging handoff — [`backend/app/routes/requirements.py:L1692`](backend/app/routes/requirements.py#L1692)
+- `MATCHING 5.x` — authenticated direct API and response-schema boundary — [`backend/app/routes/requirements.py:L2275`](backend/app/routes/requirements.py#L2275)
 
 Primary path:
 
@@ -487,10 +486,10 @@ POST /api/requirement-matcher (MATCHING 5.1)
 
 Important locations:
 
-- `backend/app/agents.py`
-- `backend/app/semantic_service.py`
-- `backend/app/prompts/matcher.md`
-- `backend/app/schemas.py`
+- [`backend/app/agents.py:L367`](backend/app/agents.py#L367)
+- [`backend/app/semantic_service.py:L975`](backend/app/semantic_service.py#L975)
+- [`backend/app/prompts/matcher.md:L1`](backend/app/prompts/matcher.md#L1)
+- [`backend/app/schemas.py:L155`](backend/app/schemas.py#L155)
 
 ### GATHERING — Requirement extraction and merge staging
 
@@ -498,14 +497,14 @@ Purpose: turn raw product-owner input into structured requirements, merge it wit
 
 Numbered groups:
 
-- `GATHERING 1.x` — state loading, structured-draft intake, and safe early exits
-- `GATHERING 2.x` — matcher consumption, semantic recommendations, confidence gate, and prompt context
-- `GATHERING 3.x` — structured extraction, normalization, evidence filtering, and requirement-code repair
-- `GATHERING 4.x` — one-pass merge, requirement regrouping, revision calculation, and preview return
-- `GATHERING 5.x` — semantic-change LLM service and deterministic result validation
-- `GATHERING 6.x` — shared story identity, field/criteria merge, protection, and projection helpers
-- `GATHERING 7.x` — canonical `REQ-###` formatting, normalization, and sequencing
-- `GATHERING 8.x` — backend pending-action staging and frontend confirmation presentation
+- `GATHERING 1.x` — state loading, structured-draft intake, and safe early exits — [`backend/app/agents.py:L1090`](backend/app/agents.py#L1090)
+- `GATHERING 2.x` — matcher consumption, semantic recommendations, confidence gate, and prompt context — [`backend/app/agents.py:L940`](backend/app/agents.py#L940)
+- `GATHERING 3.x` — structured extraction, normalization, evidence filtering, and requirement-code repair — [`backend/app/agents.py:L732`](backend/app/agents.py#L732)
+- `GATHERING 4.x` — one-pass merge, requirement regrouping, revision calculation, and preview return — [`backend/app/agents.py:L1048`](backend/app/agents.py#L1048)
+- `GATHERING 5.x` — semantic-change LLM service and deterministic result validation — [`backend/app/agents.py:L1390`](backend/app/agents.py#L1390)
+- `GATHERING 6.x` — shared story identity, field/criteria merge, protection, and projection helpers — [`backend/app/agents.py:L1492`](backend/app/agents.py#L1492)
+- `GATHERING 7.x` — canonical `REQ-###` formatting, normalization, and sequencing — [`backend/app/requirement_codes.py:L16`](backend/app/requirement_codes.py#L16)
+- `GATHERING 8.x` — backend pending-action staging and frontend confirmation presentation — [`backend/app/routes/requirements.py:L1815`](backend/app/routes/requirements.py#L1815)
 
 Primary path:
 
@@ -538,12 +537,12 @@ Current semantic-clarification behavior: `GATHERING 2.4` returns clarification q
 
 Important locations:
 
-- `backend/app/agents.py`
-- `backend/app/semantic_service.py`
-- `backend/app/merge_service.py`
-- `backend/app/requirement_codes.py`
-- `backend/app/prompts/gatherer.md`
-- `backend/app/routes/requirements.py`
+- [`backend/app/agents.py:L732`](backend/app/agents.py#L732)
+- [`backend/app/semantic_service.py:L390`](backend/app/semantic_service.py#L390)
+- [`backend/app/merge_service.py:L91`](backend/app/merge_service.py#L91)
+- [`backend/app/requirement_codes.py:L16`](backend/app/requirement_codes.py#L16)
+- [`backend/app/prompts/gatherer.md:L1`](backend/app/prompts/gatherer.md#L1)
+- [`backend/app/routes/requirements.py:L1815`](backend/app/routes/requirements.py#L1815)
 
 ### AUDIT — Requirement validation and compliance review
 
@@ -551,11 +550,11 @@ Purpose: audit the active requirement board, record findings, and produce clarif
 
 Numbered groups:
 
-- `AUDIT 1.x` — detached state/draft loading, full active scope, evidence sanitation, and empty-scope reuse
-- `AUDIT 2.x` — prompt budgeting, bounded model passes, deterministic validation/recovery, result projection, and immediate persistence
-- `AUDIT 3.x` — authenticated, lock-gated clarification-answer API
-- `AUDIT 4.x` — clarification-question repository persistence and target resolution
-- `AUDIT 5.x` — frontend trigger, response mapping, and verdict/question presentation
+- `AUDIT 1.x` — detached state/draft loading, full active scope, evidence sanitation, and empty-scope reuse — [`backend/app/agents.py:L2854`](backend/app/agents.py#L2854)
+- `AUDIT 2.x` — prompt budgeting, bounded model passes, deterministic validation/recovery, result projection, and immediate persistence — [`src/hooks/useChat.ts:L580`](src/hooks/useChat.ts#L580)
+- `AUDIT 3.x` — authenticated, lock-gated clarification-answer API — [`backend/app/repositories/clarification_question.py:L34`](backend/app/repositories/clarification_question.py#L34)
+- `AUDIT 4.x` — clarification-question repository persistence and target resolution — [`backend/app/repositories/clarification_question.py:L33`](backend/app/repositories/clarification_question.py#L33)
+- `AUDIT 5.x` — frontend trigger, response mapping, and verdict/question presentation — [`backend/app/agents.py:L2856`](backend/app/agents.py#L2856)
 
 Primary path:
 
@@ -584,13 +583,13 @@ Persistence rule: a successful, current request that explicitly uses `target_age
 
 Important locations:
 
-- `src/hooks/useChat.ts`
-- `backend/app/agents.py`
-- `backend/app/audit_checklist.py`
-- `backend/app/audit_history_service.py`
-- `backend/app/prompts/auditor.md`
-- `backend/app/repositories/audit_result.py`
-- `backend/app/repositories/clarification_question.py`
+- [`src/hooks/useChat.ts:L521`](src/hooks/useChat.ts#L521)
+- [`backend/app/agents.py:L2391`](backend/app/agents.py#L2391)
+- [`backend/app/audit_checklist.py:L1`](backend/app/audit_checklist.py#L1)
+- [`backend/app/audit_history_service.py:L1`](backend/app/audit_history_service.py#L1)
+- [`backend/app/prompts/auditor.md:L1`](backend/app/prompts/auditor.md#L1)
+- [`backend/app/repositories/audit_result.py:L1`](backend/app/repositories/audit_result.py#L1)
+- [`backend/app/repositories/clarification_question.py:L33`](backend/app/repositories/clarification_question.py#L33)
 
 Thesis-ready narrative, checklist summary, code excerpts, and the validation-cycle
 figure are in [`section_4_4_requirement_validation.md`](section_4_4_requirement_validation.md).
@@ -601,15 +600,15 @@ Purpose: compile saved requirements, explicit narrative, and supported audit evi
 
 Numbered groups:
 
-- `ARCHITECT 1.x` — frontend guards, version digest, background-job trigger, preview loading, and cancellation/error handling
-- `ARCHITECT 2.x` — canonical-state loading, lock/scope preflight, draft policy, reuse, and empty-board guards
-- `ARCHITECT 3.x` — deterministic official-template dataset assembly and fill
-- `ARCHITECT 4.x` — optional Mermaid generation, validation, and fail-open behavior
-- `ARCHITECT 5.x` — SemVer stamping and ownership-preserving section merge in preview or direct-write mode
-- `ARCHITECT 6.x` — immutable version ledger for non-preview/direct-write callers
-- `ARCHITECT 7.x` — user-facing candidate message (preview-oriented wording, also returned to internal callers)
-- `ARCHITECT 8.x` — candidate return and durable `GENERATE_PRD` preview staging
-- `ARCHITECT 9.x` — Save-time stale checks and authoritative artifact/version commit
+- `ARCHITECT 1.x` — frontend guards, version digest, background-job trigger, preview loading, and cancellation/error handling — [`src/hooks/useChat.ts:L186`](src/hooks/useChat.ts#L186)
+- `ARCHITECT 2.x` — canonical-state loading, lock/scope preflight, draft policy, reuse, and empty-board guards — [`backend/app/agents.py:L668`](backend/app/agents.py#L668)
+- `ARCHITECT 3.x` — deterministic official-template dataset assembly and fill — [`backend/app/agents.py:L3625`](backend/app/agents.py#L3625)
+- `ARCHITECT 4.x` — optional Mermaid generation, validation, and fail-open behavior — [`backend/app/agents.py:L688`](backend/app/agents.py#L688)
+- `ARCHITECT 5.x` — SemVer stamping and ownership-preserving section merge in preview or direct-write mode — [`backend/app/agents.py:L3805`](backend/app/agents.py#L3805)
+- `ARCHITECT 6.x` — immutable version ledger for non-preview/direct-write callers — [`backend/app/agents.py:L3915`](backend/app/agents.py#L3915)
+- `ARCHITECT 7.x` — user-facing candidate message (preview-oriented wording, also returned to internal callers) — [`backend/app/agents.py:L3949`](backend/app/agents.py#L3949)
+- `ARCHITECT 8.x` — candidate return and durable `GENERATE_PRD` preview staging — [`backend/app/routes/requirements.py:L1757`](backend/app/routes/requirements.py#L1757)
+- `ARCHITECT 9.x` — Save-time stale checks and authoritative artifact/version commit — [`backend/app/agents.py:L3314`](backend/app/agents.py#L3314)
 
 Primary path:
 
@@ -637,14 +636,14 @@ Persistence rule: explicit Generate PRD writes only a pending preview. Canonical
 
 Important locations:
 
-- `src/hooks/useChat.ts`
-- `backend/app/agents.py`
-- `backend/app/prd_filler.py`
-- `backend/app/prd_section_service.py`
-- `backend/app/services/diagram_service.py`
-- `backend/app/prompts/architect_diagram.md`
-- `backend/app/routes/requirements.py`
-- `backend/app/routes/lock.py`
+- [`src/hooks/useChat.ts:L186`](src/hooks/useChat.ts#L186)
+- [`backend/app/agents.py:L668`](backend/app/agents.py#L668)
+- [`backend/app/prd_filler.py:L1233`](backend/app/prd_filler.py#L1233)
+- [`backend/app/prd_section_service.py:L415`](backend/app/prd_section_service.py#L415)
+- [`backend/app/services/diagram_service.py:L18`](backend/app/services/diagram_service.py#L18)
+- [`backend/app/prompts/architect_diagram.md:L1`](backend/app/prompts/architect_diagram.md#L1)
+- [`backend/app/routes/requirements.py:L1757`](backend/app/routes/requirements.py#L1757)
+- [`backend/app/routes/lock.py:L1`](backend/app/routes/lock.py#L1)
 
 ### CONFIRM — Human approval and authoritative commit
 
@@ -653,10 +652,10 @@ apply approved project changes through the correct commit branch, or discard the
 
 Numbering structure:
 
-- `CONFIRM 1.x` — confirmation UIs, handlers, and pending-action refresh
-- `CONFIRM 2.x` — frontend API boundary
-- `CONFIRM 3.x` — backend list, IMPACT cross-reference, Save, and Discard routes
-- `CONFIRM 7.x` — pending-action repository lifecycle
+- `CONFIRM 1.x` — confirmation UIs, handlers, and pending-action refresh — [`src/components/ConfirmationPanel.tsx:L254`](src/components/ConfirmationPanel.tsx#L254)
+- `CONFIRM 2.x` — frontend API boundary — [`src/components/ConfirmationPanel.tsx:L295`](src/components/ConfirmationPanel.tsx#L295)
+- `CONFIRM 3.x` — backend list, IMPACT cross-reference, Save, and Discard routes — [`src/api/client.ts:L331`](src/api/client.ts#L331)
+- `CONFIRM 7.x` — pending-action repository lifecycle — [`backend/app/repositories/pending_action.py:L18`](backend/app/repositories/pending_action.py#L18)
 
 Shared Save gate:
 
@@ -713,12 +712,12 @@ remain; this index documents that behavior and does not change it.
 
 Important locations:
 
-- `src/components/ConfirmationPanel.tsx`
-- `src/components/PRDGenerationPreview.tsx`
-- `src/api/client.ts`
-- `backend/app/routes/lock.py`
-- `backend/app/repositories/pending_action.py`
-- `backend/app/repositories/requirement_state.py`
+- [`src/components/ConfirmationPanel.tsx:L254`](src/components/ConfirmationPanel.tsx#L254)
+- [`src/components/PRDGenerationPreview.tsx:L28`](src/components/PRDGenerationPreview.tsx#L28)
+- [`src/api/client.ts:L328`](src/api/client.ts#L328)
+- [`backend/app/routes/lock.py:L243`](backend/app/routes/lock.py#L243)
+- [`backend/app/repositories/pending_action.py:L18`](backend/app/repositories/pending_action.py#L18)
+- [`backend/app/repositories/requirement_state.py:L1`](backend/app/repositories/requirement_state.py#L1)
 
 Canonical name: use `CONFIRM` in identifiers. “Confirmation flow” may still be used as ordinary prose.
 
@@ -730,13 +729,13 @@ before the user makes the separate CONFIRM Save/Cancel decision.
 
 Numbering structure:
 
-- `IMPACT 1.x` — impact panel/modal presentation
-- `IMPACT 2.x` — frontend preview lifecycle and request handler
-- `IMPACT 3.x` — frontend API client
-- `IMPACT 4.x` — project-scoped pending-action impact route
-- `IMPACT 5.x` — impact orchestration and summary construction
-- `IMPACT 6.x` — shape normalization, artifact diffs, and downstream-reference calculation
-- `IMPACT 7.x` — pending-action, requirement-state, PRD-section, and diagram reads
+- `IMPACT 1.x` — impact panel/modal presentation — [`src/components/ConfirmationPanel.tsx:L72`](src/components/ConfirmationPanel.tsx#L72)
+- `IMPACT 2.x` — frontend preview lifecycle and request handler — [`src/components/ConfirmationPanel.tsx:L325`](src/components/ConfirmationPanel.tsx#L325)
+- `IMPACT 3.x` — frontend API client — [`src/api/client.ts:L347`](src/api/client.ts#L347)
+- `IMPACT 4.x` — project-scoped pending-action impact route — [`backend/app/routes/lock.py:L276`](backend/app/routes/lock.py#L276)
+- `IMPACT 5.x` — impact orchestration and summary construction — [`backend/app/impact_service.py:L357`](backend/app/impact_service.py#L357)
+- `IMPACT 6.x` — shape normalization, artifact diffs, and downstream-reference calculation — [`backend/app/impact_service.py:L61`](backend/app/impact_service.py#L61)
+- `IMPACT 7.x` — pending-action, requirement-state, PRD-section, and diagram reads — [`backend/app/repositories/pending_action.py:L21`](backend/app/repositories/pending_action.py#L21)
 
 There is no `IMPACT 8.x`: successful analysis is derived and read-only. It publishes no
 event, schedules no job, and mutates no governed artifact.
@@ -788,14 +787,14 @@ stored PRD sections and Mermaid documents directly using the same code extractor
 
 Important locations:
 
-- `src/components/ConfirmationPanel.tsx`
-- `src/api/client.ts`
-- `backend/app/routes/lock.py`
-- `backend/app/impact_service.py`
-- `backend/app/repositories/pending_action.py`
-- `backend/app/repositories/requirement_state.py`
-- `backend/app/repositories/prd_section.py`
-- `backend/app/repositories/prd.py`
+- [`src/components/ConfirmationPanel.tsx:L72`](src/components/ConfirmationPanel.tsx#L72)
+- [`src/api/client.ts:L347`](src/api/client.ts#L347)
+- [`backend/app/routes/lock.py:L276`](backend/app/routes/lock.py#L276)
+- [`backend/app/impact_service.py:L61`](backend/app/impact_service.py#L61)
+- [`backend/app/repositories/pending_action.py:L1`](backend/app/repositories/pending_action.py#L1)
+- [`backend/app/repositories/requirement_state.py:L1`](backend/app/repositories/requirement_state.py#L1)
+- [`backend/app/repositories/prd_section.py:L1`](backend/app/repositories/prd_section.py#L1)
+- [`backend/app/repositories/prd.py:L1`](backend/app/repositories/prd.py#L1)
 
 ### CLARIFY — Clarification question and answer cycle
 
@@ -805,11 +804,11 @@ without treating the answers themselves as approved edits.
 
 Numbering structure:
 
-- `CLARIFY 1.x` — question rendering, local answers, submission, and UI reconciliation
-- `CLARIFY 2.x` — frontend API boundary
-- `CLARIFY 3.x` — authenticated answer route, evidence save, and draft staging
-- `CLARIFY 4.x` — question projection, repository load, and target serialization
-- `CLARIFY 5.x` — bounded Gatherer classification/proposal helper
+- `CLARIFY 1.x` — question rendering, local answers, submission, and UI reconciliation — [`src/components/ChatPanel.tsx:L147`](src/components/ChatPanel.tsx#L147)
+- `CLARIFY 2.x` — frontend API boundary — [`src/hooks/useChat.ts:L1085`](src/hooks/useChat.ts#L1085)
+- `CLARIFY 3.x` — authenticated answer route, evidence save, and draft staging — [`src/api/client.ts:L430`](src/api/client.ts#L430)
+- `CLARIFY 4.x` — question projection, repository load, and target serialization — [`backend/app/routes/requirements.py:L609`](backend/app/routes/requirements.py#L609)
+- `CLARIFY 5.x` — bounded Gatherer classification/proposal helper — [`backend/app/agents.py:L136`](backend/app/agents.py#L136)
 
 Incoming question sources:
 
@@ -877,14 +876,14 @@ durable when the surrounding request commits.
 
 Important locations:
 
-- `src/hooks/useChat.ts`
-- `src/components/ChatPanel.tsx`
-- `src/api/transforms.ts`
-- `src/api/client.ts`
-- `backend/app/routes/requirements.py`
-- `backend/app/agents.py`
-- `backend/app/repositories/requirement_state.py`
-- `backend/app/repositories/clarification_question.py`
+- [`src/hooks/useChat.ts:L524`](src/hooks/useChat.ts#L524)
+- [`src/components/ChatPanel.tsx:L147`](src/components/ChatPanel.tsx#L147)
+- [`src/api/transforms.ts:L52`](src/api/transforms.ts#L52)
+- [`src/api/client.ts:L429`](src/api/client.ts#L429)
+- [`backend/app/routes/requirements.py:L597`](backend/app/routes/requirements.py#L597)
+- [`backend/app/agents.py:L136`](backend/app/agents.py#L136)
+- [`backend/app/repositories/requirement_state.py:L149`](backend/app/repositories/requirement_state.py#L149)
+- [`backend/app/repositories/clarification_question.py:L38`](backend/app/repositories/clarification_question.py#L38)
 
 ### DOC-UPLOAD — Project knowledge documents and extraction
 
@@ -893,14 +892,14 @@ and optionally extract a reviewable requirement proposal.
 
 Numbering structure:
 
-- `DOC-UPLOAD 1.x` — paperclip and document-library UI
-- `DOC-UPLOAD 2.x` — frontend hook state, actions, progress, and reconciliation
-- `DOC-UPLOAD 3.x` — frontend API client boundary
-- `DOC-UPLOAD 4.x` — authenticated upload/list/detail/delete/process/cancel HTTP routes
-- `DOC-UPLOAD 5.x` — upload/extraction orchestration, milestones, and draft lifecycle
-- `DOC-UPLOAD 6.x` — validation/conversion and extraction domain logic
-- `DOC-UPLOAD 7.x` — uploaded-document repository and serialization
-- `DOC-UPLOAD 8.x` — events, live progress, and process-local cancellation effects
+- `DOC-UPLOAD 1.x` — paperclip and document-library UI — [`src/components/ChatPanel.tsx:L414`](src/components/ChatPanel.tsx#L414)
+- `DOC-UPLOAD 2.x` — frontend hook state, actions, progress, and reconciliation — [`src/hooks/useDocuments.ts:L3`](src/hooks/useDocuments.ts#L3)
+- `DOC-UPLOAD 3.x` — frontend API client boundary — [`src/api/client.ts:L439`](src/api/client.ts#L439)
+- `DOC-UPLOAD 4.x` — authenticated upload/list/detail/delete/process/cancel HTTP routes — [`backend/app/routes/documents.py:L1`](backend/app/routes/documents.py#L1)
+- `DOC-UPLOAD 5.x` — upload/extraction orchestration, milestones, and draft lifecycle — [`backend/app/document_processor.py:L83`](backend/app/document_processor.py#L83)
+- `DOC-UPLOAD 6.x` — validation/conversion and extraction domain logic — [`backend/app/document_processor.py:L49`](backend/app/document_processor.py#L49)
+- `DOC-UPLOAD 7.x` — uploaded-document repository and serialization — [`backend/app/repositories/base.py:L349`](backend/app/repositories/base.py#L349)
+- `DOC-UPLOAD 8.x` — events, live progress, and process-local cancellation effects — [`backend/app/routes/documents.py:L366`](backend/app/routes/documents.py#L366)
 
 Response DTOs are intentionally unnumbered: they describe HTTP boundaries but do not
 execute a flow step.
@@ -1037,16 +1036,16 @@ become authoritative only through CONFIRM.
 
 Important locations:
 
-- `src/components/ChatPanel.tsx`
-- `src/components/DocumentLibrary.tsx`
-- `src/hooks/useDocuments.ts`
-- `src/api/client.ts`
-- `backend/app/routes/documents.py`
-- `backend/app/services/document_ingestion_service.py`
-- `backend/app/document_processor.py`
-- `backend/app/repositories/document.py`
-- `backend/app/repositories/base.py`
-- `backend/app/workflow_cancellation.py`
+- [`src/components/ChatPanel.tsx:L414`](src/components/ChatPanel.tsx#L414)
+- [`src/components/DocumentLibrary.tsx:L3`](src/components/DocumentLibrary.tsx#L3)
+- [`src/hooks/useDocuments.ts:L3`](src/hooks/useDocuments.ts#L3)
+- [`src/api/client.ts:L439`](src/api/client.ts#L439)
+- [`backend/app/routes/documents.py:L1`](backend/app/routes/documents.py#L1)
+- [`backend/app/services/document_ingestion_service.py:L13`](backend/app/services/document_ingestion_service.py#L13)
+- [`backend/app/document_processor.py:L49`](backend/app/document_processor.py#L49)
+- [`backend/app/repositories/document.py:L23`](backend/app/repositories/document.py#L23)
+- [`backend/app/repositories/base.py:L349`](backend/app/repositories/base.py#L349)
+- [`backend/app/workflow_cancellation.py:L86`](backend/app/workflow_cancellation.py#L86)
 
 ### PRD-SECTION — Part-level edit, history, and revert
 
@@ -1055,14 +1054,14 @@ append-only part history, and optionally restore one historical part as a new ve
 
 Numbering structure:
 
-- `PRD-SECTION 1.x` — editor UI; part-history/revert UI is currently absent
-- `PRD-SECTION 2.x` — frontend part-state and save/lock handlers
-- `PRD-SECTION 3.x` — frontend API client
-- `PRD-SECTION 4.x` — list/edit/revert/lock/detail/history routes
-- `PRD-SECTION 5.x` — edit/revert orchestration and document propagation
-- `PRD-SECTION 6.x` — canonical parts, split, merge, stitch, and seeding logic
-- `PRD-SECTION 7.x` — section and append-only section-version repositories
-- `PRD-SECTION 8.x` — edit/revert publication and downstream refresh
+- `PRD-SECTION 1.x` — editor UI; part-history/revert UI is currently absent — [`src/components/PRDEditor.tsx:L22`](src/components/PRDEditor.tsx#L22)
+- `PRD-SECTION 2.x` — frontend part-state and save/lock handlers — [`src/hooks/useRequirementStore.ts:L206`](src/hooks/useRequirementStore.ts#L206)
+- `PRD-SECTION 3.x` — frontend API client — [`src/api/client.ts:L186`](src/api/client.ts#L186)
+- `PRD-SECTION 4.x` — list/edit/revert/lock/detail/history routes — [`backend/app/routes/prd_sections.py:L80`](backend/app/routes/prd_sections.py#L80)
+- `PRD-SECTION 5.x` — edit/revert orchestration and document propagation — [`backend/app/routes/prd_sections.py:L171`](backend/app/routes/prd_sections.py#L171)
+- `PRD-SECTION 6.x` — canonical parts, split, merge, stitch, and seeding logic — [`backend/app/prd_section_service.py:L43`](backend/app/prd_section_service.py#L43)
+- `PRD-SECTION 7.x` — section and append-only section-version repositories — [`backend/app/repositories/prd_section.py:L34`](backend/app/repositories/prd_section.py#L34)
+- `PRD-SECTION 8.x` — edit/revert publication and downstream refresh — [`backend/app/routes/prd_sections.py:L256`](backend/app/routes/prd_sections.py#L256)
 
 Detailed map:
 
@@ -1122,12 +1121,12 @@ API/test-only. Whole-document restore remains in `VERSION`; it is not part rever
 
 Important locations:
 
-- `src/components/PRDEditor.tsx`
-- `src/hooks/useRequirementStore.ts`
-- `src/api/client.ts`
-- `backend/app/routes/prd_sections.py`
-- `backend/app/prd_section_service.py`
-- `backend/app/repositories/prd_section.py`
+- [`src/components/PRDEditor.tsx:L22`](src/components/PRDEditor.tsx#L22)
+- [`src/hooks/useRequirementStore.ts:L206`](src/hooks/useRequirementStore.ts#L206)
+- [`src/api/client.ts:L186`](src/api/client.ts#L186)
+- [`backend/app/routes/prd_sections.py:L80`](backend/app/routes/prd_sections.py#L80)
+- [`backend/app/prd_section_service.py:L43`](backend/app/prd_section_service.py#L43)
+- [`backend/app/repositories/prd_section.py:L22`](backend/app/repositories/prd_section.py#L22)
 
 ### PRD-EXPORT — Snapshot production and PDF/DOCX downloads
 
@@ -1136,14 +1135,14 @@ template-faithful PDF/DOCX with authoritative versioned filenames.
 
 Numbering structure:
 
-- `PRD-EXPORT 1.x` — export menu and PDF/DOCX buttons
-- `PRD-EXPORT 2.x` — frontend export/download coordinator
-- `PRD-EXPORT 3.x` — Blob API client, filename extraction, and error decoding
-- `PRD-EXPORT 4.x` — snapshot/PDF/DOCX routes
-- `PRD-EXPORT 5.x` — source resolution, legacy filling, compiler choice, and naming
-- `PRD-EXPORT 6.x` — LaTeX normalization and DOCX/PDF compilation
-- `PRD-EXPORT 7.x` — saved-document reads and optional ledger insertion
-- `PRD-EXPORT 8.x` — binary response/browser download and export-event publication
+- `PRD-EXPORT 1.x` — export menu and PDF/DOCX buttons — [`src/components/WorkspaceNavigation.tsx:L39`](src/components/WorkspaceNavigation.tsx#L39)
+- `PRD-EXPORT 2.x` — frontend export/download coordinator — [`src/hooks/useProjectState.ts:L422`](src/hooks/useProjectState.ts#L422)
+- `PRD-EXPORT 3.x` — Blob API client, filename extraction, and error decoding — [`src/api/client.ts:L136`](src/api/client.ts#L136)
+- `PRD-EXPORT 4.x` — snapshot/PDF/DOCX routes — [`backend/app/routes/projects.py:L757`](backend/app/routes/projects.py#L757)
+- `PRD-EXPORT 5.x` — source resolution, legacy filling, compiler choice, and naming — [`backend/app/routes/projects.py:L814`](backend/app/routes/projects.py#L814)
+- `PRD-EXPORT 6.x` — LaTeX normalization and DOCX/PDF compilation — [`backend/app/latex_docx_native.py:L830`](backend/app/latex_docx_native.py#L830)
+- `PRD-EXPORT 7.x` — saved-document reads and optional ledger insertion — [`backend/app/routes/projects.py:L881`](backend/app/routes/projects.py#L881)
+- `PRD-EXPORT 8.x` — binary response/browser download and export-event publication — [`backend/app/routes/projects.py:L894`](backend/app/routes/projects.py#L894)
 
 Detailed map:
 
@@ -1206,13 +1205,13 @@ routes do not create ledger rows—they compile the latest already-saved documen
 
 Important locations:
 
-- `src/components/WorkspaceNavigation.tsx`
-- `src/hooks/useProjectState.ts`
-- `src/api/client.ts`
-- `backend/app/routes/projects.py`
-- `backend/app/latex_service.py`
-- `backend/app/latex_docx_native.py`
-- `backend/app/prd_filler.py`
+- [`src/components/WorkspaceNavigation.tsx:L39`](src/components/WorkspaceNavigation.tsx#L39)
+- [`src/hooks/useProjectState.ts:L422`](src/hooks/useProjectState.ts#L422)
+- [`src/api/client.ts:L136`](src/api/client.ts#L136)
+- [`backend/app/routes/projects.py:L757`](backend/app/routes/projects.py#L757)
+- [`backend/app/latex_service.py:L387`](backend/app/latex_service.py#L387)
+- [`backend/app/latex_docx_native.py:L830`](backend/app/latex_docx_native.py#L830)
+- [`backend/app/prd_filler.py:L184`](backend/app/prd_filler.py#L184)
 
 There is currently no `backend/app/routes/exports.py`; export endpoints live in
 `backend/app/routes/projects.py`.
@@ -1225,13 +1224,13 @@ stale textual references.
 
 Numbering structure:
 
-- `TRACEABILITY 1.x` — matrix/hierarchy UI
-- `TRACEABILITY 2.x` — frontend load/state lifecycle
-- `TRACEABILITY 3.x` — frontend API client
-- `TRACEABILITY 4.x` — authenticated traceability route
-- `TRACEABILITY 5.x` — matrix orchestration and project-health reuse
-- `TRACEABILITY 6.x` — reference extraction, relationship assembly, coverage, and staleness
-- `TRACEABILITY 7.x` — authoritative artifact reads
+- `TRACEABILITY 1.x` — matrix/hierarchy UI — [`src/components/RequirementTraceability.tsx:L1`](src/components/RequirementTraceability.tsx#L1)
+- `TRACEABILITY 2.x` — frontend load/state lifecycle — [`src/components/RequirementTraceability.tsx:L100`](src/components/RequirementTraceability.tsx#L100)
+- `TRACEABILITY 3.x` — frontend API client — [`src/api/client.ts:L503`](src/api/client.ts#L503)
+- `TRACEABILITY 4.x` — authenticated traceability route — [`backend/app/routes/traceability.py:L25`](backend/app/routes/traceability.py#L25)
+- `TRACEABILITY 5.x` — matrix orchestration and project-health reuse — [`backend/app/project_health_service.py:L30`](backend/app/project_health_service.py#L30)
+- `TRACEABILITY 6.x` — reference extraction, relationship assembly, coverage, and staleness — [`backend/app/traceability_service.py:L37`](backend/app/traceability_service.py#L37)
+- `TRACEABILITY 7.x` — authoritative artifact reads — [`backend/app/routes/traceability.py:L59`](backend/app/routes/traceability.py#L59)
 
 There is no `TRACEABILITY 8.x`: this flow is derived and read-only. It performs no
 commit, event publication, job scheduling, or downstream mutation.
@@ -1284,13 +1283,13 @@ Response types in `src/api/types.ts` and `backend/app/schemas.py` remain unnumbe
 
 Important locations:
 
-- `src/components/MainArtifactPanel.tsx`
-- `src/components/RequirementTraceability.tsx`
-- `src/api/client.ts`
-- `src/api/types.ts`
-- `backend/app/routes/traceability.py`
-- `backend/app/traceability_service.py`
-- `backend/app/project_health_service.py`
+- [`src/components/MainArtifactPanel.tsx:L1`](src/components/MainArtifactPanel.tsx#L1)
+- [`src/components/RequirementTraceability.tsx:L1`](src/components/RequirementTraceability.tsx#L1)
+- [`src/api/client.ts:L503`](src/api/client.ts#L503)
+- [`src/api/types.ts:L1`](src/api/types.ts#L1)
+- [`backend/app/routes/traceability.py:L25`](backend/app/routes/traceability.py#L25)
+- [`backend/app/traceability_service.py:L37`](backend/app/traceability_service.py#L37)
+- [`backend/app/project_health_service.py:L30`](backend/app/project_health_service.py#L30)
 
 ### VERSION — PRD snapshot history, diff, and restore
 
@@ -1298,14 +1297,14 @@ Purpose: append immutable PRD snapshots, page their metadata, calculate section/
 
 Numbering structure:
 
-- `VERSION 1.x` — Versions-tab timeline, diff, and restore UI
-- `VERSION 2.x` — frontend ledger/restore state and handlers
-- `VERSION 3.x` — frontend API client
-- `VERSION 4.x` — authenticated version-list/diff/read/restore routes
-- `VERSION 5.x` — restore orchestration and current-document propagation
-- `VERSION 6.x` — section comparison, SemVer, ledger recording, and diff domain logic
-- `VERSION 7.x` — append-only PRD-version repository
-- `VERSION 8.x` — restore event publication and downstream refresh
+- `VERSION 1.x` — Versions-tab timeline, diff, and restore UI — [`src/components/VersionHistory.tsx:L15`](src/components/VersionHistory.tsx#L15)
+- `VERSION 2.x` — frontend ledger/restore state and handlers — [`src/hooks/useRequirementStore.ts:L465`](src/hooks/useRequirementStore.ts#L465)
+- `VERSION 3.x` — frontend API client — [`src/api/client.ts:L222`](src/api/client.ts#L222)
+- `VERSION 4.x` — authenticated version-list/diff/read/restore routes — [`backend/app/routes/prd_sections.py:L271`](backend/app/routes/prd_sections.py#L271)
+- `VERSION 5.x` — restore orchestration and current-document propagation — [`backend/app/routes/projects.py:L1635`](backend/app/routes/projects.py#L1635)
+- `VERSION 6.x` — section comparison, SemVer, ledger recording, and diff domain logic — [`backend/app/prd_section_service.py:L166`](backend/app/prd_section_service.py#L166)
+- `VERSION 7.x` — append-only PRD-version repository — [`backend/app/repositories/prd.py:L123`](backend/app/repositories/prd.py#L123)
+- `VERSION 8.x` — restore event publication and downstream refresh — [`backend/app/routes/projects.py:L1685`](backend/app/routes/projects.py#L1685)
 
 Response DTOs are intentionally unnumbered because they describe data boundaries rather
 than execute flow steps.
@@ -1363,12 +1362,12 @@ Important behavior:
 
 Important locations:
 
-- `src/components/VersionHistory.tsx`
-- `src/hooks/useRequirementStore.ts`
-- `src/api/client.ts`
-- `backend/app/routes/projects.py`
-- `backend/app/version_service.py`
-- `backend/app/repositories/prd.py`
+- [`src/components/VersionHistory.tsx:L15`](src/components/VersionHistory.tsx#L15)
+- [`src/hooks/useRequirementStore.ts:L465`](src/hooks/useRequirementStore.ts#L465)
+- [`src/api/client.ts:L222`](src/api/client.ts#L222)
+- [`backend/app/routes/projects.py:L1441`](backend/app/routes/projects.py#L1441)
+- [`backend/app/version_service.py:L36`](backend/app/version_service.py#L36)
+- [`backend/app/repositories/prd.py:L123`](backend/app/repositories/prd.py#L123)
 
 ### LOCK — Artifact ownership and mutation protection
 
@@ -1410,11 +1409,11 @@ Important behavior:
 
 Important locations:
 
-- `src/hooks/useArtifactLocks.ts`
-- `backend/app/routes/lock.py`
-- `backend/app/routes/requirements.py`
-- `backend/app/routes/prd_sections.py`
-- `backend/app/lock_service.py`
+- [`src/hooks/useArtifactLocks.ts:L1`](src/hooks/useArtifactLocks.ts#L1)
+- [`backend/app/routes/lock.py:L46`](backend/app/routes/lock.py#L46)
+- [`backend/app/routes/requirements.py:L323`](backend/app/routes/requirements.py#L323)
+- [`backend/app/routes/prd_sections.py:L366`](backend/app/routes/prd_sections.py#L366)
+- [`backend/app/lock_service.py:L37`](backend/app/lock_service.py#L37)
 
 ### JOB — Durable background generation and cancellation
 
@@ -1464,11 +1463,11 @@ Important behavior:
 
 Important locations:
 
-- `src/hooks/chat/backgroundJobs.ts`
-- `src/hooks/chat/useAgentCancellation.ts`
-- `backend/app/routes/generation_jobs.py`
-- `backend/app/generation_job_service.py`
-- `backend/app/workflow_cancellation.py`
+- [`src/hooks/chat/backgroundJobs.ts:L37`](src/hooks/chat/backgroundJobs.ts#L37)
+- [`src/hooks/chat/useAgentCancellation.ts:L13`](src/hooks/chat/useAgentCancellation.ts#L13)
+- [`backend/app/routes/generation_jobs.py:L19`](backend/app/routes/generation_jobs.py#L19)
+- [`backend/app/generation_job_service.py:L67`](backend/app/generation_job_service.py#L67)
+- [`backend/app/workflow_cancellation.py:L37`](backend/app/workflow_cancellation.py#L37)
 
 Document-extraction cancellation cross-flow:
 
@@ -1493,8 +1492,8 @@ notifications or reconcile workspace state.
 
 Implemented numbering:
 
-- `EVENT 4.x` — authenticated history-query routes
-- `EVENT 7.x` — `ArtifactEventLogRepository` history reads
+- `EVENT 4.x` — authenticated history-query routes — [`backend/app/routes/events.py:L120`](backend/app/routes/events.py#L120)
+- `EVENT 7.x` — `ArtifactEventLogRepository` history reads — [`backend/app/repositories/event_log.py:L176`](backend/app/repositories/event_log.py#L176)
 
 The following conventional layers are currently absent and therefore unnumbered:
 
@@ -1532,9 +1531,9 @@ Event-history response schemas are unnumbered DTOs.
 
 Important locations:
 
-- `backend/app/routes/events.py`
-- `backend/app/repositories/event_log.py`
-- `backend/app/schemas.py`
+- [`backend/app/routes/events.py:L120`](backend/app/routes/events.py#L120)
+- [`backend/app/repositories/event_log.py:L1`](backend/app/repositories/event_log.py#L1)
+- [`backend/app/schemas.py:L1`](backend/app/schemas.py#L1)
 
 ### SYNC — SSE events and workspace refresh
 
@@ -1580,9 +1579,9 @@ Important behavior:
 
 Important locations:
 
-- `src/hooks/useProjectSync.ts`
-- `backend/app/event_manager.py`
-- `backend/app/routes/events.py`
+- [`src/hooks/useProjectSync.ts:L1`](src/hooks/useProjectSync.ts#L1)
+- [`backend/app/event_manager.py:L50`](backend/app/event_manager.py#L50)
+- [`backend/app/routes/events.py:L32`](backend/app/routes/events.py#L32)
 
 ## Broad FLOW references awaiting normalization
 

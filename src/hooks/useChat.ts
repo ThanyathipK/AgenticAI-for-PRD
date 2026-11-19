@@ -54,6 +54,7 @@ export interface ChatDeps {
    */
   canRunAgentActions: boolean;
   agentActionsBlockedReason: string;
+  markProjectRecentlyUpdated: (projectId: string) => void;
 }
 
 export interface UseChatResult {
@@ -120,6 +121,12 @@ export function useChat(
   store: RequirementStore,
   deps: ChatDeps,
 ): UseChatResult {
+  // Async agent responses must only update the workspace that launched them.
+  // The store setters are shared across projects, so a request that finishes
+  // after a project switch would otherwise append its reply to the new chat.
+  const activeProjectIdRef = useRef(deps.projectId);
+  activeProjectIdRef.current = deps.projectId;
+  const activeChatRequestsRef = useRef(new Set<string>());
   const [rawInput, setRawInput] = useState<string>("");
   const [prdGenerationFailed, setPrdGenerationFailed] = useState(false);
   const [prdDiagramGenerationFailed, setPrdDiagramGenerationFailed] = useState(false);
@@ -130,6 +137,19 @@ export function useChat(
   const persistingMessageIdsRef = useRef<Set<string>>(new Set());
   const durableMessageIdsRef = useRef<Map<string, string>>(new Map());
   const clarificationSubmitInFlightRef = useRef(false);
+
+  // Processing indicators belong to a project, even though their underlying
+  // store is shared by the currently open workspace. Restore the indicator
+  // when returning to a project whose chat request is still running.
+  useEffect(() => {
+    const projectId = deps.projectId;
+    const isRunning = Boolean(projectId && activeChatRequestsRef.current.has(projectId));
+    store.setIsProcessing(isRunning);
+    if (isRunning) {
+      store.setCurrentAgentNode("gatherer_node");
+      store.setSyncStatus("Generating response...");
+    }
+  }, [deps.projectId, store.setIsProcessing, store.setCurrentAgentNode, store.setSyncStatus]);
 
   useEffect(() => {
     persistingMessageIdsRef.current.clear();
@@ -234,6 +254,9 @@ export function useChat(
     const projectId = targetProjectId;
     const inputMsg = textToSend || rawInput;
     if (!inputMsg.trim()) return;
+    // The sidebar should respond when the user starts working, without waiting
+    // for the agent request and its eventual SSE response to finish.
+    deps.markProjectRecentlyUpdated(projectId);
 
     // Clear main input if sent from main input box
     if (!textToSend) setRawInput("");
@@ -271,11 +294,14 @@ export function useChat(
       console.warn("The user message will be retried by timeline persistence.", error);
     }
 
+    activeChatRequestsRef.current.add(projectId);
     // Set Loading State - show neutral loading indicator until intent is determined
-    store.setIsLoading(true);
-    store.setIsProcessing(true);
-    store.setSyncStatus("Detecting intent...");
-    store.setCurrentAgentNode(null);
+    if (activeProjectIdRef.current === projectId) {
+      store.setIsLoading(true);
+      store.setIsProcessing(true);
+      store.setSyncStatus("Detecting intent...");
+      store.setCurrentAgentNode(null);
+    }
 
     const controller = cancellation.beginRequest();
 
@@ -313,6 +339,27 @@ export function useChat(
         },
         controller.signal,
       );
+
+      if (activeProjectIdRef.current !== projectId) {
+        // The shared workspace store now belongs to another project. Keep the
+        // completed reply with the project that launched the request so it is
+        // present when the user returns to that chat.
+        try {
+          await api.appendConversationMessage(projectId, {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            message:
+              data.message ||
+              "Your request finished. Reopen this project to see its latest results.",
+            workflow_state:
+              data.detected_intent === "GENERAL_CHAT" ? "general_chat" : "gatherer",
+            intent: data.detected_intent || "REQUEST_COMPLETED",
+          });
+        } catch (persistError) {
+          console.warn("Could not save the completed reply to its project.", persistError);
+        }
+        return;
+      }
 
       // CHAT 1.4 — Apply the backend result to the workspace UI.
       // Trigger: CHAT 1.3 resolves successfully.
@@ -452,6 +499,22 @@ export function useChat(
         }
       }
     } catch (err) {
+      if (activeProjectIdRef.current !== projectId) {
+        // Preserve a failure notice in the originating transcript too; do not
+        // attach it to whichever project happens to be open now.
+        try {
+          await api.appendConversationMessage(projectId, {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            message: `Request failed: ${(err as Error)?.message || String(err)}`,
+            workflow_state: "gatherer",
+            intent: "REQUEST_FAILED",
+          });
+        } catch (persistError) {
+          console.warn("Could not save the request failure to its project.", persistError);
+        }
+        return;
+      }
       if (isAbortError(err)) {
         store.setMessages((prev) => [
           ...prev,
@@ -511,9 +574,14 @@ export function useChat(
       store.setSyncStatus("Request failed. Nothing was saved.");
     } finally {
       cancellation.finishRequest(controller);
-      store.setIsLoading(false);
-      store.setIsProcessing(false);
-      store.setCurrentAgentNode(null);
+      activeChatRequestsRef.current.delete(projectId);
+      if (activeProjectIdRef.current === projectId) {
+        store.setIsProcessing(activeChatRequestsRef.current.has(projectId));
+        store.setCurrentAgentNode(null);
+        if (!activeChatRequestsRef.current.has(projectId)) {
+          store.setIsLoading(false);
+        }
+      }
     }
   };
 

@@ -8,7 +8,7 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
-from sqlalchemy import String, cast, func, select
+from sqlalchemy import String, cast, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -882,6 +882,14 @@ class RequirementStateRepository:
                 from app.audit_history_service import record_audit_run
                 await record_audit_run(str(project_id), current_audit, session)
 
+        # The sidebar orders projects by the parent project's updated_at. State
+        # edits live in a separate table, so explicitly bump the parent row on
+        # every persisted project-state change.
+        await session.execute(
+            update(ProjectModel)
+            .where(ProjectModel.id == project_id)
+            .values(updated_at=func.now())
+        )
         await session.flush()
         await session.refresh(model)
 

@@ -43,6 +43,7 @@ export interface UseProjectSyncResult {
 export interface ProjectSyncOptions {
   onDocumentExtractionStarted?: (data: Record<string, unknown>) => void;
   onDocumentExtractionProgress?: (data: Record<string, unknown>) => void;
+  onProjectActivity?: (projectId: string) => void;
 }
 
 export function isOlderProjectSnapshot(
@@ -261,6 +262,11 @@ export function useProjectSync(
   useEffect(() => {
     if (projectId && projectId !== "null") {
       appliedUpdatedAtRef.current = null;
+      // Processing state is shared with the workspace store. A request may
+      // still be running for the previous project, but it must not leave the
+      // newly selected project's chat showing that old generation as active.
+      store.setIsProcessing(false);
+      store.setCurrentAgentNode(null);
       // PROJECT 2.1 — Trigger: the selected project changed (PROJECT 1.5
       //              auto-select, sidebar row click, or dashboard row open)
       //              → PROJECT 2.2. Effect depends on projectId only.
@@ -546,6 +552,7 @@ export function useProjectSync(
           options?.onDocumentExtractionProgress?.(message.data);
           return;
         }
+        options?.onProjectActivity?.(projectId);
         scheduleRefresh();
       } catch (err) {
         // Ignore malformed or heartbeat payloads.

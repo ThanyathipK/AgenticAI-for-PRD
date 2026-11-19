@@ -192,6 +192,10 @@ async def post_chat_query(
                 project_id=str(request.project_id), role="user", message=newest_user.content,
                 workflow_state="chat", intent="GENERAL_CHAT", session=session,
             )
+            await event_manager.publish(str(request.project_id), "project_activity", {
+                "project_id": str(request.project_id),
+                "activity": "conversation_message",
+            })
 
     logger.info("Initiating conversational analyst run.")
     try:

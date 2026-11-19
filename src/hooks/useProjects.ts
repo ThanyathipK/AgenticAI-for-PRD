@@ -49,6 +49,8 @@ export interface UseProjectsResult {
    */
   handleCreateProject: (name: string, options?: CreateProjectOptions) => Promise<CreateProjectResult>;
   handleTogglePin: (projectId: string) => Promise<void>;
+  /** Move a recently active project to the top of its pin group. */
+  markProjectRecentlyUpdated: (projectId: string) => void;
   /** Flags/unflags a project (dashboard ★ marker) — independent of pinning. */
   handleToggleFlag: (projectId: string) => Promise<void>;
   /** Sets the project's user-editable workflow status (dashboard table), optimistically. */
@@ -77,6 +79,21 @@ export function useProjects(isAuthenticated: boolean, authUserId: string | null)
   const [projectId, setProjectId] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [pendingActions, setPendingActions] = useState<PendingActionPayload[]>([]);
+
+  const markProjectRecentlyUpdated = (projectId: string) => {
+    const updatedAt = new Date().toISOString();
+    setProjects((prev) => {
+      const target = prev.find((project) => project.id === projectId);
+      if (!target) return prev;
+      const updated = { ...target, updated_at: updatedAt };
+      const others = prev.filter((project) => project.id !== projectId);
+      const pinned = others.filter((project) => Boolean(project.is_pinned));
+      const recent = others.filter((project) => !project.is_pinned);
+      return target.is_pinned
+        ? [updated, ...pinned, ...recent]
+        : [...pinned, updated, ...recent];
+    });
+  };
 
   // PROJECT 1.2 — Mount/auth effect: the sidebar's project list load. Trigger is
   //              the AUTH 1.6 signed-in state; the guard below clears the list on
@@ -226,6 +243,7 @@ export function useProjects(isAuthenticated: boolean, authUserId: string | null)
       // PROJECT 5.2 — API boundary → PUT /api/projects/{id} (route PROJECT 5.3).
       await api.renameProject(projectId, newName);
       setProjects(prev => prev.map(p => (p.id === projectId ? { ...p, name: newName.trim() } : p)));
+      markProjectRecentlyUpdated(projectId);
       setRenameProjectId(null);
       setRenameProjectName('');
     } catch (err) {
@@ -367,6 +385,7 @@ export function useProjects(isAuthenticated: boolean, authUserId: string | null)
       setProjects(prev =>
         prev.map(p => (p.id === projectIdToUpdate ? { ...p, ...updated } : p))
       );
+      markProjectRecentlyUpdated(projectIdToUpdate);
       setProjectContextMenu(null);
       return true;
     } catch (err) {
@@ -396,6 +415,7 @@ export function useProjects(isAuthenticated: boolean, authUserId: string | null)
     handleDeleteProject,
     handleCreateProject,
     handleTogglePin,
+    markProjectRecentlyUpdated,
     handleToggleFlag,
     handleUpdateProjectStatus,
     isCreateModalOpen,

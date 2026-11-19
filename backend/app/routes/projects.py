@@ -645,7 +645,7 @@ async def append_project_conversation(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid project or conversation message id")
     try:
-        return await ConversationMessageRepository.save_message(
+        result = await ConversationMessageRepository.save_message(
             project_id=project_id,
             role=payload.role,
             message=payload.message,
@@ -656,6 +656,11 @@ async def append_project_conversation(
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    await event_manager.publish(project_id, "project_activity", {
+        "project_id": project_id,
+        "activity": "conversation_message",
+    })
+    return result
 
 
 # PROJECT 8.2 — Route: PUT /api/project/{project_id} (DIRECT requirement-state write).

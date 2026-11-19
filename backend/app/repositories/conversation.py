@@ -6,11 +6,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
-from app.models import ConversationMessageModel
+from app.models import ConversationMessageModel, ProjectModel
 from app.repositories.base import as_uuid, serialize_conversation_message
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,13 @@ class ConversationMessageRepository:
                 created_at=datetime.now(timezone.utc),
             )
             s.add(msg_obj)
+            # Keep the parent project timestamp in step with conversation
+            # activity so the sidebar's updated_at ordering reflects real use.
+            await s.execute(
+                update(ProjectModel)
+                .where(ProjectModel.id == pid)
+                .values(updated_at=func.now())
+            )
             await s.flush()
             return serialize_conversation_message(msg_obj)
 
