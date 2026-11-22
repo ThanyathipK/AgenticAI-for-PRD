@@ -192,8 +192,8 @@ export function NewProjectModal({ isOpen, onCreate, onClose }: NewProjectModalPr
           </button>
         </div>
         <div className="mt-2 flex justify-end gap-2 text-[10px] leading-snug text-on-surface-variant">
-          <p id="create-empty-help" className="max-w-[190px] text-right">Creates an empty project; add requirements later.</p>
-          <p id="create-gatherer-help" className="max-w-[220px] text-right">Starts a requirements draft from your intake details.</p>
+          <p id="create-empty-help" className="max-w-[190px] text-right">Create a project without sending information to AI.</p>
+          <p id="create-gatherer-help" className="max-w-[220px] text-right">Fill in the business overview and send it to AI to create a requirements draft.</p>
         </div>
       </div>
     </div>
